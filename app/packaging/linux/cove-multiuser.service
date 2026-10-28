@@ -1,0 +1,28 @@
+# ndexr in a browser for everyone on this machine — like rstudio-server: one
+# service, people sign in with their own accounts (PAM, /etc/pam.d/cove),
+# and each gets an `cove serve` running as them on a loopback port.
+#
+#   sudo systemctl enable --now cove-multiuser
+#   http://127.0.0.1:8787/login          (nginx with TLS in front for a public URL)
+#   http://127.0.0.1:8787/admin          sessions, Stop — members of admin-groups
+#
+# Who may sign in and who administers: /etc/cove/multiuser.conf.
+# For one person only, cove@<user>.service is the lighter choice.
+[Unit]
+Description=Cove for this machine's people (multi-user server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/cove/multiuser.env
+ExecStart=/usr/bin/cove multiuser
+Restart=on-failure
+RestartSec=3
+# Sessions are started as each person; the server itself never needs a new
+# privilege after that.
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

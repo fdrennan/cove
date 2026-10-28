@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+# up.sh's pid and log.
+.run/

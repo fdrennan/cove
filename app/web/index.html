@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- Full screen on a phone (operator, 2026-10-16: "need cove app to be able to
+     go full screen if web or local"): iPhone Safari cannot put a page full
+     screen, so Cove is a web app - Share > Add to Home Screen opens it with no
+     browser bars. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Cove">
+<meta name="theme-color" content="#15171c">
+<link rel="apple-touch-icon" href="icon.png">
+<title>Cove</title>
+<meta name="description" content="Cove: traceable scientific control. A model of your organisation's scientific software from the platform to the analysis - what you have, where it came from, what actually runs, who is responsible, and why its use is acceptable - built from source, across thousands of users and clusters.">
+<link rel="icon" href="icon.svg">
+<style>
+  /* Regolith tokens (src/theme.rs): the same ground, text and teal the app paints. */
+  :root {
+    --ground: #15171c; --deep: #0b0d12; --text: #d5dae3; --strong: #eef1f5;
+    --muted: #8b93a2; --hush: #5d646f; --teal: #5ec4c0; --moss: #2f343e;
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ground); }
+  canvas#ndexr { position: absolute; inset: 0; width: 100%; height: 100%; outline: none; }
+
+  /* ── the opening moment: ndexr.io's hero over ndexr.io's star-trails
+     photograph (operator, 2026-10-14: "one of our images not animated
+     stars"). The same picture the app paints behind its windows
+     (src/backdrop.rs): cover, anchored low, darkened by black at 70/255 -
+     so the splash fades into the app without the picture changing. ── */
+  /* One column, top to bottom (operator mockup, 2026-10-18): the mark and
+     name, the introduction, the feature caption in a space of its own with
+     its dots, and the wait in a section of its own at the bottom - in the
+     flow, so a short window reflows instead of running text into the bar. */
+  #splash {
+    position: fixed; inset: 0; z-index: 10; overflow: hidden auto;
+    display: flex; flex-direction: column; align-items: center;
+    color: var(--text); font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    /* A soft dark well behind the centre text; the photograph round it. */
+    background: radial-gradient(ellipse 62% 52% at 50% 42%, rgba(5,7,11,.62), rgba(5,7,11,0) 72%),
+                linear-gradient(rgba(0,0,0,.27), rgba(0,0,0,.27)),
+                url("splash.webp") center bottom / cover no-repeat, var(--deep);
+    transition: opacity .9s ease, transform 1.2s cubic-bezier(.2,.7,.2,1), filter .9s ease;
+  }
+  #splash.done { opacity: 0; transform: scale(1.04); filter: blur(6px); pointer-events: none; }
+
+  /* Two halves on a wide screen (operator, 2026-10-21: "the loading page
+     hasnt changed in a while and it could be prettier"): what Cove is for on
+     the left, the stack itself drawn on the right - a trace climbing from
+     the kernel to the executions, and each card lighting the layer it is
+     about. One column on a narrow one, the drawing above, smaller. */
+  .stage {
+    position: relative; z-index: 1; width: min(1120px, calc(100vw - 32px));
+    margin: auto 0 0; padding-top: clamp(24px, 7vh, 90px);
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 420px); gap: clamp(20px, 4vw, 56px); align-items: center;
+  }
+  .copy { text-align: left; }
+  .head { display: flex; align-items: center; gap: 14px; animation: rise 1.2s ease both; }
+  .gem { width: 34px; height: 34px; color: var(--teal); opacity: .9;
+         filter: drop-shadow(0 0 14px rgba(94,196,192,.35)); }
+  .title {
+    margin: 0; color: var(--strong);
+    font-size: clamp(2.8rem, 7vw, 4.6rem); line-height: .95; font-weight: 700; letter-spacing: -.035em;
+    text-shadow: 0 0 40px rgba(94,196,192,.18);
+  }
+  .by { margin: 4px 0 0; color: var(--muted); font-size: .74rem; letter-spacing: .32em; text-transform: uppercase; }
+  .by b { color: var(--teal); font-weight: 600; }
+  /* The claim - large, white, tight; the detail under it, grey, with air;
+     then the cards under a teal eyebrow (operator, 2026-10-18: never alike). */
+  .lead { margin: 26px 0 0; animation: rise 1.2s .2s ease both; }
+  .claim { margin: 0; color: #f4f6f9; font-size: clamp(1.6rem, 3.6vw, 2.3rem); font-weight: 650;
+           line-height: 1.12; letter-spacing: -.02em; }
+  .claim em { font-style: normal; color: var(--teal); }
+  .detail { margin: 14px 0 0; max-width: 600px; color: #a9b2bf; font-size: clamp(.98rem, 1.8vw, 1.07rem); line-height: 1.6; }
+  .asks { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; animation: rise 1.2s .35s ease both; }
+  .asks li { padding: 5px 11px; border: 1px solid rgba(94,196,192,.22); border-radius: 999px; color: #cfd6df;
+             font-size: .84rem; background: rgba(11,13,18,.45); }
+
+  /* One card at a time, all in one grid cell so nothing below moves; the
+     outgoing one fades before the next comes in. */
+  .features { display: grid; margin: 24px 0 0; max-width: 620px; padding: 16px 22px 18px;
+              background: rgba(11,13,18,.66); border: 1px solid rgba(94,196,192,.16); border-radius: 12px;
+              backdrop-filter: blur(4px); animation: rise 1.2s .5s ease both; }
+  .feature { grid-area: 1 / 1; opacity: 0; visibility: hidden; transform: translateY(6px); text-align: left;
+             transition: opacity .35s ease, transform .35s ease, visibility 0s linear .35s; }
+  .feature.on { opacity: 1; visibility: visible; transform: none;
+                transition: opacity .6s ease .35s, transform .6s ease .35s, visibility 0s linear .35s; }
+  .feature .k { display: block; margin: 0 0 7px; color: var(--teal); font-size: .7rem; font-weight: 600;
+                letter-spacing: .18em; text-transform: uppercase; }
+  .feature h3 { margin: 0; color: var(--strong); font-size: 1.18rem; font-weight: 600; line-height: 1.3; }
+  .feature p { margin: 7px 0 0; color: #b9c1cc; font-size: clamp(.94rem, 1.9vw, 1rem); line-height: 1.58; }
+  .dots { display: flex; gap: 8px; margin-top: 12px; animation: rise 1.2s .6s ease both; }
+  .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--moss); transition: background .6s, transform .6s; cursor: pointer; }
+  .dots i.on { background: var(--teal); transform: scale(1.3); }
+
+  /* The stack, drawn: rings from the kernel up, each named; a trace climbs
+     the axis and each ring brightens as it passes. */
+  .stack { width: 100%; height: auto; overflow: visible; animation: rise 1.4s .15s ease both; }
+  .stack .ring { fill: none; stroke-width: 1.3; opacity: 0; animation: ring-in .9s ease forwards; }
+  .stack .ring.pulse { animation: ring-in .9s ease forwards, pass 6s ease-in-out infinite; }
+  .stack .ring.focus { stroke-width: 2.4; filter: drop-shadow(0 0 6px currentColor); }
+  .stack .name { fill: #e6eaf0; font: 600 12.5px Inter, system-ui, sans-serif; opacity: 0; animation: fade .9s ease forwards; }
+  .stack .role { fill: #8b93a2; font: 11px Inter, system-ui, sans-serif; opacity: 0; animation: fade .9s ease forwards; }
+  .stack .lit .name { fill: #fff; } .stack .lit .role { fill: #c9d1db; }
+  .stack .axis { stroke: rgba(255,255,255,.12); stroke-width: 1; stroke-dasharray: 2 4; }
+  .stack .star { opacity: 0; animation: fade 1.2s ease forwards; }
+  .stack .trace { fill: #fff; filter: drop-shadow(0 0 6px var(--teal)) drop-shadow(0 0 14px var(--teal)); animation: climb 6s ease-in-out infinite; }
+
+  @keyframes ring-in { from { opacity: 0; transform: translateY(8px) } to { opacity: .85; transform: none } }
+  @keyframes fade { to { opacity: 1 } }
+  @keyframes pass { 0%, 100% { stroke-opacity: .55 } 50% { stroke-opacity: 1 } }
+  @keyframes climb { 0% { transform: translateY(0); opacity: 0 } 6% { opacity: 1 } 88% { opacity: 1 } 100% { transform: translateY(-336px); opacity: 0 } }
+
+  /* The wait: its own section at the bottom, honest when it can be. */
+  .wait { position: relative; z-index: 1; margin: auto 0 0; padding: 36px 0 clamp(28px, 6vh, 48px);
+          width: min(340px, calc(100vw - 64px)); text-align: center; animation: rise 1.4s .8s ease both; }
+  .bar { position: relative; height: 3px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,.1); }
+  .bar span { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--teal);
+              box-shadow: 0 0 12px var(--teal); transition: width .3s ease; }
+  .bar.sweep span { width: 30%; animation: sweep 2.6s ease-in-out infinite; }
+  .status { margin: 12px 0 0; color: #b4bcc8; font-size: .95rem; letter-spacing: .02em; }
+  .status a { color: var(--teal); }
+
+  /* The same splash, over the App panel while its site loads (src/ide.rs
+     site_frame LOADER): full while there is nothing to show yet, a veil over
+     the old page while a save's reload loads behind it, then it fades. */
+  #cove-site-loader { place-items: center; text-align: center; overflow: hidden; color: var(--text);
+    font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: linear-gradient(rgba(0,0,0,.27), rgba(0,0,0,.27)),
+                url("splash.webp") center bottom / cover no-repeat, var(--deep);
+    transition: opacity .35s ease, background-color .35s ease; }
+  #cove-site-loader.veil { background: rgba(11,13,18,.55); backdrop-filter: blur(3px); }
+  #cove-site-loader.off { opacity: 0; pointer-events: none; }
+  #cove-site-loader .title { font-size: clamp(2.2rem, 6vw, 3.6rem); margin: 6px 0 0; }
+  #cove-site-loader .bar { width: min(220px, 60vw); margin: 18px auto 0; }
+
+  @keyframes rise  { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: none } }
+  @keyframes sweep { 0% { left: -30% } 100% { left: 100% } }
+  @media (prefers-reduced-motion: reduce) {
+    .head, .lead, .asks, .features, .dots, .wait, .stack { animation: none; }
+    .stack .ring, .stack .name, .stack .role, .stack .star { animation: none; opacity: .85; }
+    .stack .trace { animation: none; opacity: 0; }
+    .bar.sweep span { animation: none; width: 100%; opacity: .5; }
+  }
+  /* Narrow: one column, the drawing first and smaller. */
+  @media (max-width: 900px) {
+    .stage { grid-template-columns: 1fr; gap: 8px; }
+    .art { order: -1; max-width: 340px; margin: 0 auto; width: 100%; }
+    .copy { text-align: center; } .head, .asks, .dots { justify-content: center; }
+    .detail, .features { margin-left: auto; margin-right: auto; }
+  }
+  /* Short windows: the drawing steps aside before the copy meets the bar. */
+  @media (max-height: 760px) { .lead { margin-top: 16px; } .features { margin-top: 16px; } .asks { margin-top: 12px; } }
+  @media (max-height: 680px) { .art { display: none; } .stage { padding-top: 18px; } .claim { font-size: 1.4rem; } .detail { font-size: .95rem; margin-top: 8px; }
+                               .features { padding: 12px 18px 14px; } .feature h3 { font-size: 1.02rem; } .feature p { font-size: .93rem; }
+                               .wait { padding: 16px 0; } }
+  @media (max-height: 560px) { .features, .dots, .asks { display: none; } }
+  /* A phone: the drawing small, the five questions folded into the cards,
+     so the wait stays on the screen. */
+  @media (max-width: 900px) { .art { max-width: 230px; } .asks { display: none; } .lead { margin-top: 12px; }
+                              .detail { font-size: .95rem; } .features { margin-top: 14px; } .stage { padding-top: 12px; } }
+  @media (max-width: 900px) and (max-height: 760px) { .art { display: none; } }
+</style>
+</head>
+<body>
+<!-- cove serve: the same UI as the desktop app, compiled to WebAssembly (src/main.rs, wasm32). -->
+<canvas id="ndexr"></canvas>
+<div id="splash" role="status" aria-live="polite">
+  <div class="stage">
+    <div class="copy">
+      <div class="head">
+        <svg class="gem" viewBox="-15 -15 30 30" aria-hidden="true"><path d="M-13,-6 L-7,-13 L7,-13 L13,-6 L0,13 Z M-13,-6 L13,-6 M-7,-13 L-3.5,-6 L0,13 M7,-13 L3.5,-6 L0,13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <div><h1 class="title">Cove</h1><p class="by">by <b>ndexr</b></p></div>
+      </div>
+      <div class="lead">
+        <p class="claim">Traceable <em>scientific control</em>.</p>
+        <p class="detail">A model of your organisation's scientific software that anyone can inspect, from the platform underneath to the analysis on top - built from source, and honest about every binary that was not.</p>
+      </div>
+      <ul class="asks" aria-label="what it establishes">
+        <li>What we have</li><li>Where it came from</li><li>What actually runs</li><li>Who is responsible</li><li>Why its use is acceptable</li>
+      </ul>
+      <div class="features" id="features"></div>
+      <div class="dots" id="dots" aria-hidden="true"></div>
+    </div>
+    <div class="art" aria-hidden="true"><svg class="stack" id="stack" viewBox="0 0 420 430"></svg></div>
+  </div>
+  <div class="wait">
+    <div class="bar sweep" id="bar"><span></span></div>
+    <p class="status" id="status">Opening Cove…</p>
+  </div>
+</div>
+<script>
+  // What Cove is (operator, 2026-10-15): a system for building and managing
+  // extraordinary amounts of scientific software across thousands of users
+  // and clusters, kernel to user, immutable
+  // over time, customisable without breaking earlier environments, for
+  // regulated and scientific work. Keep in step with ndexr.io's hero copy.
+  (function () {
+    // What Cove's atlas establishes (operator, 2026-10-21: "Atlas gives an
+    // organisation a model of its scientific software ... what it has, where
+    // it came from, what actually runs, who is responsible for it, and why
+    // its use is acceptable"). Each card lights the layer of the drawing it
+    // is about (L, indices into LAYERS below). No counts: figures come from
+    // live data only, inside the app.
+    var F = [
+      ["What clean means \u00b7 identity", "Which artifact, exactly", "Every component identifiable down to the exact build it is: name, version, architecture and the file that was produced.", [4]],
+      ["What clean means \u00b7 provenance", "Where it came from", "Source, builder, publication channel and build evidence for each piece - or marked unknown until there is evidence.", [2, 1]],
+      ["What clean means \u00b7 purpose", "Why it is here", "Which environments and applications need it. What nothing needs becomes a candidate for retirement.", [5, 6]],
+      ["What clean means \u00b7 responsibility", "Who answers for it", "Someone accountable for maintaining each component, or for accepting it from a supplier.", [6]],
+      ["What clean means \u00b7 status", "Whether its use is acceptable", "Intended use, approval evidence, exceptions and retirement, visible beside the software itself.", [5]],
+      ["Catching external binaries", "Declared, installed, observed", "What an environment is supposed to use, what is actually on disk, and what an application actually loaded. Where they differ, something needs explaining.", [5, 4, 7]],
+      ["External is not unapproved", "Three findings, kept apart", "External origin, unknown provenance and unapproved use are separate. A downloaded binary may be deliberately approved; a local build may still await review.", [4]],
+      ["For the reviewer", "Software, and the evidence for it", "Identity, intended use, assessment, approval and deployment, connected - so a computational method can be reconstructed and a change controlled.", [7, 6]],
+      ["From the platform up", "Trace a result to the kernel", "Pick a number in a report and follow it down: the package that computed it, the build that made that package, its toolchain, Gentoo Prefix and the kernel - each with its record.", [0, 1, 2, 3, 4, 5, 6, 7]]
+    ];
+    // The stack, bottom up: each layer's name, its part, its colour (the
+    // atlas's own, src/atlas.rs Layer::color) and its ring's half-width.
+    var LAYERS = [
+      ["Kernel", "the host platform", "#f4e9c8", 46],
+      ["Gentoo Prefix", "compatibility layer", "#e39a5a", 62],
+      ["EasyBuild", "how software is built", "#5aa6e3", 78],
+      ["Runtimes", "R, Python, Rust, Julia", "#9fd36b", 92],
+      ["Packages", "each one a binary", "#c79bf0", 104],
+      ["Environments", "a choice of binaries", "#5ec4c0", 96],
+      ["Applications", "what people use", "#e8a75d", 82],
+      ["Executions", "what actually ran", "#ffffff", 62]
+    ];
+    var NS = "http://www.w3.org/2000/svg", svg = document.getElementById("stack"), rings = [];
+    function el(tag, at) { var e = document.createElementNS(NS, tag); for (var k in at) e.setAttribute(k, at[k]); return e; }
+    var cx = 130, bottom = 392, step = 48;
+    svg.append(el("line", { class: "axis", x1: cx, y1: bottom + 10, x2: cx, y2: bottom - step * 7 - 18 }));
+    LAYERS.forEach(function (l, i) {
+      var y = bottom - i * step, d = (0.25 + i * 0.16) + "s";
+      var g = el("g", {});
+      var ring = el("ellipse", { class: "ring pulse", cx: cx, cy: y, rx: l[3], ry: l[3] * 0.24, stroke: l[2], color: l[2] });
+      // Brightest as the trace passes: its delay is its height on the climb.
+      ring.style.animationDelay = d + ", " + (i * 0.71).toFixed(2) + "s";
+      g.append(ring);
+      // A few stars on each ring, placed the same every time.
+      for (var j = 0; j < 3 + i; j++) {
+        var th = (j * 2.399 + i) % 6.283, sx = cx + l[3] * Math.cos(th), sy = y + l[3] * 0.24 * Math.sin(th);
+        var st = el("circle", { class: "star", cx: sx.toFixed(1), cy: sy.toFixed(1), r: (1.2 + (j % 3) * 0.5).toFixed(1), fill: l[2] });
+        st.style.animationDelay = (0.5 + i * 0.16 + j * 0.05).toFixed(2) + "s";
+        g.append(st);
+      }
+      var name = el("text", { class: "name", x: cx + 118, y: y - 1 }); name.textContent = l[0]; name.style.animationDelay = d;
+      var role = el("text", { class: "role", x: cx + 118, y: y + 13 }); role.textContent = l[1]; role.style.animationDelay = d;
+      g.append(name, role);
+      svg.append(g); rings.push(g);
+    });
+    // The trace: up the axis from the kernel to the executions, again and again.
+    svg.append(el("circle", { class: "trace", cx: cx, cy: bottom, r: 3.4 }));
+    function light(ls) {
+      rings.forEach(function (g, k) {
+        var on = ls.indexOf(k) >= 0;
+        g.classList.toggle("lit", on);
+        g.firstChild.classList.toggle("focus", on);
+      });
+    }
+    var box = document.getElementById("features"), dots = document.getElementById("dots");
+    F.forEach(function (f, n) {
+      var a = document.createElement("article"); a.className = "feature";
+      var k = document.createElement("span"); k.className = "k"; k.textContent = f[0];
+      var h = document.createElement("h3"); h.textContent = f[1];
+      var p = document.createElement("p"); p.textContent = f[2];
+      a.append(k, h, p); box.append(a); dots.append(document.createElement("i"));
+    });
+    var i = 0, items = box.children, ds = dots.children;
+    function show(n) {
+      for (var k = 0; k < items.length; k++) { items[k].classList.toggle("on", k === n); ds[k].classList.toggle("on", k === n); }
+      light(F[n][3]);
+    }
+    // A dot is a way to a card, and the turning starts again from it.
+    Array.prototype.forEach.call(ds, function (d, n) {
+      d.addEventListener("click", function () { i = n; show(i); clearInterval(window.__coveFeatures); window.__coveFeatures = setInterval(next, 7000); });
+    });
+    function next() { i = (i + 1) % F.length; show(i); }
+    show(0);
+    window.__coveFeatures = setInterval(next, 7000);
+
+  })();
+</script>
+<script>
+  // Pictures for the agent (src/shots.rs): the App panel's site, captured by
+  // the site itself (every ndexr site loads javascript/preview_capture_child.js,
+  // which draws the page with html2canvas when a trusted parent asks), and
+  // images pasted anywhere in Cove. Each lands in a queue the app drains:
+  // a data URL, "PASTE:" + a data URL, or "ERROR:" + why.
+  // Full screen for app.rs (toggle_fullscreen): the standard API, Safari's
+  // prefixed one, and an answer when the browser has neither (iPhone).
+  window.coveFullscreen = {
+    active: function () { return !!(document.fullscreenElement || document.webkitFullscreenElement); },
+    standalone: function () {
+      return navigator.standalone === true || (!!window.matchMedia && matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches);
+    },
+    toggle: function () {
+      var d = document, e = d.documentElement;
+      if (this.active()) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return "ok"; }
+      var go = e.requestFullscreen || e.webkitRequestFullscreen;
+      if (!go || d.fullscreenEnabled === false || (d.fullscreenEnabled === undefined && !d.webkitFullscreenEnabled)) {
+        return this.standalone() ? "standalone" : "unsupported";
+      }
+      var p = go.call(e);
+      if (p && p.catch) p.catch(function (err) { console.warn("cove: full screen refused", err); });
+      return "ok";
+    }
+  };
+
+  window.coveShots = (function () {
+    var st = { got: [], pending: null };
+    window.addEventListener("message", function (e) {
+      if (!e.data || !st.pending || e.data.id !== st.pending) return;
+      if (e.data.type === "ndexr_capture_result") st.got.push(e.data.dataUrl);
+      else if (e.data.type === "ndexr_capture_error") st.got.push("ERROR:the site could not draw itself" + (e.data.reason ? " (" + e.data.reason + ")" : ""));
+      else return;
+      st.pending = null;
+    });
+    st.site = function () {
+      // Two frames take turns (the App tab's smooth reload): the one shown.
+      var f = ["ndexr-viewer-site", "ndexr-viewer-site-b"].map(function (id) { return document.getElementById(id); })
+        .filter(function (e) { return e && e.contentWindow && e.style.display !== "none" && e.style.visibility !== "hidden"; })[0];
+      if (!f) { st.got.push("ERROR:no site is showing in App"); return; }
+      var id = "cove-" + Date.now(), origin = "*";
+      try { origin = new URL(f.src).origin; } catch (e) {}
+      st.pending = id;
+      f.contentWindow.postMessage({ type: "ndexr_capture", id: id }, origin);
+      setTimeout(function () {
+        if (st.pending === id) { st.pending = null; st.got.push("ERROR:the site did not answer - it may not load ndexr's capture script"); }
+      }, 15000);
+    };
+    document.addEventListener("paste", function (e) {
+      var items = (e.clipboardData && e.clipboardData.items) || [];
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].kind !== "file" || !/^image\//.test(items[i].type)) continue;
+        var file = items[i].getAsFile();
+        if (!file) continue;
+        e.preventDefault();
+        (function (r) {
+          r.onload = function () { st.got.push("PASTE:" + r.result); };
+          r.readAsDataURL(file);
+        })(new FileReader());
+      }
+    }, true);
+    // Help › Send a request's Attach files: any file (a screenshot, a
+    // recording, a document), each as "FILE:" + its name + newline + data URL.
+    st.pick = function () {
+      var inp = document.createElement("input");
+      inp.type = "file"; inp.multiple = true;
+      inp.addEventListener("change", function () {
+        Array.prototype.forEach.call(inp.files || [], function (f) {
+          var r = new FileReader();
+          r.onload = function () { st.got.push("FILE:" + f.name + "\n" + r.result); };
+          r.readAsDataURL(f);
+        });
+      });
+      inp.click();
+    };
+    st.take = function () { return st.got.length ? st.got.shift() : null; };
+    return st;
+  })();
+  // The mic for every agent box (src/voice.rs): record here, the app takes
+  // the clip as a data URL and sends it to be transcribed. webm on Chrome and
+  // Firefox, mp4 on Safari/iOS - whichever this browser records.
+  window.coveMic = (function () {
+    var rec = null, stream = null, chunks = [], st = { state: "idle", result: null };
+    function type() {
+      var ts = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg"];
+      for (var i = 0; i < ts.length; i++) if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(ts[i])) return ts[i];
+      return "";
+    }
+    st.start = function () {
+      st.result = null;
+      if (!navigator.mediaDevices || !window.MediaRecorder) { st.result = "ERROR:this browser cannot record"; return; }
+      st.state = "starting";
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+        stream = s; chunks = [];
+        var t = type();
+        rec = t ? new MediaRecorder(s, { mimeType: t }) : new MediaRecorder(s);
+        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = function () {
+          stream.getTracks().forEach(function (x) { x.stop(); });
+          var blob = new Blob(chunks, { type: rec.mimeType || t || "audio/webm" });
+          var fr = new FileReader();
+          fr.onload = function () { st.result = fr.result; st.state = "idle"; };
+          fr.onerror = function () { st.result = "ERROR:could not read the recording"; st.state = "idle"; };
+          fr.readAsDataURL(blob);
+        };
+        rec.start(250);
+        st.state = "recording";
+        if (st.stopAsked) { st.stopAsked = false; st.stop(); }
+      }).catch(function (e) { st.result = "ERROR:" + (e && e.message || e); st.state = "idle"; });
+    };
+    st.stop = function () {
+      if (st.state === "starting") { st.stopAsked = true; return; }
+      if (rec && rec.state !== "inactive") { st.state = "packing"; rec.stop(); }
+    };
+    st.take = function () { var r = st.result; st.result = null; return r; };
+    return st;
+  })();
+  // Go's Briefing (src/voice.rs play): an mp3 made on the server (brief.rs),
+  // handed over as base64 and played through one <audio> element.
+  window.covePlay = (function () {
+    var el = null, url = null;
+    function drop() { if (el) { el.pause(); el = null; } if (url) { URL.revokeObjectURL(url); url = null; } }
+    return {
+      play: function (b64) {
+        drop();
+        var bin = atob(String(b64)), bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        url = URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" }));
+        el = new Audio(url);
+        el.play().catch(function () {});
+      },
+      stop: function () { drop(); },
+      playing: function () { return !!el && !el.paused && !el.ended; },
+      // "1:05 / 4:32" while there is something to play.
+      clock: function () {
+        if (!el || !isFinite(el.duration)) return "";
+        function t(s) { s = Math.floor(s); return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2); }
+        return t(el.currentTime) + " / " + t(el.duration);
+      }
+    };
+  })();
+  // Go mode's Listen (src/voice.rs Listen): the mic stays open. One recorder
+  // keeps the whole of it; a second is cut every `secs` so each piece is a
+  // file of its own to transcribe while the talking goes on. seg() hands the
+  // pieces over in order, final() the whole once stopped, err() why it failed.
+  window.coveListen = (function () {
+    var st = { state: "off", segs: [], full: null, err: null };
+    var stream = null, full = null, fullChunks = [], seg = null, timer = null, type = "";
+    function pick() {
+      var ts = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg"];
+      for (var i = 0; i < ts.length; i++) if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(ts[i])) return ts[i];
+      return "";
+    }
+    function url(blob, cb) { var fr = new FileReader(); fr.onload = function () { cb(fr.result); }; fr.readAsDataURL(blob); }
+    function rec() { return type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream); }
+    function piece() {
+      var chunks = [], me = rec();
+      me.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      // Under ~4 KB is silence or a click: not worth a transcription.
+      me.onstop = function () { var b = new Blob(chunks, { type: me.mimeType || type }); if (b.size > 4000) url(b, function (u) { st.segs.push(u); }); };
+      me.start();
+      seg = me;
+    }
+    st.start = function (secs) {
+      if (st.state !== "off") return;
+      if (!navigator.mediaDevices || !window.MediaRecorder) { st.err = "this browser cannot record"; return; }
+      st.state = "starting"; fullChunks = []; st.full = null;
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+        stream = s; type = pick();
+        full = rec();
+        full.ondataavailable = function (e) { if (e.data && e.data.size) fullChunks.push(e.data); };
+        full.start(1000);
+        piece();
+        timer = setInterval(function () { if (seg && seg.state !== "inactive") seg.stop(); piece(); }, Math.max(15, secs || 60) * 1000);
+        st.state = "on";
+      }).catch(function (e) { st.err = String(e && e.message || e); st.state = "off"; });
+    };
+    st.stop = function () {
+      if (st.state !== "on") return;
+      clearInterval(timer); timer = null;
+      if (seg && seg.state !== "inactive") seg.stop();
+      seg = null; st.state = "packing";
+      full.onstop = function () {
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        url(new Blob(fullChunks, { type: full.mimeType || type }), function (u) { st.full = u; st.state = "off"; });
+      };
+      full.stop();
+    };
+    st.status = function () { return st.state; };
+    st.seg = function () { return st.segs.length ? st.segs.shift() : null; };
+    st.final = function () { var f = st.full; st.full = null; return f; };
+    st.error = function () { var e = st.err; st.err = null; return e; };
+    return st;
+  })();
+</script>
+<script type="module">
+  import init from "./cove.js";
+  const bar = document.getElementById("bar"), status = document.getElementById("status");
+
+  // The UI, fetched here rather than inside init() so the line along the
+  // bottom can show real progress. When the size is unknown (or the body is
+  // compressed, so the length is not the byte count) it keeps sweeping.
+  async function wasm() {
+    const r = await fetch("./cove_bg.wasm");
+    if (!r.ok) throw new Error(`cove_bg.wasm: HTTP ${r.status}`);
+    const total = +r.headers.get("content-length") || 0;
+    const exact = total && !r.headers.get("content-encoding") && r.body;
+    if (!exact) return r.arrayBuffer();
+    bar.classList.remove("sweep");
+    const reader = r.body.getReader(), parts = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value); got += value.length;
+      bar.firstElementChild.style.width = `${Math.min(100, (got / total) * 100).toFixed(1)}%`;
+      status.textContent = `opening Cove… ${Math.round(got / 1e6)} of ${Math.round(total / 1e6)} MB`;
+    }
+    const out = new Uint8Array(got);
+    let at = 0;
+    for (const p of parts) { out.set(p, at); at += p.length; }
+    return out;
+  }
+
+  function finish() {
+    status.textContent = "welcome back";
+    const s = document.getElementById("splash");
+    // Two frames: let the app paint its first frame underneath first.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      s.classList.add("done");
+      setTimeout(() => { clearInterval(window.__coveFeatures); s.remove(); }, 1300);
+    }));
+  }
+
+  (async () => {
+    let bytes = null;
+    try { bytes = await wasm(); } catch (e) { console.warn("cove: progress fetch failed, loading plainly", e); }
+    status.textContent = "starting Cove…";
+    bar.classList.add("sweep");
+    try {
+      await (bytes ? init({ module_or_path: bytes }) : init());
+      finish();
+    } catch (e) {
+      console.error(e);
+      bar.classList.remove("sweep");
+      status.innerHTML = "";
+      status.append("Cove could not start (", String(e && e.message || e), ") · ");
+      const a = document.createElement("a"); a.href = location.href; a.textContent = "try again";
+      status.append(a);
+    }
+  })();
+</script>
+</body>
+</html>

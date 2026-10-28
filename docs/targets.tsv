@@ -1,0 +1,41 @@
+# Build targets: EESSI's supported CPU and GPU targets (eessi.io/docs,
+# "Supported CPU targets" and "Supported GPU targets", page dated 2026-09-03,
+# pasted by the operator 2026-10-24) against what ndexr builds and owns.
+#
+# ndexr_now   what the stack builds for it today. Every tree is
+#             --optarch=GENERIC, one per ISA (docs/stack-knowledge.md, Gaps 1).
+# native_on   an ndexr machine whose CPU (or GPU) IS this target, measured
+#             2026-10-24 from the catalog's run records (itype) and lscpu:
+#             intel = m7i, amd = m7a, arm = m7g, gpu = g5 (EPYC 7R32 + A10G),
+#             host = this on-prem box (Ryzen 9 3900X).
+# cuda rows   EESSI builds each capability for each CPU target (15 x 5 =
+#             75 builds of one application in 2025.06); ndexr builds one binary
+#             carrying several capabilities, for the generic CPU only.
+# aws         an EC2 family with that CPU, where ndexr owns none. Not measured
+#             here: check `lscpu` / archspec on the instance before a build.
+#
+# target	kind	description	eessi	ndexr_now	native_on	aws
+x86_64/generic	cpu	fallback for older Intel and AMD CPUs	2023.06 2025.06 2026.06	built (the only x86-64 tree)	every x86-64 machine	-
+x86_64/intel/haswell	cpu	Intel Haswell, Broadwell	2023.06 2025.06 2026.06	generic	-	c4
+x86_64/intel/skylake_avx512	cpu	Intel Skylake	2023.06 2025.06 2026.06	generic	-	c5 (first generation)
+x86_64/intel/cascadelake	cpu	Intel Cascade Lake, Cooper Lake	2023.06 2025.06 2026.06	generic	-	c5 (second generation), m5zn
+x86_64/intel/icelake	cpu	Intel Ice Lake	2023.06 2025.06 2026.06	generic	-	m6i, c6i
+x86_64/intel/sapphirerapids	cpu	Intel Sapphire Rapids, Emerald Rapids	2023.06 2025.06 2026.06	generic	intel (m7i)	m7i, c7i
+x86_64/intel/graniterapids	cpu	Intel Granite Rapids	2026.06	generic	-	m8i
+x86_64/amd/zen2	cpu	AMD Rome	2023.06 2025.06 2026.06	generic	gpu (g5, EPYC 7R32); host (Ryzen 9 3900X)	c5a, g5
+x86_64/amd/zen3	cpu	AMD Milan, Milan-X	2023.06 2025.06 2026.06	generic	-	m6a, c6a
+x86_64/amd/zen4	cpu	AMD Genoa, Genoa-X, Bergamo, Siena	2023.06 2025.06 2026.06	generic	amd (m7a)	m7a, c7a
+x86_64/amd/zen5	cpu	AMD Turin	2025.06 2026.06	generic	-	m8a, c8a
+aarch64/generic	cpu	fallback for 64-bit Arm CPUs	2023.06 2025.06 2026.06	built (the only arm64 tree)	arm (m7g)	-
+aarch64/neoverse_n1	cpu	AWS Graviton 2, Ampere Altra	2023.06 2025.06 2026.06	generic	-	m6g, c6g
+aarch64/neoverse_v1	cpu	AWS Graviton 3	2023.06 2025.06 2026.06	generic	arm (m7g)	m7g, c7g
+aarch64/aws/graviton4	cpu	AWS Graviton 4	2026.06	generic	-	m8g, c8g
+aarch64/nvidia/grace	cpu	NVIDIA Grace	2023.06 2025.06 2026.06	generic	-	-
+aarch64/a64fx	cpu	Fujitsu A64FX	2023.06 2025.06 2026.06	generic	-	-
+riscv64/generic	cpu	fallback for 64-bit RISC-V CPUs	2026.06	none (no riscv64 Prefix)	-	-
+cuda/cc7.0	gpu	Volta (V100)	2023.06 2025.06	in the gpu lane's one build for all of 7.0 7.5 8.0 8.6 8.9 9.0, on the generic x86-64 tree (stack-kit build-suite.sh)	-	p3
+cuda/cc7.5	gpu	Turing (T4)	2026.06	in the gpu lane's one build for all of 7.0 7.5 8.0 8.6 8.9 9.0, on the generic x86-64 tree (stack-kit build-suite.sh)	-	g4dn
+cuda/cc8.0	gpu	Ampere (A100; runs on 8.x: A10G, L4)	2023.06 2025.06 2026.06	in the gpu lane's one build for all of 7.0 7.5 8.0 8.6 8.9 9.0, on the generic x86-64 tree (stack-kit build-suite.sh)	gpu (g5, A10G is 8.6)	p4d, g5, g6
+cuda/cc9.0	gpu	Hopper (H100)	2023.06 2025.06 2026.06	in the gpu lane's one build for all of 7.0 7.5 8.0 8.6 8.9 9.0, on the generic x86-64 tree (stack-kit build-suite.sh)	-	p5
+cuda/cc10.0	gpu	Blackwell (B200)	2025.06 2026.06	not built (the lane stops at 9.0)	-	p6
+cuda/cc12.0	gpu	Blackwell (RTX PRO 6000 class)	2025.06 2026.06	not built (the lane stops at 9.0)	-	-

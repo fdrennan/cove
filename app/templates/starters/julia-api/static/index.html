@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scientific API · __HOST__</title>
+<style>
+  :root {
+    --bg: #05070f; --glass: rgba(16, 22, 40, 0.66); --edge: rgba(150, 180, 255, 0.15);
+    --text: #e9eef9; --mute: #9ba7c3; --c1: #4fe3ff; --c2: #ff5fb7; --c3: #ffd166; --c4: #8f7bff;
+    --get: #5be49b; --post: #ffb36b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body::before { content: ""; position: fixed; inset: 0; z-index: -1;
+    background:
+      radial-gradient(900px 600px at 10% -10%, rgba(79,227,255,0.18), transparent 60%),
+      radial-gradient(800px 600px at 100% 10%, rgba(255,95,183,0.14), transparent 60%),
+      radial-gradient(900px 700px at 50% 120%, rgba(143,123,255,0.20), transparent 60%), var(--bg); }
+  main { max-width: 1240px; margin: 0 auto; padding: 34px 22px 50px; }
+  header h1 { margin: 0; font-size: clamp(26px, 4vw, 38px); font-weight: 700; letter-spacing: 0.01em; }
+  header h1 span { background: linear-gradient(90deg, var(--c1), var(--c4), var(--c2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { margin: 6px 0 26px; color: var(--mute); font-size: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 540px), 1fr)); gap: 20px; }
+  .card { background: var(--glass); border: 1px solid var(--edge); border-radius: 20px; padding: 18px 20px;
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+    display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .card h2 { margin: 0; font-size: 19px; font-weight: 650; }
+  .route { font: 13px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--mute); white-space: nowrap; }
+  .route b { font-weight: 700; margin-right: 6px; }
+  .route b.GET { color: var(--get); } .route b.POST { color: var(--post); }
+  .ms { color: var(--mute); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: 8px; }
+  canvas.plot { width: 100%; height: 240px; display: block; border-radius: 12px; background: rgba(0,0,0,0.25); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+  .ctl { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--mute); }
+  .ctl output { color: var(--text); min-width: 38px; font-variant-numeric: tabular-nums; }
+  input[type=range] { accent-color: var(--c4); width: 110px; }
+  select, textarea, button { font: inherit; color: var(--text); background: rgba(255,255,255,0.06);
+    border: 1px solid var(--edge); border-radius: 10px; }
+  select { padding: 6px 10px; } select option { background: #141a2e; }
+  button { padding: 6px 14px; cursor: pointer; font-weight: 600; } button:hover { background: rgba(255,255,255,0.12); }
+  textarea { width: 100%; height: 56px; padding: 8px 10px; resize: vertical; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { padding: 6px 10px; border-radius: 10px; background: rgba(255,255,255,0.05); border: 1px solid var(--edge); font-size: 13px; }
+  .chip span { color: var(--mute); margin-right: 6px; }
+  .chip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--edge); }
+  th:first-child, td:first-child { text-align: left; } th { color: var(--mute); font-weight: 500; }
+  details summary { cursor: pointer; color: var(--mute); font-size: 13px; }
+  pre { margin: 8px 0 0; max-height: 220px; overflow: auto; padding: 10px; border-radius: 10px; background: rgba(0,0,0,0.35);
+    font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; color: #cfd8ee; }
+  .err { color: #ffb36b; font-size: 13px; }
+  .key { display: flex; gap: 14px; font-size: 13px; color: var(--mute); }
+  .key i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  footer { margin-top: 26px; color: var(--mute); font-size: 13px; text-align: center; }
+  @media (max-width: 640px) { main { padding: 20px 12px 40px; } .card { padding: 14px; } canvas.plot { height: 200px; } input[type=range] { width: 90px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><span>Scientific API</span></h1>
+    <p>Statistics, distributions, regression and differential equations, answered by Julia.</p>
+  </header>
+
+  <div class="grid">
+    <section class="card" id="c-stats">
+      <div class="top"><h2>Summary statistics</h2><div class="route"><b class="POST">POST</b>/stats<span class="ms"></span></div></div>
+      <div class="controls">
+        <button data-sample="normal">Normal</button><button data-sample="skewed">Skewed</button>
+        <button data-sample="bimodal">Bimodal</button><button data-sample="heavy">Heavy tails</button>
+      </div>
+      <textarea id="numbers" spellcheck="false" aria-label="numbers"></textarea>
+      <canvas class="plot" id="p-stats"></canvas>
+      <div class="chips" id="stats-chips"></div>
+      <div class="err"></div>
+      <details><summary>Response</summary><pre></pre></details>
+    </section>
+
+    <section class="card" id="c-dist">
+      <div class="top"><h2>Distributions</h2><div class="route"><b class="GET">GET</b>/distributions/<span id="dname">normal</span><span class="ms"></span></div></div>
+      <div class="controls"><select id="dist" aria-label="distribution"></select><span id="dparams" class="controls"></span></div>
+      <canvas class="plot" id="p-dist"></canvas>
+      <div class="key"><span><i style="background:var(--c1)"></i>density</span><span><i style="background:var(--c3)"></i>cdf</span></div>
+      <div class="chips" id="dist-chips"></div>
+      <div class="err"></div>
+      <details><summary>Response</summary><pre></pre></details>
+    </section>
+
+    <section class="card" id="c-fit">
+      <div class="top"><h2>Regression</h2><div class="route"><b class="POST">POST</b>/fit/linear<span class="ms"></span></div></div>
+      <div class="controls">
+        <label class="ctl">degree <select id="degree"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+        <button id="scatter">New data</button><button id="clearpts">Clear</button>
+      </div>
+      <canvas class="plot" id="p-fit" style="cursor:crosshair"></canvas>
+      <table id="coef"></table>
+      <div class="chips" id="fit-chips"></div>
+      <div class="err"></div>
+      <details><summary>Response</summary><pre></pre></details>
+    </section>
+
+    <section class="card" id="c-ode">
+      <div class="top"><h2>Predator and prey</h2><div class="route"><b class="GET">GET</b>/ode/lotka-volterra<span class="ms"></span></div></div>
+      <div class="controls" id="lvparams"></div>
+      <canvas class="plot" id="p-ode"></canvas>
+      <div class="key"><span><i style="background:var(--c1)"></i>prey</span><span><i style="background:var(--c2)"></i>predator</span></div>
+      <div class="chips" id="ode-chips"></div>
+      <div class="err"></div>
+      <details><summary>Response</summary><pre></pre></details>
+    </section>
+  </div>
+  <footer>Julia · HTTP.jl · JSON3 · StatsBase · Distributions · GLM · OrdinaryDiffEq</footer>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const css = getComputedStyle(document.documentElement);
+  const C = k => css.getPropertyValue(k).trim();
+  const f = (v, d = 3) => v == null ? "–" : Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(2) : (+v.toFixed(d)).toString();
+  const debounce = (fn, ms = 160) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
+
+  // One call: time it, show the JSON, surface an error on its card.
+  async function call(card, method, url, body) {
+    const el = $(card), t0 = performance.now();
+    try {
+      const r = await fetch(url, method === "POST"
+        ? { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+      const j = await r.json();
+      el.querySelector(".ms").textContent = Math.round(performance.now() - t0) + " ms";
+      el.querySelector("pre").textContent = JSON.stringify(j, null, 1).slice(0, 6000);
+      el.querySelector(".err").textContent = r.ok ? "" : (j.error || "HTTP " + r.status);
+      return r.ok ? j : null;
+    } catch (e) { el.querySelector(".err").textContent = "server unreachable"; return null; }
+  }
+
+  // ---- a small plotting kit: axes and series in data coordinates.
+  function surface(id) {
+    const c = $(id), dpr = Math.min(devicePixelRatio || 1, 2), r = c.getBoundingClientRect();
+    c.width = r.width * dpr; c.height = r.height * dpr;
+    const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { c, g, w: r.width, h: r.height };
+  }
+  function frame(s, xr, yr) {
+    const pad = { l: 44, r: 12, t: 12, b: 24 };
+    const X = x => pad.l + (x - xr[0]) / (xr[1] - xr[0] || 1) * (s.w - pad.l - pad.r);
+    const Y = y => s.h - pad.b - (y - yr[0]) / (yr[1] - yr[0] || 1) * (s.h - pad.t - pad.b);
+    const g = s.g; g.clearRect(0, 0, s.w, s.h);
+    g.font = "11px system-ui"; g.fillStyle = "rgba(155,167,195,0.85)"; g.strokeStyle = "rgba(150,180,255,0.10)"; g.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const yv = yr[0] + (yr[1] - yr[0]) * i / 4, xv = xr[0] + (xr[1] - xr[0]) * i / 4;
+      g.beginPath(); g.moveTo(pad.l, Y(yv)); g.lineTo(s.w - pad.r, Y(yv)); g.stroke();
+      g.textAlign = "right"; g.fillText(f(yv, 2), pad.l - 6, Y(yv) + 4);
+      g.textAlign = "center"; g.fillText(f(xv, 2), X(xv), s.h - 7);
+    }
+    return { X, Y, inv: (px, py) => [xr[0] + (px - pad.l) / (s.w - pad.l - pad.r) * (xr[1] - xr[0]),
+                                       yr[0] + (s.h - pad.b - py) / (s.h - pad.t - pad.b) * (yr[1] - yr[0])] };
+  }
+  function line(s, m, xs, ys, color, width = 2, glow = true) {
+    const g = s.g; g.save(); g.strokeStyle = color; g.lineWidth = width; g.lineJoin = "round";
+    if (glow) { g.shadowColor = color; g.shadowBlur = 10; }
+    g.beginPath(); let on = false;
+    xs.forEach((x, i) => { if (ys[i] == null) { on = false; return; } on ? g.lineTo(m.X(x), m.Y(ys[i])) : g.moveTo(m.X(x), m.Y(ys[i])); on = true; });
+    g.stroke(); g.restore();
+  }
+  const extent = (a, pad = 0.06) => { const v = a.filter(x => x != null); let lo = Math.min(...v), hi = Math.max(...v);
+    if (lo === hi) { lo -= 1; hi += 1; } const d = (hi - lo) * pad; return [lo - d, hi + d]; };
+  const chips = (id, kv) => $(id).innerHTML = kv.map(([k, v]) => `<div class="chip"><span>${k}</span><b>${v}</b></div>`).join("");
+
+  // Gaussian, gamma-ish and Cauchy draws for the sample buttons.
+  const randn = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random()); };
+  const SAMPLES = {
+    normal: () => randn() * 12 + 50,
+    skewed: () => Math.exp(randn() * 0.6 + 2.5),
+    bimodal: () => Math.random() < 0.45 ? randn() * 5 + 30 : randn() * 7 + 62,
+    heavy: () => 50 + 6 * Math.tan(Math.PI * (Math.random() - 0.5)) * 0.4,
+  };
+
+  // ---- /stats
+  const runStats = debounce(async () => {
+    const numbers = $("numbers").value.split(/[\s,;]+/).filter(Boolean).map(Number).filter(Number.isFinite);
+    const j = await call("c-stats", "POST", "stats", { numbers });
+    if (!j) return;
+    const s = surface("p-stats"), e = j.histogram.edges, cts = j.histogram.counts;
+    const m = frame(s, [e[0], e[e.length - 1]], [0, Math.max(...cts) * 1.12]);
+    cts.forEach((c, i) => {
+      const x0 = m.X(e[i]) + 1, x1 = m.X(e[i + 1]) - 1, y = m.Y(c);
+      const gr = s.g.createLinearGradient(0, y, 0, m.Y(0));
+      gr.addColorStop(0, "rgba(79,227,255,0.85)"); gr.addColorStop(1, "rgba(143,123,255,0.25)");
+      s.g.fillStyle = gr; s.g.fillRect(x0, y, Math.max(1, x1 - x0), m.Y(0) - y);
+    });
+    const vline = (x, color) => { s.g.strokeStyle = color; s.g.lineWidth = 2; s.g.setLineDash([5, 4]);
+      s.g.beginPath(); s.g.moveTo(m.X(x), m.Y(0)); s.g.lineTo(m.X(x), 10); s.g.stroke(); s.g.setLineDash([]); };
+    vline(j.mean, C("--c2")); vline(j.median, C("--c3"));
+    chips("stats-chips", [["n", j.n], ["mean", f(j.mean)], ["median", f(j.median)], ["sd", f(j.std)],
+      ["IQR", f(j.iqr)], ["skew", f(j.skewness)], ["kurtosis", f(j.kurtosis)], ["q5–q95", f(j.quantiles["5"], 2) + " – " + f(j.quantiles["95"], 2)]]);
+  });
+  document.querySelectorAll("[data-sample]").forEach(b => b.onclick = () => {
+    const gen = SAMPLES[b.dataset.sample];
+    $("numbers").value = Array.from({ length: 400 }, () => gen().toFixed(2)).join(" ");
+    runStats();
+  });
+  $("numbers").addEventListener("input", runStats);
+
+  // ---- /distributions/{name}: the same parameter table the server holds.
+  const DIST = {
+    normal: [["mu", -5, 5, 0.1, 0], ["sigma", 0.1, 5, 0.1, 1]],
+    lognormal: [["mu", -1, 2, 0.05, 0], ["sigma", 0.1, 1.5, 0.05, 0.5]],
+    gamma: [["shape", 0.5, 12, 0.1, 2], ["scale", 0.2, 5, 0.1, 2]],
+    beta: [["alpha", 0.3, 12, 0.1, 2], ["beta", 0.3, 12, 0.1, 5]],
+    exponential: [["scale", 0.2, 5, 0.1, 1]],
+    studentt: [["nu", 1, 40, 1, 4]],
+    chisq: [["k", 1, 30, 1, 3]],
+    cauchy: [["location", -3, 3, 0.1, 0], ["scale", 0.2, 4, 0.1, 1]],
+    weibull: [["shape", 0.5, 6, 0.1, 1.5], ["scale", 0.2, 4, 0.1, 1]],
+    uniform: [["a", -5, 0, 0.1, 0], ["b", 0.5, 5, 0.1, 1]],
+    poisson: [["lambda", 0.5, 40, 0.5, 4]],
+    binomial: [["n", 1, 80, 1, 20], ["p", 0.01, 0.99, 0.01, 0.3]],
+    geometric: [["p", 0.02, 0.9, 0.01, 0.2]],
+    negbinomial: [["r", 1, 30, 1, 5], ["p", 0.05, 0.95, 0.01, 0.5]],
+  };
+  const dsel = $("dist");
+  dsel.innerHTML = Object.keys(DIST).map(n => `<option>${n}</option>`).join("");
+  function sliders(host, spec, onchange) {
+    host.innerHTML = spec.map(([k, lo, hi, st, v]) =>
+      `<label class="ctl">${k}<input type="range" data-k="${k}" min="${lo}" max="${hi}" step="${st}" value="${v}"><output>${v}</output></label>`).join("");
+    host.querySelectorAll("input").forEach(i => i.addEventListener("input", () => { i.nextElementSibling.textContent = i.value; onchange(); }));
+  }
+  const values = host => Object.fromEntries([...host.querySelectorAll("input")].map(i => [i.dataset.k, i.value]));
+  const runDist = debounce(async () => {
+    const name = dsel.value; $("dname").textContent = name;
+    const j = await call("c-dist", "GET", `distributions/${name}?` + new URLSearchParams(values($("dparams"))));
+    if (!j) return;
+    const s = surface("p-dist"), xr = [j.x[0], j.x[j.x.length - 1]];
+    const dmax = Math.max(...j.density.filter(v => v != null)) * 1.1 || 1;
+    const m = frame(s, j.discrete ? [xr[0] - 0.5, xr[1] + 0.5] : xr, [0, dmax]);
+    if (j.discrete) {
+      j.x.forEach((x, i) => { const w = Math.max(2, Math.min(18, (m.X(1) - m.X(0)) * 0.7));
+        s.g.fillStyle = "rgba(79,227,255,0.8)"; s.g.fillRect(m.X(x) - w / 2, m.Y(j.density[i]), w, m.Y(0) - m.Y(j.density[i])); });
+    } else {
+      s.g.beginPath(); s.g.moveTo(m.X(j.x[0]), m.Y(0));
+      j.x.forEach((x, i) => s.g.lineTo(m.X(x), m.Y(j.density[i] ?? 0)));
+      s.g.lineTo(m.X(xr[1]), m.Y(0)); s.g.closePath();
+      const gr = s.g.createLinearGradient(0, 0, 0, s.h); gr.addColorStop(0, "rgba(79,227,255,0.45)"); gr.addColorStop(1, "rgba(79,227,255,0.02)");
+      s.g.fillStyle = gr; s.g.fill();
+      line(s, m, j.x, j.density, C("--c1"));
+    }
+    line(s, m, j.x, j.cdf.map(v => v * dmax / 1.1), C("--c3"), 1.5, false);
+    chips("dist-chips", [["mean", f(j.mean)], ["variance", f(j.var)], ["median", f(j.median)],
+      ["95% interval", f(j.quantiles["2.5"], 2) + " – " + f(j.quantiles["97.5"], 2)]]);
+  });
+  dsel.onchange = () => { sliders($("dparams"), DIST[dsel.value], runDist); runDist(); };
+
+  // ---- /fit/linear: click the plot to add a point.
+  let pts = [], fitView = null, fitMap = null;
+  function newData() {
+    const a = Math.random() * 2 - 1, b = Math.random() * 0.6 - 0.3;
+    pts = Array.from({ length: 36 }, () => { const x = Math.random() * 10; return [x, 3 + a * x + b * x * x / 2 + randn() * 2]; });
+    runFit();
+  }
+  const runFit = debounce(async () => {
+    const s = surface("p-fit");
+    const xr = fitView ? fitView[0] : extent(pts.map(p => p[0]).concat([0, 10]));
+    const yr = fitView ? fitView[1] : extent(pts.map(p => p[1]).concat([0, 10]), 0.15);
+    fitView = [xr, yr];
+    const draw = (j) => {
+      const m = frame(s, xr, yr); fitMap = m;
+      if (j) {
+        const F = j.fit; s.g.beginPath();
+        F.x.forEach((x, i) => s.g.lineTo(m.X(x), m.Y(F.upper[i])));
+        for (let i = F.x.length - 1; i >= 0; i--) s.g.lineTo(m.X(F.x[i]), m.Y(F.lower[i]));
+        s.g.closePath(); s.g.fillStyle = "rgba(143,123,255,0.22)"; s.g.fill();
+        line(s, m, F.x, F.y, C("--c4"), 2.5);
+      }
+      pts.forEach(([x, y]) => { s.g.fillStyle = C("--c3"); s.g.shadowColor = C("--c3"); s.g.shadowBlur = 8;
+        s.g.beginPath(); s.g.arc(m.X(x), m.Y(y), 3.6, 0, 7); s.g.fill(); s.g.shadowBlur = 0; });
+    };
+    draw(null);
+    if (pts.length < +$("degree").value + 2) { $("coef").innerHTML = ""; chips("fit-chips", []); return; }
+    const j = await call("c-fit", "POST", "fit/linear", { x: pts.map(p => p[0]), y: pts.map(p => p[1]), degree: +$("degree").value });
+    if (!j) return;
+    draw(j);
+    $("coef").innerHTML = "<tr><th>term</th><th>estimate</th><th>std. error</th><th>t</th><th>p</th></tr>" +
+      j.coefficients.map(c => `<tr><td>${c.term}</td><td>${f(c.estimate)}</td><td>${f(c.std_error)}</td><td>${f(c.t, 2)}</td><td>${f(c.p)}</td></tr>`).join("");
+    chips("fit-chips", [["n", j.n], ["R²", f(j.r2)], ["adj. R²", f(j.adj_r2)], ["σ", f(j.sigma)], ["AIC", f(j.aic, 1)]]);
+  }, 60);
+  $("p-fit").addEventListener("click", e => {
+    if (!fitMap) return;
+    const r = $("p-fit").getBoundingClientRect();
+    pts.push(fitMap.inv(e.clientX - r.left, e.clientY - r.top)); runFit();
+  });
+  $("degree").onchange = runFit;
+  $("scatter").onclick = () => { fitView = null; newData(); };
+  $("clearpts").onclick = () => { pts = []; runFit(); };
+
+  // ---- /ode/lotka-volterra
+  const LV = [["alpha", 0.1, 3, 0.05, 1.1], ["beta", 0.05, 1.5, 0.01, 0.4], ["gamma", 0.1, 3, 0.05, 0.4],
+              ["delta", 0.02, 1, 0.01, 0.1], ["prey", 1, 60, 1, 10], ["predator", 1, 30, 1, 10]];
+  const runODE = debounce(async () => {
+    const j = await call("c-ode", "GET", "ode/lotka-volterra?" + new URLSearchParams({ ...values($("lvparams")), tmax: 60 }));
+    if (!j) return;
+    const s = surface("p-ode");
+    const m = frame(s, [0, j.t[j.t.length - 1]], [0, Math.max(...j.prey, ...j.predator) * 1.08]);
+    line(s, m, j.t, j.prey, C("--c1"));
+    line(s, m, j.t, j.predator, C("--c2"));
+    chips("ode-chips", [["solver", j.solver], ["steps", j.steps], ["equilibrium", `${f(j.equilibrium.prey, 2)} prey · ${f(j.equilibrium.predator, 2)} predators`],
+      ["peak prey", f(Math.max(...j.prey), 1)], ["peak predators", f(Math.max(...j.predator), 1)]]);
+  }, 80);
+  sliders($("lvparams"), LV, runODE);
+
+  // First paint: every endpoint answers once.
+  $("numbers").value = Array.from({ length: 400 }, () => SAMPLES.bimodal().toFixed(2)).join(" ");
+  runStats(); dsel.onchange(); newData(); runODE();
+  addEventListener("resize", debounce(() => { runStats(); runDist(); runFit(); runODE(); }, 250));
+})();
+</script>
+</body>
+</html>

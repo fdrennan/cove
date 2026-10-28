@@ -1,0 +1,26 @@
+# ndexr in a browser, for one user — like an rstudio-server session, run as
+# that user so every job is theirs. One instance per user:
+#
+#   sudo systemctl enable --now cove@alice
+#   sudo -u alice cat ~alice/.config/ndexr/cove-token     # the sign-in token
+#   ssh -L 8788:127.0.0.1:8788 server, then http://127.0.0.1:8788/login
+#
+# Per-user settings (a second user needs another port):
+#   /etc/cove/alice.env   COVE_LISTEN=127.0.0.1:8789
+# It binds loopback by default; for a public URL put nginx with TLS in front.
+[Unit]
+Description=ndexr server for %i (the ndexr UI in a browser)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=~
+EnvironmentFile=-/etc/cove/%i.env
+ExecStart=/usr/bin/cove serve
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

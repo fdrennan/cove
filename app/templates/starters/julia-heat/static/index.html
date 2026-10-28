@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Heat Lab · __HOST__</title>
+<style>
+  :root { --glass: rgba(9, 12, 22, 0.68); --edge: rgba(255, 255, 255, 0.13); --text: #eaeef8; --mute: #aab4cc;
+    --accent: #ff7a45; --ok: #6be3a4; --warn: #ffb547; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #04050b; color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; touch-action: none; }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 18px;
+    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  header { position: fixed; top: 16px; left: 16px; padding: 12px 18px; max-width: calc(100vw - 360px); }
+  h1 { margin: 0; font-size: 21px; font-weight: 650; }
+  h1 span { background: linear-gradient(90deg, #6fd8ff, #c04bd0, var(--accent), #ffe9a8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #stats { margin-top: 3px; color: var(--mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+  #stats b { color: var(--text); font-weight: 600; }
+  .bar { margin-top: 8px; display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 11px; color: var(--mute); }
+  .bar i { height: 8px; border-radius: 4px; display: block; min-width: 140px;
+    background: linear-gradient(90deg, rgb(150,235,255) 0%, rgb(50,120,230) 8%, rgb(10,12,32) 20%, rgb(110,28,120) 42%, rgb(215,55,60) 62%, rgb(255,160,40) 82%, rgb(255,250,225) 100%); }
+  #panel { position: fixed; right: 16px; top: 16px; width: 316px; max-height: calc(100vh - 32px); overflow-y: auto;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 11px; }
+  .top { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+  #fold { display: none; }
+  .more { display: flex; flex-direction: column; gap: 11px; }
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: rgba(255,255,255,0.06); border-radius: 12px; padding: 3px; gap: 2px; }
+  .seg button { border: 0; background: transparent; padding: 7px 4px; font-size: 13px; }
+  .seg button.on { background: linear-gradient(135deg, rgba(255,122,69,0.42), rgba(192,75,208,0.45)); }
+  button { font: inherit; font-weight: 600; color: var(--text); cursor: pointer; border: 1px solid var(--edge);
+    border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,0.06); }
+  button:hover { background: rgba(255,255,255,0.12); }
+  .row { display: grid; grid-template-columns: 74px 1fr 78px; gap: 10px; align-items: center; font-size: 14px; color: var(--mute); }
+  .row output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .lab { font-size: 12px; color: var(--mute); margin-bottom: -5px; }
+  .mats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .mats button { padding: 6px 4px; font-size: 13px; }
+  .mats button.on { border-color: rgba(255,255,255,0.8); box-shadow: 0 0 10px rgba(255,160,90,0.35); }
+  #cfl { font-size: 13px; border-radius: 12px; padding: 8px 10px; border: 1px solid rgba(107,227,164,0.35);
+    background: rgba(107,227,164,0.08); font-variant-numeric: tabular-nums; }
+  #cfl b { font-weight: 650; }
+  #cfl.bad { border-color: rgba(255,181,71,0.6); background: rgba(255,181,71,0.13); }
+  #cfl.bad b.flag { color: var(--warn); }
+  .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  #run.on { background: linear-gradient(135deg, rgba(255,122,69,0.5), rgba(192,75,208,0.5)); }
+  #check { position: fixed; left: 16px; bottom: 16px; padding: 12px 14px; width: min(520px, calc(100vw - 32px)); display: none; font-size: 13px; }
+  #check.show { display: block; }
+  #check .h { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+  #check .h button { padding: 2px 9px; }
+  #check table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  #check th, #check td { text-align: right; padding: 3px 6px; }
+  #check th { color: var(--mute); font-weight: 500; border-bottom: 1px solid var(--edge); }
+  .pass { color: var(--ok); font-weight: 700; } .fail { color: var(--warn); font-weight: 700; }
+  #check .sum { margin-top: 6px; color: var(--mute); }
+  @media (max-width: 760px) {
+    header { top: 10px; left: 10px; right: 10px; max-width: none; padding: 9px 14px; }
+    h1 { font-size: 18px; }
+    #panel { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; max-height: 56vh; padding: 10px 12px; gap: 8px; }
+    #fold { display: block; }
+    #panel.folded .more { display: none; }
+    #check { left: 10px; right: 10px; width: auto; bottom: auto; top: 108px; max-height: 50vh; overflow-y: auto; }
+    #check th:nth-child(3), #check td:nth-child(3) { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<header class="glass" id="head">
+  <h1><span>Heat Lab</span></h1>
+  <div id="stats">&nbsp;</div>
+  <div class="bar"><span>0 °C</span><i></i><span>100 °C</span></div>
+</header>
+
+<section id="panel" class="glass">
+  <div class="top">
+    <div class="seg" id="tools">
+      <button data-t="hot" class="on">Heat</button><button data-t="cold">Cool</button><button data-t="wall">Wall</button><button data-t="erase">Erase</button>
+    </div>
+    <button id="run" class="on" title="Run or pause">Pause</button>
+    <button id="fold" title="Show or hide the controls">More</button>
+  </div>
+  <div class="more">
+    <div class="seg" id="hold"><button data-h="1" class="on">Held: heater / chiller</button><button data-h="0">Fades</button></div>
+    <div class="row"><label for="brush">brush</label><input id="brush" type="range" min="0.5" max="12" step="0.5" value="4"><output id="brushV"></output></div>
+    <div class="lab">material (sets the diffusivity α)</div>
+    <div class="mats" id="mats"></div>
+    <div class="row"><label for="alpha">α</label><input id="alpha" type="range" min="-1" max="2.3" step="any" value="1.987"><output id="alphaV"></output></div>
+    <div class="row"><label for="dt">Δt</label><input id="dt" type="range" min="-6" max="1" step="0.01" value="-3.46"><output id="dtV"></output></div>
+    <div id="cfl">&nbsp;</div>
+    <div class="row"><label for="steps">steps/frame</label><input id="steps" type="range" min="1" max="1000" step="1" value="120"><output id="stepsV"></output></div>
+    <div class="lab">plate edges</div>
+    <div class="seg" id="bc"><button data-b="fixed" class="on">Fixed temperature</button><button data-b="insulated">Insulated</button></div>
+    <div class="row" id="edgeRow"><label for="edge">edge T</label><input id="edge" type="range" min="0" max="100" step="1" value="20"><output id="edgeV"></output></div>
+    <div class="lab">grid (finer cells force a smaller Δt: the limit scales with h²)</div>
+    <div class="seg" id="grid"><button data-g="128">128²</button><button data-g="256" class="on">256²</button><button data-g="384">384²</button></div>
+    <div class="actions"><button data-s="sample">Sample</button><button data-s="gaussian">Gaussian</button><button data-s="blank">Clear</button></div>
+    <button id="checkBtn">Check: variance grows as 2αt</button>
+  </div>
+</section>
+
+<section id="check" class="glass"></section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const view = $("view"), ctx = view.getContext("2d");
+  const PLATE = 100;   // mm, the plate's side; the server uses the same
+  const SAFETY = 0.98; // the server clips an unstable Δt to this fraction of the limit
+  const MATS = [["Copper", 111], ["Aluminium", 97], ["Iron", 23], ["Steel", 4.2], ["Glass", 0.34], ["Water", 0.143]];
+
+  const sid = sessionStorage.heatSid || (sessionStorage.heatSid = Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, "0")).join(""));
+  const s = { tool: "hot", brush: 4, alpha: 97, dt: 3.5e-4, steps: 120, bc: "fixed", edge: 20, grid: 256, hold: true, running: true };
+  let queue = [], scene = null, dirty = true;
+
+  const fmtT = x => x >= 120 ? (x / 60).toFixed(1) + " min" : x >= 1 ? x.toFixed(2) + " s" : x >= 1e-3 ? (x * 1e3).toPrecision(3) + " ms" : (x * 1e6).toPrecision(3) + " µs";
+  const fmtA = a => a >= 10 ? a.toFixed(0) : a >= 1 ? a.toFixed(1) : a.toFixed(3);
+  const h = () => PLATE / s.grid;
+  const limit = () => h() * h() / (4 * s.alpha);
+
+  // The stability verdict, from the numbers the server applied (or, before
+  // the first answer, from the same formula here).
+  function showCFL(dtApplied) {
+    const lim = limit(), req = s.dt, r = s.alpha * req / (h() * h());
+    const el = $("cfl");
+    if (req > lim) {
+      const grow = Math.abs(1 - 8 * r);
+      el.className = "bad";
+      el.innerHTML = `<b class="flag">Δt ${fmtT(req)} is unstable.</b> r = αΔt/h² = <b>${r.toFixed(2)}</b> &gt; ¼, so the finest ripple (a checkerboard) would grow ×<b>${grow.toFixed(1)}</b> every step and swamp the plate. Running at <b>${fmtT(dtApplied ?? SAFETY * lim)}</b>, ${SAFETY} × the limit h²/4α = ${fmtT(lim)}.`;
+    } else {
+      el.className = "";
+      el.innerHTML = `Stable: r = αΔt/h² = <b>${r.toFixed(3)}</b> ≤ ¼. Limit h²/4α = <b>${fmtT(lim)}</b> with h = ${h().toFixed(3)} mm.`;
+    }
+  }
+
+  // Controls.
+  const seg = (id, key, attr, after) => document.querySelectorAll(`#${id} button`).forEach(b => b.onclick = () => {
+    document.querySelectorAll(`#${id} button`).forEach(x => x.classList.toggle("on", x === b));
+    s[key] = key === "grid" ? +b.dataset[attr] : key === "hold" ? b.dataset[attr] === "1" : b.dataset[attr];
+    after && after();
+  });
+  seg("tools", "tool", "t");
+  seg("hold", "hold", "h");
+  seg("bc", "bc", "b", () => { $("edgeRow").style.display = s.bc === "fixed" ? "" : "none"; dirty = true; });
+  seg("grid", "grid", "g", () => { showCFL(); dirty = true; layout(); });
+
+  $("mats").innerHTML = MATS.map(([n, a]) => `<button data-a="${a}">${n}</button>`).join("");
+  const markMat = () => document.querySelectorAll("#mats button").forEach(b => b.classList.toggle("on", Math.abs(+b.dataset.a - s.alpha) < 1e-9));
+  document.querySelectorAll("#mats button").forEach(b => b.onclick = () => { $("alpha").value = Math.log10(+b.dataset.a); syncAlpha(); });
+
+  const syncAlpha = () => { s.alpha = +Math.pow(10, +$("alpha").value).toPrecision(3); $("alphaV").textContent = fmtA(s.alpha) + " mm²/s"; markMat(); showCFL(); };
+  const syncDt = () => { s.dt = +Math.pow(10, +$("dt").value).toPrecision(3); $("dtV").textContent = fmtT(s.dt); showCFL(); };
+  const syncSteps = () => { s.steps = +$("steps").value; $("stepsV").textContent = s.steps; };
+  const syncEdge = () => { s.edge = +$("edge").value; $("edgeV").textContent = s.edge + " °C"; };
+  const syncBrush = () => { s.brush = +$("brush").value; $("brushV").textContent = s.brush + " mm"; };
+  $("alpha").oninput = syncAlpha; $("dt").oninput = syncDt; $("steps").oninput = syncSteps;
+  $("edge").oninput = syncEdge; $("brush").oninput = syncBrush;
+  $("alpha").value = Math.log10(s.alpha); syncAlpha(); syncDt(); syncSteps(); syncEdge(); syncBrush();
+
+  $("run").onclick = () => { s.running = !s.running; $("run").textContent = s.running ? "Pause" : "Run"; $("run").classList.toggle("on", s.running); };
+  document.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { scene = b.dataset.s; dirty = true; });
+  const panel = $("panel");
+  if (matchMedia("(max-width: 760px)").matches) panel.classList.add("folded");
+  $("fold").onclick = () => { panel.classList.toggle("folded"); $("fold").textContent = panel.classList.contains("folded") ? "More" : "Less"; layout(); };
+
+  // Where the plate sits: the largest square in the space the glass leaves.
+  let W = 0, H = 0, dpr = 1, plate = { x: 0, y: 0, size: 100 };
+  function layout() {
+    W = innerWidth; H = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2);
+    view.width = Math.round(W * dpr); view.height = Math.round(H * dpr);
+    const narrow = W <= 760, pr = panel.getBoundingClientRect(), hr = $("head").getBoundingClientRect();
+    let x0 = 0, x1 = W, y0 = 0, y1 = H;
+    if (narrow) { y0 = hr.bottom + 8; y1 = pr.top - 8; } else { x1 = pr.left - 16; if (x1 < W * 0.55) x1 = W; }
+    const size = Math.max(120, Math.min(x1 - x0, y1 - y0) - 24);
+    plate = { x: x0 + (x1 - x0 - size) / 2, y: y0 + Math.max(0, (y1 - y0 - size) / 2), size };
+    paint();
+  }
+
+  // Frames: the server's RGBA image goes onto an offscreen canvas of grid
+  // size, then is scaled onto the plate.
+  const off = document.createElement("canvas"), octx = off.getContext("2d");
+  let haveFrame = false;
+  function paint() {
+    // Some browsers change the viewport without a resize event (a phone's
+    // address bar, a headless start); a stale size would stretch the plate.
+    if (W !== innerWidth || H !== innerHeight) return layout();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+    g.addColorStop(0, "#0d0f1e"); g.addColorStop(1, "#03040a");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const { x, y, size } = plate;
+    ctx.save();
+    ctx.shadowColor = "rgba(255,120,70,0.25)"; ctx.shadowBlur = 40;
+    ctx.fillStyle = "#0a0c20"; ctx.fillRect(x, y, size, size);
+    ctx.restore();
+    if (haveFrame) { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; ctx.drawImage(off, x, y, size, size); }
+    ctx.strokeStyle = "rgba(255,255,255,0.18)"; ctx.lineWidth = 1; ctx.strokeRect(x - 0.5, y - 0.5, size + 1, size + 1);
+    ctx.fillStyle = "rgba(170,180,204,0.8)"; ctx.font = "12px system-ui"; ctx.textAlign = "right";
+    ctx.fillText(`${PLATE} mm`, x + size, y + size + 16);
+  }
+
+  async function stepOnce() {
+    const body = { sid, grid: s.grid, alpha: s.alpha, dt: s.dt, steps: s.running ? s.steps : 0, hold: s.hold, bc: s.bc, edge: s.edge, paint: queue.splice(0) };
+    if (scene) { body.scene = scene; scene = null; }
+    dirty = false;
+    const r = await fetch("api/step", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error((await r.json()).error);
+    const buf = await r.arrayBuffer(), H_ = r.headers, n = +H_.get("X-Grid");
+    off.width = n; off.height = n;
+    octx.putImageData(new ImageData(new Uint8ClampedArray(buf), n, n), 0, 0);
+    haveFrame = true; paint();
+    showCFL(+H_.get("X-Dt"));
+    $("stats").innerHTML = `t = <b>${fmtT(+H_.get("X-Time"))}</b> · ${H_.get("X-Steps")} steps in <b>${H_.get("X-Step-Ms")} ms</b> · ${H_.get("X-Tasks")} of ${H_.get("X-Threads")} threads · mean <b>${(+H_.get("X-Mean")).toFixed(2)} °C</b> · ${(+H_.get("X-Min")).toFixed(1)}–${(+H_.get("X-Max")).toFixed(1)} °C`;
+  }
+
+  // One request in flight at a time: the frame rate follows what the server
+  // and the network can carry instead of piling requests up.
+  const nextFrame = () => new Promise(res => requestAnimationFrame(res));
+  (async function loop() {
+    for (;;) {
+      if (s.running || queue.length || scene || dirty) {
+        try { await stepOnce(); } catch (e) { $("stats").textContent = e.message; await new Promise(r => setTimeout(r, 1000)); }
+      }
+      await nextFrame();
+    }
+  })();
+
+  // Painting: each pointer move adds a segment in plate millimetres.
+  const toMM = e => [(e.clientX - plate.x) / plate.size * PLATE, (e.clientY - plate.y) / plate.size * PLATE];
+  let last = null;
+  view.addEventListener("pointerdown", e => {
+    view.setPointerCapture(e.pointerId);
+    last = toMM(e);
+    queue.push({ kind: s.tool, x0: last[0], y0: last[1], r: s.brush });
+  });
+  view.addEventListener("pointermove", e => {
+    if (!last) return;
+    const p = toMM(e);
+    queue.push({ kind: s.tool, x0: last[0], y0: last[1], x1: p[0], y1: p[1], r: s.brush });
+    last = p;
+  });
+  const lift = () => last = null;
+  view.addEventListener("pointerup", lift); view.addEventListener("pointercancel", lift);
+  view.addEventListener("contextmenu", e => e.preventDefault());
+
+  // The Gaussian check runs on the server with the current α and grid.
+  $("checkBtn").onclick = async () => {
+    const box = $("check");
+    box.className = "glass show"; box.innerHTML = "Running the Gaussian check…";
+    try {
+      const r = await fetch(`api/check?alpha=${s.alpha}&grid=${s.grid}`);
+      const c = await r.json();
+      if (!r.ok) throw new Error(c.error);
+      const e = x => x.toExponential(1);
+      box.innerHTML = `<div class="h"><b>Gaussian blob: variance against σ₀² + 2αt</b><button id="xc">×</button></div>
+        <table><tr><th>t</th><th>steps</th><th>var x / var y (mm²)</th><th>σ₀² + 2αt</th><th>rel. error</th><th>peak / theory</th></tr>
+        ${c.rows.map(w => `<tr><td>${fmtT(w.t)}</td><td>${w.steps}</td><td>${w.var_x.toFixed(4)} / ${w.var_y.toFixed(4)}</td><td>${w.predicted.toFixed(4)}</td><td>${e(w.rel_err)}</td><td>${(w.peak / w.peak_predicted).toFixed(4)}</td></tr>`).join("")}</table>
+        <div class="sum"><span class="${c.pass ? "pass" : "fail"}">${c.pass ? "PASS" : "FAIL"}</span> · worst variance error ${e(c.max_rel_err)}, worst peak error ${e(c.peak_max_rel_err)} ·
+        α = ${fmtA(c.alpha)} mm²/s, ${c.grid}² cells, Δt = ${fmtT(c.dt)} (r = ${c.r.toFixed(3)}), ${c.steps} steps in ${c.ms} ms, insulated edges 50 mm from a blob that ends at σ = 9 mm.</div>`;
+      $("xc").onclick = () => box.className = "glass";
+    } catch (err) { box.textContent = err.message; }
+  };
+
+  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(layout, 120); });
+  layout();
+})();
+</script>
+</body>
+</html>

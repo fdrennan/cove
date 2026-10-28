@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scientific API · __HOST__</title>
+<style>
+  :root {
+    --bg: #0a0c11; --panel: #12151d; --line: #1f2430; --text: #e6e9ef; --dim: #9aa3b5;
+    --accent: #5cc8ff; --accent2: #b58cff; --good: #4ade80; --warn: #fbbf24; --bad: #f87171;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding: 28px 22px 60px; }
+  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 26px; font-weight: 650; letter-spacing: -0.01em; }
+  h1 span { color: var(--dim); font-weight: 500; }
+  .lead { margin: 4px 0 0; color: var(--dim); }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line);
+    border-radius: 999px; background: var(--panel); font: 13px var(--mono); color: var(--dim); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 8px currentColor; }
+  .dot.ok { background: var(--good); } .dot.down { background: var(--bad); }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  .wide { grid-column: 1 / -1; }
+  @media (max-width: 880px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .route { font: 12px var(--mono); color: var(--accent); background: #0d1a24; border: 1px solid #16324a; padding: 2px 8px; border-radius: 6px; margin-left: 8px; }
+  .time { font: 12px var(--mono); color: var(--dim); white-space: nowrap; }
+  .time b { color: var(--text); font-weight: 600; }
+  canvas, .shot { width: 100%; display: block; border-radius: 10px; background: #07090d; border: 1px solid var(--line); }
+  .shot { cursor: zoom-in; aspect-ratio: 16 / 10; object-fit: cover; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  label.s { display: grid; grid-template-columns: 52px 1fr 64px; align-items: center; gap: 8px; font: 13px var(--mono); color: var(--dim); flex: 1 1 200px; }
+  label.s output { color: var(--text); text-align: right; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=number], textarea { background: #0b0e14; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: 13px var(--mono); }
+  input[type=number] { width: 150px; }
+  textarea { width: 100%; height: 64px; resize: vertical; }
+  button { background: #1a2030; color: var(--text); border: 1px solid #2a3245; border-radius: 8px; padding: 7px 13px; font: 13px system-ui, sans-serif; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.go { background: linear-gradient(135deg, #1b4a6b, #3b2a6b); border-color: #335; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; }
+  .tile { background: #0b0e14; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; min-width: 0; }
+  .tile i { display: block; font-style: normal; font: 11px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  .tile b { display: block; font: 600 16px var(--mono); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mono { font: 12.5px var(--mono); color: var(--dim); word-break: break-word; }
+  .err { color: var(--bad); font: 13px var(--mono); min-height: 1em; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Scientific API <span>· __HOST__</span></h1>
+      <p class="lead">Statistics, fits, primes and dynamics, computed in Rust on every request.</p>
+    </div>
+    <div class="pill" id="health"><span class="dot" id="hdot"></span><span id="htext">connecting</span></div>
+  </header>
+
+  <div class="grid">
+    <section class="card wide">
+      <div class="head"><h2>Mandelbrot set <span class="route">GET /mandelbrot.png</span></h2><span class="time" id="m-time"></span></div>
+      <img class="shot" id="m-img" alt="Mandelbrot set" title="click: zoom in · right-click: zoom out">
+      <div class="row">
+        <label class="s">iter<input type="range" id="m-iter" min="64" max="4000" step="16" value="384"><output id="m-iter-o"></output></label>
+        <span class="mono" id="m-where"></span>
+        <button id="m-reset">Reset</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="head"><h2>Lorenz attractor <span class="route">GET /lorenz</span></h2><span class="time" id="l-time"></span></div>
+      <canvas id="l-cv" data-h="320"></canvas>
+      <div class="row">
+        <label class="s">σ<input type="range" id="l-sigma" min="1" max="30" step="0.1" value="10"><output></output></label>
+        <label class="s">ρ<input type="range" id="l-rho" min="0.5" max="100" step="0.1" value="28"><output></output></label>
+        <label class="s">β<input type="range" id="l-beta" min="0.1" max="8" step="0.01" value="2.67"><output></output></label>
+        <label class="s">steps<input type="range" id="l-steps" min="1000" max="60000" step="1000" value="12000"><output></output></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="head"><h2>Linear fit <span class="route">POST /fit/linear</span></h2><span class="time" id="f-time"></span></div>
+      <canvas id="f-cv" data-h="320"></canvas>
+      <div class="row"><button class="go" id="f-new">New data</button>
+        <label class="s">noise<input type="range" id="f-noise" min="0" max="6" step="0.1" value="1.5"><output></output></label></div>
+      <div class="tiles" id="f-tiles"></div>
+      <div class="err" id="f-err"></div>
+    </section>
+
+    <section class="card">
+      <div class="head"><h2>Summary statistics <span class="route">POST /stats</span></h2><span class="time" id="s-time"></span></div>
+      <canvas id="s-cv" data-h="170"></canvas>
+      <textarea id="s-in" spellcheck="false"></textarea>
+      <div class="row"><button class="go" id="s-run">Compute</button><button id="s-normal">Normal</button><button id="s-skew">Log-normal</button><button id="s-unif">Uniform</button></div>
+      <div class="tiles" id="s-tiles"></div>
+      <div class="err" id="s-err"></div>
+    </section>
+
+    <section class="card">
+      <div class="head"><h2>Prime sieve <span class="route">GET /primes</span></h2><span class="time" id="p-time"></span></div>
+      <div class="row">
+        <input type="number" id="p-n" value="10000000" min="0" max="200000000">
+        <button class="go" id="p-run">Sieve</button>
+        <button data-n="1000000">10⁶</button><button data-n="10000000">10⁷</button><button data-n="100000000">10⁸</button><button data-n="200000000">2·10⁸</button>
+      </div>
+      <div class="tiles" id="p-tiles"></div>
+      <div class="mono" id="p-last"></div>
+      <canvas id="p-cv" data-h="120"></canvas>
+      <div class="err" id="p-err"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d = 4) => v == null ? "—" : Math.abs(v) >= 1e6 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(3) : +v.toFixed(d) + "";
+const int = (v) => v == null ? "—" : Number(v).toLocaleString("en-US");
+const us = (u) => u < 1000 ? u + " µs" : (u / 1000).toFixed(u < 1e5 ? 2 : 0) + " ms";
+
+function stamp(el, server, trip) {
+  el.innerHTML = `server <b>${us(server)}</b> · trip <b>${trip.toFixed(1)} ms</b>`;
+}
+function tiles(el, pairs) {
+  el.innerHTML = pairs.map(([k, v]) => `<div class="tile"><i>${k}</i><b title="${v}">${v}</b></div>`).join("");
+}
+// Paths are relative, so the page works behind a proxy prefix too.
+async function api(path, body) {
+  const t0 = performance.now();
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  const trip = performance.now() - t0;
+  if (!r.ok) throw new Error(j.error || r.status);
+  return [j, trip];
+}
+function canvas(cv) {
+  const dpr = window.devicePixelRatio || 1, h = +cv.dataset.h;
+  cv.style.height = h + "px";
+  const w = cv.clientWidth;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  return [g, w, h];
+}
+function slider(id, f) {
+  const el = $(id), out = el.parentElement.querySelector("output");
+  const show = () => out.textContent = el.value;
+  el.addEventListener("input", () => { show(); f(); }); show();
+  return el;
+}
+// Coalesce bursts of slider input: one request in flight, the latest wins.
+function live(run) {
+  let busy = false, again = false;
+  return async function go() {
+    if (busy) { again = true; return; }
+    busy = true; again = false;
+    try { await run(); } catch (e) { console.error(e); }
+    busy = false; if (again) go();
+  };
+}
+const randn = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+
+/* health */
+async function health() {
+  try {
+    const [h, trip] = await api("health");
+    $("hdot").className = "dot ok";
+    $("htext").textContent = `up ${h.uptime_s}s · ${h.threads} workers · ${trip.toFixed(1)} ms`;
+  } catch (e) { $("hdot").className = "dot down"; $("htext").textContent = "unreachable"; }
+}
+health(); setInterval(health, 5000);
+
+/* mandelbrot */
+const home = { cx: -0.6, cy: 0, scale: 3.2 };
+let view = { ...home }, mUrl = null;
+const mandel = live(async () => {
+  const img = $("m-img"), dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.min(2048, Math.round(img.clientWidth * dpr)), h = Math.min(2048, Math.round(w * 10 / 16));
+  const q = `w=${w}&h=${h}&cx=${view.cx}&cy=${view.cy}&scale=${view.scale}&iter=${$("m-iter").value}`;
+  const t0 = performance.now();
+  const r = await fetch("mandelbrot.png?" + q);
+  const blob = await r.blob();
+  const trip = performance.now() - t0;
+  if (mUrl) URL.revokeObjectURL(mUrl);
+  img.src = mUrl = URL.createObjectURL(blob);
+  stamp($("m-time"), +r.headers.get("X-Elapsed-Us"), trip);
+  $("m-where").textContent = `${w}×${h} · c = ${view.cx.toPrecision(10)} ${view.cy < 0 ? "−" : "+"} ${Math.abs(view.cy).toPrecision(10)}i · zoom ${(home.scale / view.scale).toPrecision(3)}×`;
+});
+function zoom(ev, k) {
+  const img = $("m-img"), r = img.getBoundingClientRect();
+  view.cx += (ev.clientX - r.left - r.width / 2) / r.width * view.scale;
+  view.cy += (ev.clientY - r.top - r.height / 2) / r.width * view.scale;
+  view.scale *= k; mandel();
+}
+$("m-img").addEventListener("click", (e) => zoom(e, 0.35));
+$("m-img").addEventListener("contextmenu", (e) => { e.preventDefault(); zoom(e, 2.5); });
+$("m-reset").onclick = () => { view = { ...home }; mandel(); };
+slider("m-iter", mandel);
+
+/* lorenz */
+const lorenz = live(async () => {
+  const p = ["sigma", "rho", "beta", "steps"].map((k) => `${k}=${$("l-" + k).value}`).join("&");
+  const [j, trip] = await api(`lorenz?${p}&dt=0.005`);
+  stamp($("l-time"), j.elapsed_us, trip);
+  const [g, w, h] = canvas($("l-cv"));
+  const xs = j.x, zs = j.z, n = xs.length;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < n; i++) { x0 = Math.min(x0, xs[i]); x1 = Math.max(x1, xs[i]); z0 = Math.min(z0, zs[i]); z1 = Math.max(z1, zs[i]); }
+  const s = Math.min((w - 24) / (x1 - x0 || 1), (h - 24) / (z1 - z0 || 1));
+  const ox = w / 2 - s * (x0 + x1) / 2, oz = h / 2 + s * (z0 + z1) / 2;
+  g.lineWidth = 0.7; g.globalCompositeOperation = "lighter";
+  const seg = 40, per = Math.ceil(n / seg);
+  for (let k = 0; k < seg; k++) {
+    const t = k / seg;
+    g.strokeStyle = `hsla(${200 + 80 * t}, 90%, ${55 + 10 * t}%, 0.55)`;
+    g.beginPath();
+    for (let i = k * per; i <= Math.min(n - 1, (k + 1) * per); i++) {
+      const X = ox + s * xs[i], Y = oz - s * zs[i];
+      i === k * per ? g.moveTo(X, Y) : g.lineTo(X, Y);
+    }
+    g.stroke();
+  }
+  g.globalCompositeOperation = "source-over"; g.fillStyle = "#9aa3b5"; g.font = "12px ui-monospace, monospace";
+  g.fillText(`x–z · t = ${j.t_end.toFixed(0)}`, 10, h - 10);
+});
+["l-sigma", "l-rho", "l-beta", "l-steps"].forEach((id) => slider(id, lorenz));
+
+/* linear fit */
+let pts = { x: [], y: [] };
+function newData() {
+  const a = (Math.random() - 0.5) * 6, b = (Math.random() - 0.3) * 3, noise = +$("f-noise").value;
+  pts = { x: [], y: [] };
+  for (let i = 0; i < 80; i++) { const x = Math.random() * 10; pts.x.push(+x.toFixed(4)); pts.y.push(+(a + b * x + noise * randn()).toFixed(4)); }
+  fitNow();
+}
+const fitNow = live(async () => {
+  $("f-err").textContent = "";
+  let j, trip;
+  try { [j, trip] = await api("fit/linear", pts); } catch (e) { $("f-err").textContent = e.message; return; }
+  stamp($("f-time"), j.elapsed_us, trip);
+  tiles($("f-tiles"), [["slope", fmt(j.slope)], ["intercept", fmt(j.intercept)], ["r²", fmt(j.r2)], ["se slope", fmt(j.se_slope)], ["resid se", fmt(j.residual_se)], ["n", int(j.n)]]);
+  const [g, w, h] = canvas($("f-cv"));
+  const y0 = Math.min(...pts.y), y1 = Math.max(...pts.y), pad = 18;
+  const X = (x) => pad + x / 10 * (w - 2 * pad), Y = (y) => h - pad - (y - y0) / (y1 - y0 || 1) * (h - 2 * pad);
+  g.strokeStyle = "#1f2430"; g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) { const yy = pad + i * (h - 2 * pad) / 4; g.beginPath(); g.moveTo(pad, yy); g.lineTo(w - pad, yy); g.stroke(); }
+  g.fillStyle = "rgba(92,200,255,0.8)";
+  pts.x.forEach((x, i) => { g.beginPath(); g.arc(X(x), Y(pts.y[i]), 3, 0, 7); g.fill(); });
+  g.strokeStyle = "#b58cff"; g.lineWidth = 2.5; g.beginPath();
+  g.moveTo(X(0), Y(j.intercept)); g.lineTo(X(10), Y(j.intercept + 10 * j.slope)); g.stroke();
+});
+$("f-new").onclick = newData;
+slider("f-noise", newData);
+
+/* stats */
+function sample(kind) {
+  const xs = [];
+  for (let i = 0; i < 500; i++) xs.push(kind === "normal" ? 50 + 10 * randn() : kind === "log" ? Math.exp(1 + 0.6 * randn()) : 100 * Math.random());
+  $("s-in").value = xs.map((x) => x.toFixed(3)).join(", ");
+  statsNow();
+}
+const statsNow = live(async () => {
+  $("s-err").textContent = "";
+  const xs = $("s-in").value.split(/[\s,;]+/).filter(Boolean).map(Number);
+  let j, trip;
+  try { [j, trip] = await api("stats", { x: xs, probs: [0.05, 0.25, 0.5, 0.75, 0.95] }); }
+  catch (e) { $("s-err").textContent = e.message; return; }
+  stamp($("s-time"), j.elapsed_us, trip);
+  const q = Object.fromEntries(j.quantiles.map((r) => [r.p, r.q]));
+  tiles($("s-tiles"), [["n", int(j.n)], ["mean", fmt(j.mean, 3)], ["sd", fmt(j.sd, 3)], ["median", fmt(j.median, 3)], ["iqr", fmt(j.iqr, 3)], ["skew", fmt(j.skewness, 3)], ["q05", fmt(q[0.05], 3)], ["q95", fmt(q[0.95], 3)]]);
+  const [g, w, h] = canvas($("s-cv"));
+  const bins = 40, lo = j.min, span = (j.max - j.min) || 1, cnt = new Array(bins).fill(0);
+  xs.forEach((x) => cnt[Math.min(bins - 1, Math.floor((x - lo) / span * bins))]++);
+  const top = Math.max(...cnt), bw = (w - 20) / bins, X = (v) => 10 + (v - lo) / span * (w - 20);
+  g.fillStyle = "rgba(92,200,255,0.55)";
+  cnt.forEach((c, i) => { const bh = c / top * (h - 30); g.fillRect(10 + i * bw + 1, h - 14 - bh, bw - 2, bh); });
+  const mark = (v, col, dash) => { g.strokeStyle = col; g.setLineDash(dash); g.lineWidth = 1.5; g.beginPath(); g.moveTo(X(v), 8); g.lineTo(X(v), h - 14); g.stroke(); };
+  mark(q[0.25], "#b58cff", [3, 3]); mark(q[0.75], "#b58cff", [3, 3]); mark(j.median, "#e6e9ef", []); mark(j.mean, "#fbbf24", [6, 3]);
+  g.setLineDash([]);
+});
+$("s-run").onclick = statsNow;
+$("s-normal").onclick = () => sample("normal");
+$("s-skew").onclick = () => sample("log");
+$("s-unif").onclick = () => sample("unif");
+
+/* primes */
+const runs = [];
+const primesNow = live(async () => {
+  $("p-err").textContent = "";
+  const n = +$("p-n").value;
+  let j, trip;
+  try { [j, trip] = await api(`primes?n=${n}`); } catch (e) { $("p-err").textContent = e.message; return; }
+  stamp($("p-time"), j.elapsed_us, trip);
+  tiles($("p-tiles"), [["π(n)", int(j.count)], ["largest", int(j.largest)], ["density", fmt(j.count / Math.max(1, n), 5)], ["n / ln n", int(Math.round(n / Math.log(n || 2)))]]);
+  $("p-last").textContent = j.last.length ? "… " + j.last.join("  ") : "";
+  runs.push({ n, us: j.elapsed_us }); if (runs.length > 24) runs.shift();
+  const [g, w, h] = canvas($("p-cv"));
+  const top = Math.max(...runs.map((r) => r.us)), bw = (w - 20) / 24;
+  runs.forEach((r, i) => {
+    const bh = Math.max(2, r.us / top * (h - 34));
+    g.fillStyle = i === runs.length - 1 ? "#b58cff" : "rgba(92,200,255,0.5)";
+    g.fillRect(10 + i * bw + 2, h - 16 - bh, bw - 4, bh);
+  });
+  g.fillStyle = "#9aa3b5"; g.font = "11px ui-monospace, monospace";
+  g.fillText(`sieve time, last ${runs.length} runs · max ${us(top)}`, 10, h - 3);
+});
+$("p-run").onclick = primesNow;
+$("p-n").addEventListener("keydown", (e) => { if (e.key === "Enter") primesNow(); });
+document.querySelectorAll("[data-n]").forEach((b) => b.onclick = () => { $("p-n").value = b.dataset.n; primesNow(); });
+
+/* first paint */
+mandel(); lorenz(); newData(); sample("normal"); primesNow();
+let rs; window.addEventListener("resize", () => { clearTimeout(rs); rs = setTimeout(() => { mandel(); lorenz(); fitNow(); statsNow(); }, 200); });
+</script>
+</body>
+</html>

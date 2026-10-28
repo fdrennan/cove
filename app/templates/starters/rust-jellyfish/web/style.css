@@ -1,0 +1,40 @@
+*{box-sizing:border-box}html,body{margin:0;min-height:100%}
+body{background:radial-gradient(ellipse at top,#142653,#040b20 80%);font-family:Inter,system-ui,-apple-system,sans-serif;color:#f1f8ff}
+#app{max-width:1110px;margin:auto;padding:24px 28px}
+header{display:flex;justify-content:space-between;align-items:center}
+.brand{font-weight:900;letter-spacing:.16em}.brand:first-letter{color:#8c8eff}.brand small{color:#8fa9ff;font-size:10px;font-weight:500}
+.chip{padding:8px 14px;border:1px solid #46527a;border-radius:50px;font-size:11px;letter-spacing:.1em;color:#b0b9da;font-weight:800}
+.intro{text-align:center;margin:25px 0}.intro span{font-size:11px;color:#a3a7ff;font-weight:800;letter-spacing:.2em}
+.intro h1{font-size:clamp(38px,6vw,66px);letter-spacing:-.055em;margin:6px 0;line-height:1.15}.intro em{color:#b3a0ff;font-style:normal}
+.intro p{color:#9daece;font-size:14px;margin:0}
+.game{overflow:hidden;border:1px solid #344371;background:#0b1635;border-radius:23px;box-shadow:0 30px 80px #0005}
+.stats{display:flex;justify-content:space-around;padding:15px}.stats div{text-align:center;min-width:70px}
+.stats small{display:block;font-size:10px;color:#9caacd;letter-spacing:.15em;font-weight:700}
+.stats strong{font-size:25px;display:block;margin-top:2px}.stats .hearts{color:#ff8db4;letter-spacing:4px}
+.stage{position:relative;touch-action:none;cursor:pointer}.stage canvas{width:100%;display:block;aspect-ratio:12/7}
+.overlay{position:absolute;inset:0;display:grid;place-items:center;background:#030c2ca9;backdrop-filter:blur(3px);padding:10px}
+.hidden{display:none!important}
+.dialog{text-align:center;border-radius:24px;border:1px solid #8277cc77;background:#091431e8;padding:28px 34px;max-width:360px}
+.big{font-size:55px}.dialog h2{font-size:24px;margin:10px 0 6px}.dialog p{font-size:13px;line-height:1.6;color:#afbce0}
+.dialog button{border:0;border-radius:12px;background:#a6a1ff;padding:14px 22px;margin-top:10px;font-weight:850;color:#141338;cursor:pointer;font-size:14px}
+.dialog button:hover{background:#cecaff}.dialog button:disabled{opacity:.5;cursor:default}
+.save{display:flex;gap:8px;justify-content:center;margin:10px 0 0}
+.save input{width:150px;font:inherit;font-size:13px;background:#0b1635;color:#f1f8ff;border:1px solid #46527a;border-radius:10px;padding:9px 11px}
+.save button{margin:0;padding:9px 14px;background:#273358;color:#e9ecff}
+.saved{color:#cecaff!important;font-weight:700}
+.board{margin:12px auto 0;text-align:left;font-size:12px;color:#c1cbea;max-width:230px}
+.board h3{margin:0 0 4px;font-size:10px;font-weight:800;letter-spacing:.16em;color:#9caacd}
+.board ol{margin:0;padding:0;list-style:none}.board li{display:flex;justify-content:space-between;gap:12px;padding:2px 0}
+.board li b{font-weight:800;color:#f1f8ff}.board li.mine,.board li.mine b{color:#cecaff}
+footer{padding:15px;display:flex;justify-content:space-around;flex-wrap:wrap;gap:12px;color:#9daad0;font-size:12px}
+kbd{border:1px solid #59648c;background:#273358;color:#e9ecff;padding:4px 8px;border-radius:5px;font:inherit;font-weight:750;font-size:11px}
+.env{margin:16px auto 0;max-width:560px;border:1px solid #344371;background:#0b1635cc;border-radius:14px;padding:8px 14px;font-size:12px;color:#c1cbea}
+.env summary{cursor:pointer;font-weight:800;letter-spacing:.14em;font-size:11px;color:#9caacd;text-transform:uppercase}
+.env-row{display:flex;gap:10px;padding:3px 0;border-top:1px solid #ffffff12}.env-row:first-child{margin-top:8px}
+.env-row .k{flex:0 0 76px;color:#9caacd}.env-row .v{flex:1;word-break:break-word}
+.footnote{text-align:center;font-size:10px;letter-spacing:.15em;color:#5e6b96;margin:22px 0}
+@media(max-width:600px){#app{padding:14px 10px}.intro{margin:23px 0}.intro p{font-size:12px}.chip{font-size:9px}.game{border-radius:14px}
+.stats{padding:12px 2px}.stats small{font-size:9px}.stats strong{font-size:19px}.dialog{padding:14px 16px}.big{font-size:32px}
+.dialog h2{font-size:18px}.dialog p{font-size:11px}.dialog button{padding:10px 17px}.board,.env{font-size:11px}}
+/* A phone's canvas is ~230 px tall: the card keeps the words and the button. */
+@media(max-width:600px){.overlay .big,.overlay .board{display:none!important}.dialog h2{margin-top:0}.dialog p{margin:4px 0}.save input{width:120px}}

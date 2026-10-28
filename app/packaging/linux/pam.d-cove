@@ -1,0 +1,5 @@
+# /etc/pam.d/cove — how `cove multiuser` signs people in: the
+# machine's own rules, as a console login uses them (password, then account:
+# expired, locked). Replace with a site's own stack (SSSD, LDAP) as needed.
+@include common-auth
+@include common-account

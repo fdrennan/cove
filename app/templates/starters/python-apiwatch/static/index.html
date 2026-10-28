@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>API Observatory · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="stage">
+  <section class="board" aria-live="off">
+    <div class="tiles">
+      <div class="glass tile"><span class="k">requests / s</span><b id="k-rps">–</b><small id="k-n">no traffic yet</small></div>
+      <div class="glass tile"><span class="k">p50</span><b id="k-p50">–</b></div>
+      <div class="glass tile"><span class="k">p95</span><b id="k-p95">–</b></div>
+      <div class="glass tile"><span class="k">p99</span><b id="k-p99">–</b></div>
+      <div class="glass tile"><span class="k">5xx</span><b id="k-err">–</b><small id="k-errn"></small></div>
+      <div class="glass tile"><span class="k">contract</span><b id="k-con">–</b><small id="k-conn"></small></div>
+    </div>
+
+    <figure class="glass chart hist">
+      <figcaption><b>Latency</b> <span id="hist-sub">last 60 s, log scale</span></figcaption>
+      <canvas id="hist" aria-label="Latency histogram with p50, p95 and p99 marked"></canvas>
+      <div class="tip" id="hist-tip" hidden></div>
+    </figure>
+
+    <div class="pair">
+      <figure class="glass chart timeline">
+        <figcaption><b>Requests per second</b> <span>last 60 s</span>
+          <span class="legend"><i class="s2"></i>under 500 <i class="s5"></i>5xx</span></figcaption>
+        <canvas id="timeline" aria-label="Requests per second, answered and failed, last 60 seconds"></canvas>
+        <div class="tip" id="tl-tip" hidden></div>
+      </figure>
+      <figure class="glass chart mix">
+        <figcaption><b>Status codes</b> <span id="mix-sub"></span></figcaption>
+        <div id="mix" class="mixbar"></div>
+        <ul id="mix-list" class="mixlist"></ul>
+      </figure>
+    </div>
+
+    <figure class="glass chart">
+      <figcaption><b>Endpoints</b> <span>in the window</span></figcaption>
+      <div class="scroll"><table id="endpoints">
+        <thead><tr><th>endpoint</th><th>req</th><th>req/s</th><th>5xx</th><th>p50</th><th>p95</th><th>p99</th><th>contract</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </figure>
+
+    <div class="pair">
+      <figure class="glass chart">
+        <figcaption><b>Live requests</b> <span>newest first</span></figcaption>
+        <ol id="feed" class="feed"></ol>
+      </figure>
+      <figure class="glass chart">
+        <figcaption><b>Contract violations</b> <span>pydantic's verdict on what went out</span></figcaption>
+        <ol id="violations" class="feed"></ol>
+      </figure>
+    </div>
+  </section>
+
+  <aside class="glass panel">
+    <header>
+      <h1>API Observatory</h1>
+      <p>FastAPI watching its own traffic. <span id="live" class="dot" title="stream"></span></p>
+      <nav class="links"><a href="/docs" target="_blank" rel="noopener">OpenAPI /docs</a><a href="/redoc" target="_blank" rel="noopener">ReDoc</a><a href="/openapi.json" target="_blank" rel="noopener">openapi.json</a></nav>
+    </header>
+
+    <label class="row">window <output id="window-v">60 s</output><input id="window_s" type="range" min="5" max="600" step="5" value="60"></label>
+
+    <details class="fold" open>
+      <summary>Sample API</summary>
+      <label class="row">flaky: 503 share <output id="flaky_rate-v">20%</output><input id="flaky_rate" type="range" min="0" max="1" step="0.01" value="0.2"></label>
+      <label class="row">slow: median <output id="slow_median_ms-v">120 ms</output><input id="slow_median_ms" type="range" min="5" max="2000" step="5" value="120"></label>
+      <label class="row">slow: spread σ <output id="slow_sigma-v">0.60</output><input id="slow_sigma" type="range" min="0" max="2" step="0.05" value="0.6"></label>
+      <label class="row">items: schema drift <output id="drift-v">0%</output><input id="drift" type="range" min="0" max="1" step="0.01" value="0"></label>
+      <div class="buttons"><button id="reset" type="button">Forget traffic</button></div>
+    </details>
+
+    <details class="fold" open>
+      <summary>Load generator</summary>
+      <div class="seg" id="targets"></div>
+      <label class="row">concurrency <output id="conc-v">8</output><input id="conc" type="range" min="1" max="64" step="1" value="8"></label>
+      <label class="row">duration <output id="dur-v">10 s</output><input id="dur" type="range" min="1" max="60" step="1" value="10"></label>
+      <div class="buttons"><button id="run" class="primary" type="button">Run load</button></div>
+      <div class="progress"><span id="bar"></span></div>
+      <dl id="run-out" class="kv"></dl>
+    </details>
+
+    <details class="fold">
+      <summary>Contract check</summary>
+      <div class="buttons"><button id="check" type="button">Check every endpoint ×25</button></div>
+      <ul id="check-out" class="checks"></ul>
+    </details>
+
+    <details class="fold" id="env-fold">
+      <summary>Environment</summary>
+      <dl id="env" class="kv"></dl>
+    </details>
+  </aside>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

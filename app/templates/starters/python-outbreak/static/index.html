@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>Outbreak Simulator · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<canvas id="map" aria-label="Map of the town: households, hubs and every person, coloured by state"></canvas>
+
+<section class="glass readout" aria-live="polite">
+  <div><span class="k">day</span><b id="day">0</b></div>
+  <div><span class="k">infectious</span><b id="now-i">–</b></div>
+  <div><span class="k">ever infected</span><b id="ever">–</b></div>
+  <div><span class="k">peak</span><b id="peak">–</b></div>
+  <div title="Secondary cases per case, read from the transmission tree; first cases and those they infected"><span class="k">R early</span><b id="r-early">–</b></div>
+  <div title="Secondary cases per case, last seven finished infection cohorts"><span class="k">R recent</span><b id="r-recent">–</b></div>
+</section>
+
+<details id="panel" class="glass panel" open>
+  <summary>
+    <h1>Outbreak Simulator</h1>
+    <p>An agent-based epidemic in numpy.</p>
+  </summary>
+
+  <div class="buttons">
+    <button id="run" class="primary" type="button">Start</button>
+    <button id="reset" type="button" title="the same seed again">Replay</button>
+    <button id="reseed" type="button" title="a new town and new luck">New seed</button>
+  </div>
+  <label class="row">speed <output id="speed-v">2 ticks</output><input id="speed" type="range" min="1" max="12" step="1" value="2"></label>
+
+  <h2>Interventions</h2>
+  <div class="seg" id="closures">
+    <button type="button" data-k="close_schools">Close schools</button>
+    <button type="button" data-k="close_markets">Close markets</button>
+  </div>
+  <div id="policy"></div>
+
+  <h2>Disease <span class="seed">seed <b id="seed">1</b></span></h2>
+  <div id="disease"></div>
+
+  <div class="legend" id="legend"></div>
+</details>
+
+<section class="glass curve">
+  <canvas id="curve" aria-label="Epidemic curve: share of people in each state by day"></canvas>
+  <div id="tip" class="tip" hidden></div>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

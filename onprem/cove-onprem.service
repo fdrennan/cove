@@ -1,0 +1,18 @@
+# cove.ndexr.io on-prem: `cove serve` from this host's working tree,
+# rebuilt on every source change (onprem/run.sh). A user unit of ubuntu, like
+# the dmg/svbt tunnels beside it in ~/.config/systemd/user.
+#
+#   onprem/install.sh            installs and starts it
+#   journalctl --user -fu cove-onprem
+[Unit]
+Description=cove.ndexr.io on-prem (cove serve, live from source)
+After=network-online.target
+
+[Service]
+ExecStart=%h/ndexr/src/domains/drennanfreddy/cove.ndexr.io/onprem/run.sh
+Environment=PORT=8796
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

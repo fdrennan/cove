@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>ML playground · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="stage">
+  <figure class="plot">
+    <img id="surface" alt="Decision surface of the trained model" hidden>
+    <div id="empty" class="empty"><span></span><span></span><span></span></div>
+    <figcaption class="scores glass">
+      <div><span class="k">train</span><b id="acc-train">–</b></div>
+      <div><span class="k">test</span><b id="acc-test">–</b></div>
+      <div><span class="k">fit</span><b id="fitms">–</b></div>
+    </figcaption>
+  </figure>
+
+  <aside class="glass panel">
+    <header>
+      <h1>ML playground</h1>
+      <p>scikit-learn on two dimensions.</p>
+    </header>
+
+    <div class="seg" id="datasets"></div>
+
+    <label class="row">points <output id="n-v">400</output><input id="n" type="range" min="40" max="2000" step="20" value="400"></label>
+    <label class="row">noise <output id="noise-v">0.20</output><input id="noise" type="range" min="0" max="0.6" step="0.01" value="0.2"></label>
+    <label class="row">held out <output id="test-v">30%</output><input id="test" type="range" min="0.1" max="0.6" step="0.05" value="0.3"></label>
+
+    <select id="model" aria-label="model"></select>
+    <div id="params"></div>
+
+    <div class="buttons">
+      <button id="train-btn" class="primary" type="button">Train</button>
+      <button id="reseed" type="button" title="new sample">New sample</button>
+    </div>
+    <div class="legend" id="legend"></div>
+  </aside>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

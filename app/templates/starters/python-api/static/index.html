@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05070f">
+<title>Scientific API · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="aurora"></div>
+<main>
+  <header class="hero">
+    <h1>Scientific API</h1>
+    <p>Statistics, fits, distributions and ODEs in numpy and scipy, over HTTP.</p>
+    <nav><a class="pill" href="/docs">/docs</a><a class="pill" href="/redoc">/redoc</a><a class="pill" href="/openapi.json">openapi.json</a></nav>
+  </header>
+
+  <section class="glass live">
+    <div class="live-head">
+      <code><span class="verb get">GET</span> <span id="url">/distributions/normal?mu=0&amp;sigma=1&amp;n=201</span></code>
+      <span id="ms" class="ms"></span>
+    </div>
+    <canvas id="curve"></canvas>
+    <div class="sliders">
+      <label>μ <output id="mu-v">0.0</output><input id="mu" type="range" min="-3" max="3" step="0.1" value="0"></label>
+      <label>σ <output id="sigma-v">1.00</output><input id="sigma" type="range" min="0.2" max="3" step="0.05" value="1"></label>
+    </div>
+  </section>
+
+  <section class="cards">
+    <article class="glass card">
+      <h2><span class="verb post">POST</span> /stats/describe</h2>
+      <pre id="describe">…</pre>
+    </article>
+    <article class="glass card">
+      <h2><span class="verb post">POST</span> /fit/linear</h2>
+      <pre id="fit">…</pre>
+    </article>
+    <article class="glass card">
+      <h2><span class="verb get">GET</span> /ode/logistic</h2>
+      <canvas id="logistic"></canvas>
+      <pre id="ode">…</pre>
+    </article>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

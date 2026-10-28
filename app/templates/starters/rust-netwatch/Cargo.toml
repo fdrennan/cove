@@ -1,0 +1,22 @@
+[package]
+name = "__CRATE__"
+version = "0.1.0"
+edition = "2021"
+description = "__HOST__ - Network Observatory, live network metrics from /proc in Rust, started from Cove's template"
+build = "build.rs"
+
+# One binary: `app serve <port>` is the site, on 127.0.0.1:<port>.
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+# Exact versions, the stack's Rust set (manifests/Rust/1.96.0): the app builds
+# what the set vendors - offline too: env.sh points cargo at the set's vendor
+# directory, /opt/ndexr/site-library/<triple>/Rust/1.96.0/rust/vendor.
+# Everything else - the /proc parsers, the probes, the event stream - is std.
+[dependencies]
+tiny_http = "=0.12.0"
+serde_json = "=1.0.154"
+
+[profile.release]
+opt-level = 3

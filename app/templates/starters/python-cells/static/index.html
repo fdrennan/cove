@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>Cell Atlas · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="stage">
+  <section class="main">
+    <figure class="plot">
+      <div class="toolbar">
+        <div class="seg" id="colour-by">
+          <button type="button" data-k="cluster" class="on">Cluster</button>
+          <button type="button" data-k="truth">True type</button>
+          <button type="button" data-k="gene">Gene</button>
+        </div>
+        <form id="gene-form" class="gene" autocomplete="off">
+          <input id="gene" list="genes" placeholder="gene, e.g. HBB" aria-label="gene" spellcheck="false">
+          <datalist id="genes"></datalist>
+        </form>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="embedding" aria-label="2-D embedding of the kept cells"></canvas>
+        <div id="empty" class="empty"><span></span><span></span><span></span></div>
+        <div id="tip" class="tip" hidden></div>
+        <figcaption class="scores glass">
+          <div><span class="k">ARI</span><b id="ari">–</b></div>
+          <div><span class="k">cells</span><b id="kept">–</b></div>
+          <div><span class="k">time</span><b id="ms">–</b></div>
+        </figcaption>
+      </div>
+      <div class="legend" id="legend"></div>
+    </figure>
+
+    <article class="glass card" id="cluster-card" hidden>
+      <header><h2 id="cc-title"></h2><button type="button" id="cc-close" aria-label="clear selection">×</button></header>
+      <p id="cc-sub"></p>
+      <table id="cc-table"></table>
+    </article>
+
+    <div class="steps">
+      <article class="glass card wide"><header><h2>1 · Quality control</h2><small id="t-qc"></small></header>
+        <div class="qc" id="qc"></div><p class="note" id="qc-note"></p></article>
+      <article class="glass card"><header><h2>3 · Highly variable genes</h2><small id="t-hvg"></small></header>
+        <div id="hvg"></div><p class="note" id="hvg-note"></p></article>
+      <article class="glass card"><header><h2>4 · PCA</h2><small id="t-pca"></small></header>
+        <div id="elbow"></div><p class="note" id="pca-note"></p></article>
+      <article class="glass card wide"><header><h2>7 · Marker genes</h2><small id="t-markers"></small></header>
+        <div id="dot" class="scroll"></div></article>
+      <article class="glass card wide"><header><h2>Clusters against the truth</h2><small id="t-cluster"></small></header>
+        <div id="table" class="scroll"></div></article>
+    </div>
+  </section>
+
+  <aside class="glass panel">
+    <header>
+      <h1>Cell Atlas</h1>
+      <p>Single-cell RNA-seq, step by step.</p>
+    </header>
+
+    <div class="buttons">
+      <button id="reseed" type="button" title="simulate a new set of cells">New sample <output id="seed-v">0</output></button>
+    </div>
+
+    <details open><summary>1 · Quality control</summary><div class="sliders" id="s-qc"></div></details>
+    <details open><summary>2 · Normalise</summary><div class="sliders" id="s-norm"></div></details>
+    <details open><summary>3 · Variable genes</summary><div class="sliders" id="s-hvg"></div></details>
+    <details open><summary>4 · PCA</summary><div class="sliders" id="s-pca"></div></details>
+    <details open><summary>5 · Neighbours and embedding</summary>
+      <div class="seg" id="embedding-k"></div>
+      <div class="sliders" id="s-embed"></div></details>
+    <details open><summary>6 · Clusters</summary>
+      <div class="seg" id="method"></div>
+      <div class="sliders" id="s-cluster"></div></details>
+    <details open><summary>7 · Markers</summary><div class="sliders" id="s-markers"></div></details>
+    <p class="error" id="error" hidden></p>
+  </aside>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

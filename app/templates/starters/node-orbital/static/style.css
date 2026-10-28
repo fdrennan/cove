@@ -1,0 +1,105 @@
+:root {
+  --bg: #05070f;
+  --glass: rgba(14, 19, 36, 0.66);
+  --line: rgba(255, 255, 255, 0.10);
+  --text: #e8ecf6;
+  --muted: #b4bed6;
+  --accent: #14a0be;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: radial-gradient(70% 60% at 50% 45%, #10172e 0%, var(--bg) 70%) fixed; }
+
+#stage { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; cursor: grab; }
+#stage:active { cursor: grabbing; }
+
+.glass { background: var(--glass); border: 1px solid var(--line); border-radius: 18px;
+  backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .45); }
+
+.title { position: fixed; top: 16px; left: 16px; padding: 14px 18px; width: 340px; }
+.title h1 { margin: 0; font-size: 26px; font-weight: 700;
+  background: linear-gradient(90deg, #4cc3df, #b49cf0 60%, #ef9a5c); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.title p { margin: 2px 0 10px; color: var(--muted); font-size: 15px; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tiles div { background: rgba(255, 255, 255, .05); border-radius: 10px; padding: 6px 10px; display: grid; min-width: 0; }
+.tiles .k { color: var(--muted); font-size: 13px; }
+.tiles b { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.warn { color: #ffcf8a; }
+
+.info { position: fixed; left: 16px; bottom: 16px; width: 340px; padding: 12px 16px 14px; }
+.info h2 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.info h2 i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.info h2 small { color: var(--muted); font-weight: 500; font-size: 14px; }
+.info dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; margin: 8px 0 0; font-size: 14px; }
+.info dt { color: var(--muted); }
+.info dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.info .x { float: right; border: 0; background: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; }
+
+/* The controls and the environment share the right edge as one column, so
+   opening either never slides one panel under the other. */
+.side { position: fixed; top: 16px; right: 16px; bottom: 16px; width: 350px; display: flex; flex-direction: column;
+  justify-content: space-between; gap: 10px; pointer-events: none; z-index: 2; }
+.side > * { pointer-events: auto; }
+.card { min-height: 0; flex: 0 1 auto; overflow: auto; padding: 12px 18px 16px; }
+.card summary, .env summary { font-size: 19px; font-weight: 650; cursor: pointer; }
+.card[open] summary { margin-bottom: 10px; }
+.card h3 { margin: 16px 0 6px; font-size: 15px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+
+.row { display: grid; grid-template-columns: 1fr auto; color: var(--muted); font-size: 15px; margin-top: 6px; }
+.row output { color: var(--text); font-variant-numeric: tabular-nums; }
+.row input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+
+.seg { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.seg button, .pick select, .pick input { font: 500 14px system-ui, sans-serif; color: var(--muted); padding: 6px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .04); cursor: pointer; }
+.seg button { flex: 1 1 auto; }
+.seg button.on { color: var(--text); background: rgba(20, 160, 190, .22); border-color: rgba(20, 160, 190, .6); }
+.pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
+.pick select, .pick input { color: var(--text); background: rgba(10, 14, 28, .9); border-radius: 10px; }
+.pick input { flex: 1 1 140px; min-width: 0; }
+.pick.gap { margin-top: 8px; }
+.pick .chip { font: 500 14px system-ui, sans-serif; color: var(--text); padding: 6px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .06); cursor: pointer; }
+
+.buttons { display: flex; gap: 8px; margin-top: 10px; }
+.buttons button { flex: 1; font: 600 15px system-ui, sans-serif; color: var(--text); padding: 9px; border-radius: 12px;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .06); cursor: pointer; }
+.buttons button.primary { background: linear-gradient(135deg, rgba(20, 160, 190, .55), rgba(154, 123, 230, .45)); border-color: rgba(20, 160, 190, .7); }
+.buttons button:hover { filter: brightness(1.15); }
+.buttons button:disabled { opacity: .6; }
+
+.events { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.events li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.events button { font: 500 13px system-ui, sans-serif; color: var(--text); border: 1px solid var(--line); background: rgba(255, 255, 255, .06);
+  border-radius: 8px; padding: 2px 10px; cursor: pointer; }
+.foot { margin: 8px 0 0; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.foot b { color: var(--text); font-weight: 600; }
+.foot.err { color: #ff8f8f; }
+
+.env { flex: 0 0 auto; max-height: 45vh; overflow: auto; padding: 10px 16px; }
+.env summary { font-size: 15px; }
+.env table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.env td { padding: 2px 0; border-top: 1px solid var(--line); vertical-align: top; }
+.env td:first-child { color: var(--muted); padding-right: 10px; white-space: nowrap; }
+.env td:last-child { text-align: right; word-break: break-all; }
+
+/* A phone: the title shrinks to its numbers, the body card sits under it, and
+   the controls fold to their summary at the bottom (app.js starts them folded). */
+@media (max-width: 760px) {
+  .title { left: 10px; right: 10px; top: 10px; width: auto; padding: 10px 14px; }
+  .title h1 { font-size: 20px; }
+  .title p { display: none; }
+  .tiles { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .tiles div { padding: 4px 6px; }
+  .tiles b { font-size: 14px; }
+  .info { left: 10px; right: 10px; width: auto; top: 128px; bottom: auto; padding: 8px 12px; }
+  .info h2 { font-size: 17px; }
+  .info dl { font-size: 13px; margin-top: 4px; }
+  .info .more { display: none; }
+  .side { top: auto; left: 10px; right: 10px; bottom: 10px; width: auto; max-height: 70vh; justify-content: flex-end; gap: 8px; }
+  .card { max-height: 55vh; }
+  .env { max-height: 35vh; padding: 6px 12px; }
+}

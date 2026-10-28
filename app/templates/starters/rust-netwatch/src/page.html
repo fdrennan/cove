@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Network Observatory · __HOST__</title>
+<style>
+  :root { --glass: rgba(9, 12, 22, 0.66); --edge: rgba(255, 255, 255, 0.13); --text: #eaeef8; --mute: #aab4cc;
+    --rx: #5cc8ff; --tx: #ff9d5c; --violet: #c8a2ff; --bad: #f87171; --ok: #7ee0a8; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #03040a; color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 18px;
+    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  .num { font-variant-numeric: tabular-nums; }
+  header { position: fixed; top: 16px; left: 16px; padding: 12px 18px; max-width: calc(100vw - 400px); }
+  h1 { margin: 0; font-size: 21px; font-weight: 650; }
+  h1 span { background: linear-gradient(90deg, var(--rx), var(--violet), var(--tx)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #rates { margin-top: 6px; font: 600 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  #rates .rx { color: var(--rx); } #rates .tx { color: var(--tx); }
+  #cost { margin-top: 3px; color: var(--mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+  #cost b { color: var(--text); font-weight: 600; }
+  h2 { margin: 0 0 6px; font-size: 13px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--mute); }
+  h2 b { color: var(--text); text-transform: none; letter-spacing: 0; }
+  #tcp { position: fixed; left: 16px; bottom: 16px; width: 380px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 170px); overflow-y: auto; }
+  #panel { position: fixed; right: 16px; top: 16px; width: 360px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; background: rgba(255,255,255,0.06); border-radius: 12px; padding: 3px; }
+  .seg button { border: 0; background: transparent; padding: 5px 8px; font-size: 13px; display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
+  .seg button small { color: var(--mute); font-weight: 500; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .seg button.on { background: linear-gradient(135deg, rgba(92,200,255,0.35), rgba(255,157,92,0.45)); }
+  button { font: inherit; font-weight: 600; color: var(--text); cursor: pointer; border: 1px solid var(--edge);
+    border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,0.06); }
+  button:hover { background: rgba(255,255,255,0.12); }
+  input[type=text] { font: inherit; color: var(--text); background: rgba(0,0,0,0.35); border: 1px solid var(--edge); border-radius: 10px; padding: 7px 10px; min-width: 0; }
+  input[type=range] { width: 100%; accent-color: var(--tx); }
+  .row { display: grid; grid-template-columns: 70px 1fr 64px; gap: 10px; align-items: center; font-size: 14px; color: var(--mute); }
+  .row output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .bars { display: grid; grid-template-columns: 104px 1fr 56px; gap: 3px 8px; align-items: center; font-size: 12.5px; }
+  .bars .lab { color: var(--mute); }
+  .bars .val { text-align: right; font-variant-numeric: tabular-nums; }
+  .bars .bar { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.06); overflow: hidden; }
+  .bars .bar i { display: block; height: 100%; border-radius: 5px; transition: width 0.4s; }
+  .note { font-size: 12.5px; color: var(--mute); font-variant-numeric: tabular-nums; }
+  .note b { color: var(--text); font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; max-height: 118px; overflow-y: auto; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.07); border: 1px solid var(--edge); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .chip.lo { border-color: rgba(200,162,255,0.35); }
+  .chip.any { border-color: rgba(255,157,92,0.45); }
+  .chip b { color: var(--ok); font-weight: 600; }
+  .add { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+  .probe { border-top: 1px solid var(--edge); padding-top: 9px; display: flex; flex-direction: column; gap: 5px; }
+  .probe .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13.5px; }
+  .probe .top b { font-weight: 650; overflow-wrap: anywhere; }
+  .probe .top button { padding: 1px 8px; font-size: 13px; }
+  .probe canvas { width: 100%; height: 58px; display: block; border-radius: 10px; background: rgba(0,0,0,0.35); }
+  .probe .err { color: var(--bad); }
+  #spark { width: 100%; height: 54px; display: block; border-radius: 10px; background: rgba(0,0,0,0.35); }
+  details.env > summary { cursor: pointer; font-weight: 650; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--mute); list-style: none; }
+  details.env > summary::before { content: "▸ "; } details.env[open] > summary::before { content: "▾ "; }
+  details.env dl { display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px; margin: 8px 0 0; font-size: 12.5px; }
+  details.env dt { color: var(--mute); } details.env dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  #fold { display: none; }
+  #err { color: var(--bad); font-size: 13px; }
+  /* A phone scrolls one column: the header, the chart (the canvas behind a
+     gap layout() sizes), then the two panels. */
+  @media (max-width: 760px) {
+    html, body { overflow: auto; }
+    #view { position: absolute; }
+    #ui { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+    header, #tcp, #panel { position: static; width: auto; max-width: none; max-height: none; }
+    header { padding: 10px 14px; }
+    h1 { font-size: 18px; }
+    #rates { font-size: 13px; }
+    #fold { display: block; }
+    #panel.folded .more { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="ui">
+<header class="glass">
+  <h1><span>Network Observatory</span></h1>
+  <div id="rates">&nbsp;</div>
+  <div id="cost">&nbsp;</div>
+</header>
+
+<section id="tcp" class="glass">
+  <div>
+    <h2>TCP states · <b id="tcpTotal">—</b></h2>
+    <div class="bars" id="states"></div>
+    <div class="note" id="reconcile" style="margin-top:6px">&nbsp;</div>
+  </div>
+  <div>
+    <h2>Established peers · <b id="peers">—</b></h2>
+    <div class="bars" id="classes"></div>
+    <div class="note" id="rports" style="margin-top:6px">&nbsp;</div>
+  </div>
+  <div>
+    <h2>Listening · <b id="nlisten">—</b></h2>
+    <div class="chips" id="listen"></div>
+  </div>
+  <div>
+    <h2>Kernel TCP/UDP per second</h2>
+    <canvas id="spark"></canvas>
+    <div class="note" id="snmp" style="margin-top:6px">&nbsp;</div>
+    <div class="note" id="sock" style="margin-top:3px">&nbsp;</div>
+  </div>
+</section>
+
+<section id="panel" class="glass">
+  <div>
+    <h2>Interfaces</h2>
+    <div class="seg" id="ifaces"></div>
+    <div class="seg" id="scale" style="margin-top:6px;display:grid;grid-template-columns:1fr 1fr"><button data-s="lin" class="on">linear</button><button data-s="log">log</button></div>
+    <div class="note" id="ifnote" style="margin-top:6px">&nbsp;</div>
+  </div>
+  <button id="fold">Probes and tools</button>
+  <div class="more" style="display:flex;flex-direction:column;gap:12px">
+    <div>
+      <h2>Latency probes · TCP connect</h2>
+      <form class="add" id="addForm">
+        <input type="text" id="target" placeholder="host:port" autocomplete="off" spellcheck="false">
+        <button type="submit">Add</button>
+      </form>
+      <div class="row" style="margin-top:8px"><label for="every">every</label><input id="every" type="range" min="1" max="30" step="1" value="2"><output></output></div>
+      <div id="probes" style="display:flex;flex-direction:column;gap:9px;margin-top:6px"></div>
+    </div>
+    <div>
+      <h2>Download test</h2>
+      <div class="row"><label for="mb">size</label><input id="mb" type="range" min="16" max="1024" step="16" value="256"><output></output></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;margin-top:6px">
+        <button id="pull">Download</button><span class="note" id="pullOut">&nbsp;</span>
+      </div>
+    </div>
+    <div id="err"></div>
+    <details class="env" id="env"><summary>Environment</summary><dl id="envList"></dl></details>
+  </div>
+</section>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const dpr = () => Math.min(window.devicePixelRatio || 1, 2);
+const WINDOW = 180; // samples on screen: three minutes at 1 Hz, what the server keeps
+
+let samples = [];      // newest last
+let probes = [];
+let chosen = null;     // interface on the big chart
+let logScale = false;  // a log axis shows a quiet link and a burst on one chart
+
+// ---------------------------------------------------------------- formatting
+const bytes = (v) => { const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; } return (i ? v.toFixed(v < 10 ? 2 : v < 100 ? 1 : 0) : v.toFixed(0)) + " " + u[i]; };
+const rateB = (v) => bytes(v) + "/s";
+const bits = (v) => { const u = ["b", "kb", "Mb", "Gb", "Tb"]; let x = v * 8, i = 0; while (x >= 1000 && i < u.length - 1) { x /= 1000; i++; } return x.toFixed(x < 10 ? 2 : x < 100 ? 1 : 0) + " " + u[i] + "/s"; };
+const n0 = (v) => Math.round(v).toLocaleString("en-US");
+const ms = (v) => v == null ? "—" : v < 1 ? (v * 1000).toFixed(0) + " µs" : v < 100 ? v.toFixed(2) + " ms" : v.toFixed(0) + " ms";
+
+// ---------------------------------------------------------------- canvases
+const view = $("view"), ctx = view.getContext("2d");
+function fit(c) { const r = c.getBoundingClientRect(), d = dpr(); const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d)); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } return [w, h, d]; }
+const CHART_PHONE = 240; // px of chart between the header and the panels on a phone
+function layout() {
+  const narrow = innerWidth <= 760;
+  const hb = document.querySelector("header").getBoundingClientRect().bottom + scrollY;
+  view.style.height = narrow ? `${hb + CHART_PHONE + 40}px` : "";
+  $("tcp").style.marginTop = narrow ? `${CHART_PHONE + 30}px` : "";
+}
+addEventListener("resize", () => draw());
+
+function ifaceSeries(name) { return samples.map((s) => s.ifaces.find((i) => i.name === name) || null); }
+
+/// The big chart: received above the axis, sent below it, the last three
+/// minutes of the chosen interface, on the space the panels leave free.
+function drawMain() {
+  const [W, H, d] = fit(view);
+  ctx.fillStyle = "#03040a"; ctx.fillRect(0, 0, W, H);
+  const narrow = innerWidth <= 760;
+  const hb = (document.querySelector("header").getBoundingClientRect().bottom + scrollY) * d;
+  // Between the two side panels when the screen is wide enough; behind them otherwise.
+  const roomy = innerWidth > 1150;
+  const L = (roomy ? 420 : 14) * d, R = W - (roomy ? 392 : 14) * d;
+  const T = narrow ? hb + 34 * d : 150 * d, B = narrow ? H - 30 * d : H - 40 * d;
+  if (R - L < 80 || !chosen) return;
+  const series = ifaceSeries(chosen);
+  const rx = series.map((i) => i ? i.rx_Bps : 0), tx = series.map((i) => i ? i.tx_Bps : 0);
+  const peak = Math.max(1, ...rx, ...tx);
+  // Round the scale up to 1, 2 or 5 x 10^k so the grid lands on readable values;
+  // on the log axis the grid is one line per decade from 100 B/s.
+  const p10 = Math.pow(10, Math.floor(Math.log10(peak)));
+  const top = logScale ? p10 * 10 : [1, 2, 5, 10].map((m) => m * p10).find((v) => v >= peak);
+  const FLOOR = 100;
+  const frac = logScale ? (v) => Math.max(0, Math.log10(Math.max(v, FLOOR) / FLOOR) / Math.log10(top / FLOOR)) : (v) => v / top;
+  const ticks = logScale ? Array.from({ length: Math.max(1, Math.round(Math.log10(top / FLOOR))) }, (_, k) => FLOOR * Math.pow(10, k + 1)) : [top / 2, top];
+  const mid = (T + B) / 2, half = (B - T) / 2;
+  const x = (i) => R - (samples.length - 1 - i) / (WINDOW - 1) * (R - L);
+  ctx.font = `${11 * d}px system-ui`; ctx.lineWidth = 1; ctx.textAlign = "right";
+  for (const v of ticks) for (const sgn of [1, -1]) {
+    const y = mid - sgn * frac(v) * half;
+    ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke();
+    ctx.fillStyle = "rgba(234,238,248,0.55)"; ctx.fillText(rateB(v), R - 4 * d, y - 4 * d);
+  }
+  ctx.textAlign = "left";
+  ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.beginPath(); ctx.moveTo(L, mid); ctx.lineTo(R, mid); ctx.stroke();
+  for (let s = 0; s <= WINDOW; s += 30) { const xx = R - s / (WINDOW - 1) * (R - L); ctx.fillStyle = "rgba(234,238,248,0.45)"; ctx.fillText(s ? `-${s}s` : "now", Math.min(R - 26 * d, Math.max(L, xx - 12 * d)), B + 16 * d); }
+  const area = (vals, sign, color) => {
+    if (vals.length < 2) return;
+    const g = ctx.createLinearGradient(0, mid, 0, mid - sign * half);
+    g.addColorStop(0, color + "10"); g.addColorStop(1, color + "70");
+    ctx.beginPath(); ctx.moveTo(x(0), mid);
+    vals.forEach((v, i) => ctx.lineTo(x(i), mid - sign * frac(v) * half));
+    ctx.lineTo(x(vals.length - 1), mid); ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+    ctx.beginPath(); vals.forEach((v, i) => { const y = mid - sign * frac(v) * half; i ? ctx.lineTo(x(i), y) : ctx.moveTo(x(i), y); });
+    ctx.strokeStyle = color; ctx.lineWidth = 1.6 * d; ctx.stroke();
+  };
+  area(rx, 1, "#5cc8ff"); area(tx, -1, "#ff9d5c");
+  // Errors and drops: a red tick at the second they happened.
+  series.forEach((i, k) => { if (i && i.err_ps + i.drop_ps > 0) { ctx.fillStyle = "#f87171"; ctx.fillRect(x(k) - d, B - 8 * d, 2 * d, 8 * d); } });
+  ctx.font = `600 ${13 * d}px system-ui`;
+  const name = `${chosen} · `; let tx0 = L + 4 * d;
+  ctx.fillStyle = "#eaeef8"; ctx.fillText(name, tx0, T - 10 * d); tx0 += ctx.measureText(name).width;
+  ctx.fillStyle = "#5cc8ff"; ctx.fillText("received ↑  ", tx0, T - 10 * d); tx0 += ctx.measureText("received ↑  ").width;
+  ctx.fillStyle = "#ff9d5c"; ctx.fillText("sent ↓", tx0, T - 10 * d);
+}
+
+/// Segments in and out per second, and retransmissions, from /proc/net/snmp.
+function drawSnmp() {
+  const c = $("spark"), g = c.getContext("2d"); const [W, H, d] = fit(c);
+  g.clearRect(0, 0, W, H);
+  const ins = samples.map((s) => s.snmp.in_segs), outs = samples.map((s) => s.snmp.out_segs), re = samples.map((s) => s.snmp.retrans_segs);
+  if (ins.length < 2) return;
+  const m = Math.max(1, ...ins, ...outs);
+  const line = (v, color, scale) => { g.beginPath(); v.forEach((y, i) => { const xx = W - (v.length - 1 - i) / (WINDOW - 1) * W, yy = H - 3 * d - y / scale * (H - 8 * d); i ? g.lineTo(xx, yy) : g.moveTo(xx, yy); }); g.strokeStyle = color; g.lineWidth = 1.4 * d; g.stroke(); };
+  line(ins, "#5cc8ff", m); line(outs, "#ff9d5c", m); line(re, "#f87171", m);
+  g.fillStyle = "rgba(234,238,248,0.7)"; g.font = `${10.5 * d}px system-ui`; g.fillText(`${n0(m)} seg/s`, 5 * d, 12 * d);
+}
+
+/// One probe: its last samples as a line (a gap where one was lost) on the
+/// left, the distribution of connect times as a log-axis histogram on the right.
+function drawProbe(c, p) {
+  const g = c.getContext("2d"); const [W, H, d] = fit(c);
+  g.clearRect(0, 0, W, H);
+  const split = Math.round(W * 0.6);
+  const rec = p.recent; const ok = rec.filter((v) => v != null);
+  const hi = Math.max(1e-3, ...ok) * 1.1;
+  g.strokeStyle = "#c8a2ff"; g.lineWidth = 1.5 * d; g.beginPath();
+  let pen = false;
+  rec.forEach((v, i) => {
+    const xx = 4 * d + i / Math.max(1, 119) * (split - 8 * d);
+    if (v == null) { pen = false; g.fillStyle = "#f87171"; g.fillRect(xx - d, H - 6 * d, 2 * d, 6 * d); return; }
+    const yy = H - 4 * d - v / hi * (H - 14 * d);
+    pen ? g.lineTo(xx, yy) : g.moveTo(xx, yy); pen = true;
+  });
+  g.stroke();
+  g.fillStyle = "rgba(234,238,248,0.65)"; g.font = `${10 * d}px system-ui`; g.fillText(ms(hi), 5 * d, 11 * d);
+  // Histogram: only the occupied span of bins, so a loopback probe is not
+  // a single sliver at the far left of a 3-second axis.
+  const counts = p.hist.counts; const used = counts.map((n, i) => n ? i : -1).filter((i) => i >= 0);
+  if (!used.length) return;
+  const lo = Math.max(0, used[0] - 1), hiB = Math.min(counts.length - 1, used[used.length - 1] + 1);
+  const nb = hiB - lo + 1, bw = (W - split - 6 * d) / nb, top = Math.max(...counts);
+  for (let b = lo; b <= hiB; b++) {
+    const h = counts[b] / top * (H - 16 * d);
+    g.fillStyle = "rgba(92,200,255,0.75)"; g.fillRect(split + 3 * d + (b - lo) * bw + 0.5 * d, H - 4 * d - h, Math.max(1, bw - d), h);
+  }
+  const edge = (b) => Math.pow(10, p.hist.lo_log10_ms + b * p.hist.width);
+  g.fillStyle = "rgba(234,238,248,0.65)";
+  g.fillText(ms(edge(lo)), split + 3 * d, 11 * d);
+  const t = ms(edge(hiB + 1)); g.fillText(t, W - g.measureText(t).width - 3 * d, 11 * d);
+}
+
+// ---------------------------------------------------------------- panels
+const STATE_COLOR = { ESTABLISHED: "#7ee0a8", LISTEN: "#c8a2ff", TIME_WAIT: "#5cc8ff", CLOSE_WAIT: "#ff9d5c" };
+function barRows(el, rows, colorOf) {
+  // Bars on a log scale: one TCP table holds 3 SYN_SENT beside 6 000 of another state.
+  const top = Math.log10(1 + Math.max(1, ...rows.map((r) => r[1])));
+  el.innerHTML = rows.map(([k, v]) => `<span class="lab">${esc(k)}</span><span class="bar"><i style="width:${(Math.log10(1 + v) / top * 100).toFixed(1)}%;background:${colorOf(k)}"></i></span><span class="val">${n0(v)}</span>`).join("");
+}
+
+function panels(s) {
+  const all = s.ifaces.filter((i) => i.name !== "lo");
+  const sum = (k) => all.reduce((a, i) => a + i[k], 0);
+  $("rates").innerHTML = `<span class="rx">↓ ${bits(sum("rx_Bps"))}</span> &nbsp;<span class="tx">↑ ${bits(sum("tx_Bps"))}</span> <span style="color:var(--mute);font-size:12px;font-weight:500">all interfaces but lo</span>`;
+  const c = s.cost;
+  $("cost").innerHTML = `parsed <b>${n0(c.lines)}</b> sockets, <b>${bytes(c.bytes)}</b> in <b>${(c.parse_us / 1000).toFixed(2)} ms</b> (${bytes(c.parse_MBps * 1e6)}/s) · kernel read ${(c.read_us / 1000).toFixed(1)} ms · RSS <b>${bytes(s.self.rss_bytes)}</b>`;
+
+  // Interface buttons: busiest first, each with its live rate.
+  if (!chosen || !s.ifaces.some((i) => i.name === chosen)) chosen = (all[0] || s.ifaces[0] || {}).name;
+  $("ifaces").innerHTML = s.ifaces.slice(0, 12).map((i) => `<button data-if="${esc(i.name)}" class="${i.name === chosen ? "on" : ""}">${esc(i.name)}<small>${rateB(i.rx_Bps + i.tx_Bps)}</small></button>`).join("");
+  const ci = s.ifaces.find((i) => i.name === chosen);
+  if (ci) $("ifnote").innerHTML = `<b>${esc(ci.name)}</b> ${esc(ci.oper || "")}${ci.mtu ? ` · mtu ${ci.mtu}` : ""}${ci.speed_mbps ? ` · ${n0(ci.speed_mbps)} Mb/s link` : ""} · ${n0(ci.rx_pps)} / ${n0(ci.tx_pps)} pkt/s · errors ${n0(ci.rx_errs + ci.tx_errs)} · drops ${n0(ci.rx_drop + ci.tx_drop)} · ${bytes(ci.rx_bytes)} in, ${bytes(ci.tx_bytes)} out since up`;
+
+  const t = s.tcp;
+  $("tcpTotal").textContent = n0(t.total);
+  barRows($("states"), Object.entries(t.states).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]), (k) => STATE_COLOR[k] || "#aab4cc");
+  // ss -s "estab" and the kernel's CurrEstab count CLOSE_WAIT too (RFC 1213 tcpCurrEstab).
+  const cur = t.states.ESTABLISHED + t.states.CLOSE_WAIT;
+  $("reconcile").innerHTML = `ESTABLISHED + CLOSE_WAIT = <b>${n0(cur)}</b>; kernel CurrEstab <b>${n0(s.snmp.curr_estab)}</b> (what <b>ss -s</b> calls estab) · ${t.retransmitting} retransmitting · queued ${bytes(t.tx_queue_bytes)} out, ${bytes(t.rx_queue_bytes)} in`;
+  $("peers").textContent = `${n0(t.distinct_peers)} distinct`;
+  barRows($("classes"), [["loopback", t.remote_class.loopback], ["private", t.remote_class.private], ["public", t.remote_class.public], ["inbound", t.established_inbound], ["outbound", t.established_outbound]],
+    (k) => ({ loopback: "#c8a2ff", private: "#5cc8ff", public: "#ff9d5c" })[k] || "#7ee0a8");
+  $("rports").innerHTML = (t.remote_ports.length ? "to port " + t.remote_ports.map(([p, n]) => `<b>${p}</b> ×${n}`).join(" · ") : "no outbound service ports") + (t.remote_ephemeral ? ` · ${n0(t.remote_ephemeral)} from client ports` : "");
+  $("nlisten").textContent = `${t.listeners_total}`;
+  $("listen").innerHTML = t.listeners.map((l) => `<span class="chip ${l.bind === "loopback" ? "lo" : l.bind === "any" ? "any" : ""}" title="${l.family}, bound to ${l.bind}">${l.port} <span style="color:var(--mute)">${l.bind === "loopback" ? "lo" : l.bind}${l.family === "v6" ? "6" : ""}</span>${l.inbound ? ` <b>${l.inbound}</b>` : ""}</span>`).join("");
+
+  const n = s.snmp;
+  $("snmp").innerHTML = `<span style="color:var(--rx)">in</span> <b>${n0(n.in_segs)}</b> · <span style="color:var(--tx)">out</span> <b>${n0(n.out_segs)}</b> · <span style="color:var(--bad)">retrans</span> <b>${n0(n.retrans_segs)}</b> (${n.retrans_pct.toFixed(2)}%) · opens ${n0(n.active_opens)} out / ${n0(n.passive_opens)} in · resets ${n0(n.estab_resets)} · UDP ${n0(n.udp_in)} in / ${n0(n.udp_out)} out`;
+  const st = s.sockstat;
+  $("sock").innerHTML = st.sockets ? `sockets <b>${n0(st.sockets.used)}</b> · TCP in use ${n0(st.TCP.inuse)}, orphan ${n0(st.TCP.orphan)}, time-wait ${n0(st.TCP.tw)}, buffers ${bytes(st.TCP.mem_bytes)} · UDP ${n0(st.UDP.inuse)} (${bytes(st.UDP.mem_bytes || 0)})` : "";
+}
+
+function drawProbes() {
+  const el = $("probes");
+  // Rebuild the cards only when the set changes, so canvases are not recreated every second.
+  const ids = probes.map((p) => p.id).join(",");
+  if (el.dataset.ids !== ids) {
+    el.dataset.ids = ids;
+    el.innerHTML = probes.map((p) => `<div class="probe" data-id="${p.id}"><div class="top"><b>${esc(p.target)}</b><button data-del="${p.id}" title="remove">×</button></div><div class="note stats">&nbsp;</div><canvas></canvas></div>`).join("") || `<div class="note">No probes. Add host:port above.</div>`;
+  }
+  for (const p of probes) {
+    const card = el.querySelector(`.probe[data-id="${p.id}"]`); if (!card) continue;
+    card.querySelector(".stats").innerHTML = (p.ok ? `p50 <b>${ms(p.p50)}</b> · p95 <b>${ms(p.p95)}</b> · jitter <b>${ms(p.jitter)}</b> · loss <b>${(p.loss * 100).toFixed(1)}%</b> · n ${p.window}` : "waiting for a first answer") + (p.error ? ` · <span class="err">${esc(p.error)}</span>` : "");
+    drawProbe(card.querySelector("canvas"), p);
+  }
+}
+
+function draw() {
+  layout();
+  drawMain();
+  if (!samples.length) return;
+  drawSnmp();
+  drawProbes();
+}
+
+function take(s) {
+  const last = samples[samples.length - 1];
+  if (last && s.seq <= last.seq) {
+    if (s.uptime_s >= last.uptime_s) return; // already have it
+    samples = [];                            // the server restarted
+  }
+  samples.push(s); if (samples.length > WINDOW) samples.shift();
+  panels(s); draw();
+}
+
+// ---------------------------------------------------------------- data in
+async function seed() {
+  const r = await fetch("api/snapshot", { cache: "no-store" });
+  const j = await r.json();
+  samples = j.history.slice(-WINDOW); probes = j.probes;
+  if (samples.length) panels(samples[samples.length - 1]);
+  draw();
+}
+
+// An event stream first; a proxy that buffers it gets polling instead.
+let polling = null;
+function listen() {
+  const es = new EventSource("api/stream");
+  let got = false, fails = 0;
+  es.addEventListener("sample", (e) => { got = true; take(JSON.parse(e.data)); });
+  es.addEventListener("probes", (e) => { probes = JSON.parse(e.data); drawProbes(); });
+  es.onerror = () => { if (!got && ++fails >= 3) { es.close(); poll(); } };
+  setTimeout(() => { if (!got) { es.close(); poll(); } }, 5000);
+}
+function poll() {
+  if (polling) return;
+  polling = setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      const j = await (await fetch("api/snapshot?n=1", { cache: "no-store" })).json();
+      probes = j.probes;
+      if (j.history.length) take(j.history[0]);
+    } catch (e) { $("err").textContent = e.message; }
+  }, 1000);
+}
+
+// ---------------------------------------------------------------- controls
+$("scale").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; logScale = b.dataset.s === "log"; for (const x of $("scale").children) x.classList.toggle("on", x === b); drawMain(); });
+$("ifaces").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; chosen = b.dataset.if; if (samples.length) panels(samples[samples.length - 1]); drawMain(); });
+for (const id of ["every", "mb"]) {
+  const el = $(id), out = el.parentElement.querySelector("output");
+  const show = () => { out.textContent = id === "every" ? `${el.value} s` : `${el.value} MB`; };
+  el.addEventListener("input", show); show();
+}
+$("addForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); $("err").textContent = "";
+  const target = $("target").value.trim(); if (!target) return;
+  const r = await fetch(`api/probes?target=${encodeURIComponent(target)}&every=${$("every").value}`, { method: "POST" });
+  const j = await r.json();
+  if (!r.ok) { $("err").textContent = j.error; return; }
+  $("target").value = "";
+  probes = await (await fetch("api/probes", { cache: "no-store" })).json(); drawProbes();
+});
+$("probes").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-del]"); if (!b) return;
+  await fetch(`api/probes/delete?id=${b.dataset.del}`, { method: "POST" });
+  probes = probes.filter((p) => String(p.id) !== b.dataset.del); drawProbes();
+});
+// The download pulls zeros from this server: the bytes cross nginx and
+// loopback on the way, and the chart of those interfaces rises with them.
+$("pull").onclick = async () => {
+  const mb = +$("mb").value; $("pull").disabled = true; $("pullOut").textContent = "downloading…";
+  try {
+    const t = performance.now();
+    const r = await fetch(`api/blob?mb=${mb}`, { cache: "no-store" });
+    const reader = r.body.getReader(); let got = 0;
+    for (;;) { const { done, value } = await reader.read(); if (done) break; got += value.length; }
+    const s = (performance.now() - t) / 1000;
+    $("pullOut").innerHTML = `<b>${bytes(got)}</b> in ${s.toFixed(2)} s · <b>${bits(got / s)}</b>`;
+  } catch (e) { $("pullOut").textContent = e.message; }
+  $("pull").disabled = false;
+};
+$("env").addEventListener("toggle", async () => {
+  if (!$("env").open) return;
+  try {
+    const e = await (await fetch("api/env", { cache: "no-store" })).json();
+    // The module that matters is the Rust toolchain or an env/ set; the rest are its dependencies.
+    const mods = (m) => { const key = m.filter((x) => /^(Rust|env)\//.test(x)); return m.length ? (key.length ? key : m.slice(-2)).join(", ") + ` (${m.length} loaded)` : "none"; };
+    const rows = [
+      ["runtime", `${e.runtime} · ${e.version}`], ["target", `${e.target} · ${e.profile}`],
+      ["crate", `${e.crate.name} ${e.crate.version} · binary ${bytes(e.binary_bytes)}`],
+      ...e.packages.map((p) => [p.name, p.version]),
+      ["module, build", mods(e.modules_at_build)], ["module, run", mods(e.modules_at_run)],
+      ["started", `${e.started} · pid ${e.pid}`], ["CPUs", `${e.cpus_host} on the host, ${e.cpus_available} available`],
+      ["kernel", e.kernel || "—"], ["memory", `${bytes(e.rss_bytes)} resident`],
+    ];
+    $("envList").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  } catch (err) { $("envList").innerHTML = `<dd>${esc(err.message)}</dd>`; }
+});
+$("fold").onclick = () => $("panel").classList.toggle("folded");
+if (innerWidth <= 760) $("panel").classList.add("folded");
+
+seed().catch((e) => { $("err").textContent = e.message; }).finally(listen);
+})();
+</script>
+</body>
+</html>

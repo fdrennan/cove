@@ -1,0 +1,7 @@
+target/
+dist/
+# Videos and songs are large and personal: kept on disk, not in git.
+media/
+out/
+# up.sh's pid and log.
+.run/

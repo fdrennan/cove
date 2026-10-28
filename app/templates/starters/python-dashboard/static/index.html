@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#060912">
+<title>System · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="glow"></div>
+<main>
+  <header class="top">
+    <div>
+      <h1>System</h1>
+      <p id="host">…</p>
+    </div>
+    <div class="chips">
+      <span class="chip"><b id="uptime">–</b> up</span>
+      <span class="chip">load <b id="load">–</b></span>
+      <span class="chip"><span id="live" class="dot"></span><b id="age">live</b></span>
+    </div>
+  </header>
+
+  <section class="grid">
+    <article class="glass card wide">
+      <div class="card-head"><h2>CPU</h2><span class="big" id="cpu-now">–</span></div>
+      <canvas id="cpu" class="chart"></canvas>
+      <div id="cores" class="cores"></div>
+    </article>
+
+    <article class="glass card">
+      <div class="card-head"><h2>Memory</h2><span class="big" id="mem-now">–</span></div>
+      <div class="sub" id="mem-sub">–</div>
+      <canvas id="mem" class="chart"></canvas>
+    </article>
+
+    <article class="glass card">
+      <div class="card-head"><h2>Network</h2><span class="big" id="net-now">–</span></div>
+      <div class="sub" id="net-sub">–</div>
+      <canvas id="net" class="chart"></canvas>
+    </article>
+
+    <article class="glass card">
+      <div class="card-head"><h2>Disk I/O</h2><span class="big" id="io-now">–</span></div>
+      <div class="sub" id="io-sub">–</div>
+      <canvas id="io" class="chart"></canvas>
+    </article>
+
+    <article class="glass card">
+      <div class="card-head"><h2>Filesystems</h2></div>
+      <div id="disks" class="disks"></div>
+    </article>
+
+    <article class="glass card span2">
+      <div class="card-head"><h2>Busiest processes</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>PID</th><th>Name</th><th>User</th><th class="n">CPU %</th><th class="n">Memory</th></tr></thead>
+          <tbody id="procs"></tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+</main>
+<div id="tip" class="tip" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

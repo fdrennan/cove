@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Adaptive Trial Designer · __HOST__</title>
+<style>
+  :root { --glass: rgba(10, 13, 22, 0.72); --edge: rgba(255, 255, 255, 0.12); --text: #e8edf8; --mute: #b9c3d8;
+    --accent: #8f7bff; --good: #3ddc97; --bad: #ff7a7e; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; color: var(--text); overflow: hidden;
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(ellipse at 45% 40%, #16203d 0%, #090c16 55%, #04050a 100%); }
+  canvas { display: block; }
+  #dens { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 16px;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+  details { position: fixed; top: 16px; right: 16px; width: 360px; max-height: calc(100vh - 32px); overflow: auto; padding: 12px 16px; }
+  summary { font-size: 19px; font-weight: 650; cursor: pointer; }
+  details[open] summary { margin-bottom: 8px; }
+  h4 { margin: 12px 0 4px; font-size: 14px; font-weight: 600; color: var(--mute); }
+  .row { display: grid; grid-template-columns: 104px 1fr 62px; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { color: var(--mute); font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+  .sw { width: 12px; height: 3px; border-radius: 2px; flex: none; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .seg { display: flex; gap: 6px; margin: 6px 0 8px; }
+  button { flex: 1; font: inherit; color: var(--text); cursor: pointer; border: 1px solid var(--edge); border-radius: 10px;
+    padding: 7px 10px; background: rgba(255, 255, 255, 0.06); }
+  button:hover { background: rgba(255, 255, 255, 0.13); }
+  button.on { background: rgba(143, 123, 255, 0.35); border-color: rgba(143, 123, 255, 0.7); }
+  button:disabled { opacity: 0.5; cursor: progress; }
+  .check { display: flex; align-items: center; gap: 8px; color: var(--mute); font-size: 14px; margin: 4px 0 8px; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .tile { background: rgba(255, 255, 255, 0.06); border-radius: 10px; padding: 7px 10px; }
+  .tile b { display: block; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile span { font-size: 13px; color: var(--mute); }
+  .mini { position: fixed; bottom: 16px; width: min(420px, 30vw); height: 190px; padding: 8px 10px 6px; }
+  .mini h3, #oc h3 { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
+  .mini canvas { width: 100%; height: 150px; }
+  #allocP { left: 16px; } #countP { left: calc(32px + min(420px, 30vw)); }
+  #title { position: fixed; top: 16px; left: 16px; right: 392px; padding: 10px 16px; }
+  #title b { font-size: 16px; } #title span { color: var(--mute); font-size: 14px; display: block; }
+  #oc { position: fixed; top: 92px; left: 16px; width: 470px; max-height: calc(100vh - 330px); overflow: auto; padding: 10px 14px; display: none; }
+  #oc.stale { opacity: 0.55; }
+  #oc table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  #oc th, #oc td { padding: 4px 6px; text-align: right; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+  #oc th:first-child, #oc td:first-child { text-align: left; color: var(--mute); font-weight: 400; }
+  #oc thead th { color: var(--text); font-weight: 600; }
+  #oc td.win { color: var(--good); }
+  #oc .note { color: var(--mute); font-size: 13px; margin: 6px 0 4px; }
+  #oc canvas { width: 100%; height: 110px; }
+  #tip { position: fixed; pointer-events: none; display: none; padding: 6px 9px; font-size: 13px; border-radius: 10px;
+    background: rgba(10, 13, 22, 0.92); border: 1px solid var(--edge); font-variant-numeric: tabular-nums; z-index: 5; }
+  #tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  @media (max-width: 760px) {
+    details { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; max-height: 45vh; }
+    .mini { display: none; }
+    #title { left: 10px; right: 10px; top: 10px; }
+    #oc { left: 10px; right: 10px; width: auto; top: 96px; max-height: 38vh; }
+  }
+</style>
+</head>
+<body>
+<canvas id="dens"></canvas>
+<div id="title" class="glass"><b>Adaptive Trial Designer</b><span id="sub">simulating…</span></div>
+
+<div id="oc" class="glass"></div>
+<div id="allocP" class="glass mini"><h3>Allocation probability, patient by patient</h3><canvas id="allocC"></canvas></div>
+<div id="countP" class="glass mini"><h3>Patients per arm, against equal allocation</h3><canvas id="countC"></canvas></div>
+<div id="tip"></div>
+
+<details id="card" class="glass" open>
+  <summary>The trial</summary>
+  <h4>True response rates</h4>
+  <div class="seg" id="arms"><button data-k="2">2 arms</button><button data-k="3" class="on">3 arms</button><button data-k="4">4 arms</button></div>
+  <div id="rates"></div>
+  <h4>Allocation after the burn-in</h4>
+  <div class="seg"><button id="thompson" class="on">Thompson</button><button id="pbest">P(best)<sup>c</sup></button></div>
+  <div class="row"><label for="n">patients, max</label><input id="n" type="range" min="40" max="1000" step="10" value="300"><output id="nV"></output></div>
+  <div class="row"><label for="burnin">burn-in</label><input id="burnin" type="range" min="0" max="300" step="5" value="60"><output id="burninV"></output></div>
+  <div class="row"><label for="every">look every</label><input id="every" type="range" min="10" max="200" step="5" value="30"><output id="everyV"></output></div>
+  <div class="row"><label for="eff">efficacy, P(best) &gt;</label><input id="eff" type="range" min="0.5" max="0.9999" step="0.0001" value="0.99"><output id="effV"></output></div>
+  <div class="row"><label for="fut">drop arm, P(best) &lt;</label><input id="fut" type="range" min="0" max="0.1" step="0.005" value="0.01"><output id="futV"></output></div>
+  <div class="row"><label for="alpha">alpha</label><input id="alpha" type="range" min="0.01" max="0.1" step="0.005" value="0.05"><output id="alphaV"></output></div>
+  <div class="row"><label for="speed">patients / s</label><input id="speed" type="range" min="10" max="400" step="10" value="80"><output id="speedV"></output></div>
+  <div class="seg"><button id="again">Run another trial</button></div>
+  <div class="tiles" id="tiles"></div>
+  <h4>Operating characteristics</h4>
+  <div class="row"><label for="sims">trials</label><input id="sims" type="range" min="1000" max="20000" step="1000" value="4000"><output id="simsV"></output></div>
+  <label class="check"><input id="calibrate" type="checkbox" checked> calibrate the efficacy threshold to alpha</label>
+  <div class="seg"><button id="ocB">Simulate both designs</button></div>
+</details>
+
+<script>
+const $ = (id) => document.getElementById(id);
+// Control is the neutral reference; the experimental arms take the first three
+// categorical slots, which stay distinct from each other under colour-vision
+// deficiency. Every curve is also labelled by name on the canvas.
+const COL = ["#aab3c5", "#3987e5", "#d95926", "#199e70"];
+const NAME = ["Control", "A", "B", "C"];
+// The server numbers arms from 1, as Julia does, with 0 for "no arm".
+const who = (k) => NAME[k - 1];
+const st = { k: 3, rates: [0.3, 0.3, 0.45, 0.3], rule: "thompson", seed: 1 };
+let run = null, at = 0, playing = false, lastT = 0, ymax = 1, ocData = null, inflight = 0;
+
+const params = () => ({ rates: st.rates.slice(0, st.k), rule: st.rule, seed: st.seed, n: +$("n").value,
+  burnin: +$("burnin").value, every: +$("every").value, eff: +$("eff").value, fut: +$("fut").value, alpha: +$("alpha").value });
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const x = await r.json();
+  if (!r.ok) throw new Error(x.error);
+  return x;
+}
+
+async function trial() {
+  const mine = ++inflight, p = params();
+  let x;
+  try { x = await post("api/trial", p); } catch (e) { $("sub").textContent = "error: " + e.message; return; }
+  if (mine !== inflight) return;
+  run = prepare(x, p);
+  at = 0; playing = true; lastT = performance.now();
+  requestAnimationFrame(tick);
+}
+
+// Cumulative responses and patients per arm after each patient, so any frame
+// of the animation is one lookup.
+function prepare(x, p) {
+  const K = x.rates.length, N = x.arm.length;
+  const resp = [new Array(K).fill(0)], pts = [new Array(K).fill(0)];
+  for (let i = 0; i < N; i++) {
+    const r = resp[i].slice(), n = pts[i].slice(), a = x.arm[i] - 1;
+    n[a]++; r[a] += x.y[i];
+    resp.push(r); pts.push(n);
+  }
+  // The patient count at the look that dropped each arm, 0 for arms never dropped.
+  const dropped = new Array(K).fill(0);
+  for (const l of x.looks) l.active.forEach((on, j) => { if (!on && !dropped[j]) dropped[j] = l.n; });
+  return { ...x, K, N, resp, pts, dropped, p };
+}
+
+function tick(t) {
+  if (!run || !playing) return;
+  at = Math.min(run.N, at + (t - lastT) / 1000 * +$("speed").value);
+  lastT = t;
+  draw();
+  if (at >= run.N) { playing = false; return; }
+  requestAnimationFrame(tick);
+}
+
+function fit(c) {
+  const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [g, w, h];
+}
+
+// Beta(a, b) density on a grid over (0, 1), normalised numerically: no log-gamma needed.
+const GRID = 600, XS = Array.from({ length: GRID }, (_, i) => (i + 0.5) / GRID);
+function beta(a, b) {
+  const lp = XS.map((x) => (a - 1) * Math.log(x) + (b - 1) * Math.log1p(-x)), m = Math.max(...lp);
+  const f = lp.map((v) => Math.exp(v - m)), s = f.reduce((u, v) => u + v, 0) / GRID;
+  return f.map((v) => v / s);
+}
+function interval(a, b) {
+  const f = beta(a, b); let c = 0, lo = 0, hi = 1;
+  for (let i = 0; i < GRID; i++) { const nc = c + f[i] / GRID; if (c < 0.025 && nc >= 0.025) lo = XS[i]; if (c < 0.975 && nc >= 0.975) hi = XS[i]; c = nc; }
+  return [lo, hi];
+}
+
+function layout(w, h) {
+  const wide = innerWidth > 760;
+  // The operating characteristics panel takes the left side once it is open.
+  return { L: wide ? (ocData ? 510 : 70) : 24, R: w - (wide ? 400 : 24), T: wide ? 130 : 120, B: h - (wide ? 240 : Math.min(h * 0.5, 330)) };
+}
+
+function drawDensities() {
+  const [g, w, h] = fit($("dens"));
+  g.clearRect(0, 0, w, h);
+  const { L, R, T, B } = layout(w, h), i = Math.floor(at), K = run.K;
+  const xhi = Math.min(1, Math.max(...run.rates) + 0.3), xlo = Math.max(0, Math.min(...run.rates) - 0.25);
+  const lo = Math.floor(xlo * GRID), hi = Math.ceil(xhi * GRID);
+  const curves = [];
+  for (let j = 0; j < K; j++) curves.push(beta(1 + run.resp[i][j], 1 + run.pts[i][j] - run.resp[i][j]));
+  const target = Math.max(...curves.map((f) => Math.max(...f.slice(lo, hi)))) * 1.12;
+  ymax += (target - ymax) * (at >= run.N ? 1 : 0.2);
+  const X = (x) => L + (x - xlo) / (xhi - xlo) * (R - L), Y = (y) => B - y / ymax * (B - T);
+  g.font = "13px system-ui"; g.strokeStyle = "rgba(255,255,255,0.08)"; g.fillStyle = "#c3cad8"; g.lineWidth = 1;
+  for (let v = Math.ceil(xlo * 10) / 10; v <= xhi + 1e-9; v += 0.1) {
+    g.beginPath(); g.moveTo(X(v), T); g.lineTo(X(v), B); g.stroke();
+    g.fillText(Math.round(v * 100) + "%", X(v) - 12, B + 20);
+  }
+  g.fillText("response rate", R - 92, B + 40);
+  g.strokeStyle = "rgba(255,255,255,0.3)"; g.beginPath(); g.moveTo(L, B); g.lineTo(R, B); g.stroke();
+  const labels = [];
+  // Curves taller than the eased scale are cut at the top of the plot, under the labels.
+  g.save(); g.beginPath(); g.rect(0, T - 20, w, B - T + 40); g.clip();
+  for (let j = 0; j < K; j++) {
+    const f = curves[j], off = run.dropped[j] && i >= run.dropped[j];
+    g.globalAlpha = off ? 0.35 : 1;
+    g.beginPath(); g.moveTo(X(XS[lo]), B);
+    for (let q = lo; q < hi; q++) g.lineTo(X(XS[q]), Y(f[q]));
+    g.lineTo(X(XS[hi - 1]), B); g.closePath();
+    g.fillStyle = COL[j] + "26"; g.fill();
+    g.beginPath();
+    for (let q = lo; q < hi; q++) q === lo ? g.moveTo(X(XS[q]), Y(f[q])) : g.lineTo(X(XS[q]), Y(f[q]));
+    g.strokeStyle = COL[j]; g.lineWidth = 2; g.setLineDash(j === 0 ? [7, 5] : []); g.stroke(); g.setLineDash([]);
+    // The true rate, a tick under the axis in the arm's colour.
+    g.fillStyle = COL[j]; g.beginPath(); g.moveTo(X(run.rates[j]), B + 2); g.lineTo(X(run.rates[j]) - 6, B + 11); g.lineTo(X(run.rates[j]) + 6, B + 11); g.fill();
+    let pk = lo; for (let q = lo; q < hi; q++) if (f[q] > f[pk]) pk = q;
+    labels.push({ x: X(XS[pk]), y: Math.max(T, Y(f[pk]) - 10), j, off });
+    g.globalAlpha = 1;
+  }
+  g.restore();
+  // Direct labels at each peak, nudged apart so two close curves stay readable.
+  labels.sort((a, b) => a.y - b.y);
+  for (let a = 1; a < labels.length; a++)
+    for (let b = 0; b < a; b++) if (Math.abs(labels[a].x - labels[b].x) < 150 && Math.abs(labels[a].y - labels[b].y) < 38) labels[a].y = labels[b].y + 38;
+  for (const l of labels) {
+    const j = l.j, n = run.pts[i][j], r = run.resp[i][j];
+    g.globalAlpha = l.off ? 0.5 : 1; g.fillStyle = "#e8edf8"; g.font = "600 14px system-ui";
+    const head = NAME[j] + (l.off ? " (dropped)" : ""), sub = `${r}/${n} respond · true ${Math.round(run.rates[j] * 100)}%`;
+    // Kept inside the canvas: a peak at the edge of the range would push its label off it.
+    const cx = (t) => Math.min(R - g.measureText(t).width, Math.max(L, l.x - g.measureText(t).width / 2));
+    g.fillText(head, cx(head), l.y - 14);
+    g.font = "13px system-ui"; g.fillStyle = "#c3cad8"; g.fillText(sub, cx(sub), l.y);
+    g.globalAlpha = 1;
+  }
+}
+
+function drawAlloc() {
+  const [g, w, h] = fit($("allocC")), i = Math.floor(at), K = run.K, N = run.p.n;
+  g.clearRect(0, 0, w, h);
+  const X = (n) => 2 + n / N * (w - 4), Y = (v) => h - 2 - v * (h - 4);
+  // Stacked bands, control at the bottom; a hairline in the background colour separates them.
+  const base = new Array(i + 1).fill(0);
+  for (let j = 0; j < K; j++) {
+    const top = base.map((b, q) => b + (q ? run.alloc[q - 1][j] : 1 / K));
+    g.beginPath();
+    for (let q = 0; q <= i; q++) q ? g.lineTo(X(q), Y(top[q])) : g.moveTo(X(q), Y(top[q]));
+    for (let q = i; q >= 0; q--) g.lineTo(X(q), Y(base[q]));
+    g.closePath(); g.fillStyle = COL[j] + "b3"; g.fill(); g.strokeStyle = "#0b0f1c"; g.lineWidth = 1; g.stroke();
+    top.forEach((v, q) => (base[q] = v));
+  }
+  g.setLineDash([3, 4]); g.strokeStyle = "rgba(255,255,255,0.45)";
+  for (const l of run.looks) if (l.n <= i) { g.beginPath(); g.moveTo(X(l.n), 2); g.lineTo(X(l.n), h - 2); g.stroke(); }
+  g.setLineDash([]);
+  if (run.p.burnin > 0) { g.fillStyle = "#c3cad8"; g.font = "12px system-ui"; g.fillText("burn-in", X(Math.min(run.p.burnin, i)) / 2 - 18, 14); }
+}
+
+function drawCounts() {
+  const [g, w, h] = fit($("countC")), i = Math.floor(at), K = run.K, N = run.p.n;
+  g.clearRect(0, 0, w, h);
+  const top = Math.max(N / K, ...run.pts[run.N]) * 1.05;
+  const X = (n) => 2 + n / N * (w - 4), Y = (v) => h - 2 - v / top * (h - 4);
+  g.setLineDash([6, 5]); g.strokeStyle = "rgba(255,255,255,0.45)"; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(X(0), Y(0)); g.lineTo(X(N), Y(N / K)); g.stroke(); g.setLineDash([]);
+  for (let j = 0; j < K; j++) {
+    g.beginPath();
+    for (let q = 0; q <= i; q += Math.max(1, Math.floor(i / 300))) q ? g.lineTo(X(q), Y(run.pts[q][j])) : g.moveTo(X(q), Y(0));
+    g.lineTo(X(i), Y(run.pts[i][j]));
+    g.strokeStyle = COL[j]; g.lineWidth = 2; g.setLineDash(j === 0 ? [7, 5] : []); g.stroke(); g.setLineDash([]);
+  }
+}
+
+const pct = (v, d = 0) => (100 * v).toFixed(d) + "%";
+
+function status() {
+  const i = Math.floor(at), s = run.stop;
+  const look = run.looks.filter((l) => l.n <= i).pop();
+  const pb = look ? " · last look at " + look.n + ": P(best) " + look.pbest.map((v, j) => `${NAME[j]} ${v.toFixed(2)}`).join(", ") : "";
+  if (i < run.N) return `patient ${i} of up to ${run.p.n}` + (i < run.p.burnin ? " · burn-in, equal allocation" : "") + pb;
+  const end = s.reason === "efficacy" ? `${who(s.winner)} declared best at patient ${s.n}` :
+              s.reason === "futility" ? `stopped for futility at patient ${s.n}` : `no arm declared best after ${s.n} patients`;
+  return end + pb;
+}
+
+function tiles() {
+  const s = run.stop, f = run.fixed, best = run.rates.indexOf(Math.max(...run.rates));
+  const t = (v, l, cls = "") => `<div class="tile ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  const right = s.winner > 0 && s.winner - 1 === best;
+  const fz = f.z.slice(1).map((z, j) => `${NAME[j + 1]} ${z.toFixed(2)}`).join(", ");
+  $("tiles").innerHTML =
+    t(s.winner ? who(s.winner) : s.reason === "futility" ? "futility" : "none", "adaptive design's verdict", s.winner ? (right ? "good" : "bad") : "") +
+    t(s.n, "patients enrolled") +
+    t(pct(s.per_arm[best] / s.n), `on the best arm, ${NAME[best]}`) +
+    t(s.responders, "patients who responded") +
+    t(f.winner ? who(f.winner) : "none", `fixed design, ${f.per} per arm; z ${fz} against ${f.crit.toFixed(2)}`) +
+    t(f.x.reduce((a, b) => a + b, 0), `responded under the fixed design, of ${f.per * run.K}`);
+}
+
+function draw() {
+  if (!run) return;
+  drawDensities(); drawAlloc(); drawCounts();
+  $("sub").textContent = status();
+  if (at >= run.N) tiles(); else $("tiles").innerHTML = "";
+}
+
+// ---- operating characteristics ----
+async function oc() {
+  const p = { ...params(), sims: +$("sims").value, calibrate: $("calibrate").checked };
+  $("ocB").disabled = true; $("ocB").textContent = `Simulating ${(2 * p.sims).toLocaleString()} trials per design…`;
+  try {
+    const x = await post("api/oc", p);
+    ocData = x;
+    renderOC();
+    // Replay one trial under the threshold the table was computed with.
+    if (x.calibrated) { $("eff").value = x.eff; show("eff"); trial(); }
+  } catch (e) { $("sub").textContent = "error: " + e.message; }
+  $("ocB").disabled = false; $("ocB").textContent = "Simulate both designs";
+}
+
+function renderOC() {
+  const x = ocData, A = x.alt.adaptive, F = x.alt.fixed, nA = x.null.adaptive, nF = x.null.fixed, K = x.rates.length;
+  const best = x.rates.indexOf(Math.max(...x.rates));
+  // Mark the better design per row; for type-I error the one closer to alpha from below.
+  const row = (label, a, f, fmt, better) => {
+    const w = better ? better(a, f) : 0;
+    return `<tr><td>${label}</td><td class="${w > 0 ? "win" : ""}">${fmt(a)}</td><td class="${w < 0 ? "win" : ""}">${fmt(f)}</td></tr>`;
+  };
+  const hi = (a, b) => Math.sign(a - b), lo = (a, b) => Math.sign(b - a), num1 = (v) => v.toFixed(1);
+  const power = A.correct === null ? `<tr><td>power</td><td colspan="2">no single experimental arm is best</td></tr>` :
+    row(`power: ${who(A.target)} declared best`, A.correct, F.correct, (v) => pct(v, 1), hi);
+  $("oc").innerHTML = `<h3>Operating characteristics · ${x.sims.toLocaleString()} trials per design and scenario</h3>
+    <div class="note">${x.millis.toLocaleString()} ms on ${x.threads} threads · efficacy at P(best) &gt; ${x.eff.toFixed(4)}${x.calibrated ? ", calibrated to alpha " + params().alpha : ""}</div>
+    <table><thead><tr><th></th><th>Adaptive</th><th>Fixed</th></tr></thead><tbody>
+    ${row("type-I error, every arm at control's rate", nA.reject, nF.reject, (v) => pct(v, 1))}
+    ${power}
+    ${row("expected patients", A.ess, F.ess, num1, lo)}
+    ${row("expected patients, null", nA.ess, nF.ess, num1, lo)}
+    ${row(`patients on ${NAME[best]}, the best arm`, A.best_n, F.best_n, num1, hi)}
+    ${row(`share on ${NAME[best]}`, A.best_frac, F.best_frac, (v) => pct(v, 1), hi)}
+    ${row("patients who respond", A.responders, F.responders, num1)}
+    ${row("stopped early, efficacy", A.stop.efficacy, F.stop.efficacy, (v) => pct(v, 1))}
+    ${row("stopped early, futility", A.stop.futility, F.stop.futility, (v) => pct(v, 1))}
+    ${x.rates.map((_, j) => row(`${NAME[j]} declared best`, A.select[j], F.select[j], (v) => pct(v, 1))).slice(1).join("")}
+    </tbody></table>
+    <div class="note">Adaptive trial sizes under these rates (bars); the fixed design always enrols ${F.ess} (dashed)</div>
+    <canvas id="nhistC"></canvas>`;
+  $("oc").style.display = "block"; $("oc").classList.remove("stale");
+  const [g, w, h] = fit($("nhistC")), c = A.nhist.counts, top = Math.max(...c), N = A.nhist.edges[A.nhist.edges.length - 1];
+  const bw = (w - 4) / c.length;
+  g.fillStyle = "rgba(143,123,255,0.75)";
+  c.forEach((v, q) => { const bh = v / top * (h - 8); g.fillRect(2 + q * bw + 1, h - 2 - bh, bw - 2, bh); });
+  g.setLineDash([6, 5]); g.strokeStyle = "#f0dc78"; const fx = 2 + F.ess / N * (w - 4);
+  g.beginPath(); g.moveTo(fx - 1, 2); g.lineTo(fx - 1, h - 2); g.stroke(); g.setLineDash([]);
+  $("nhistC").onmousemove = (e) => {
+    const q = Math.min(c.length - 1, Math.max(0, Math.floor((e.offsetX - 2) / bw)));
+    tip(e, `${Math.round(A.nhist.edges[q])}–${Math.round(A.nhist.edges[q + 1])} patients: ${pct(c[q] / x.sims, 1)} of trials`);
+  };
+  $("nhistC").onmouseleave = untip;
+}
+
+// ---- hover ----
+function tip(e, html) { const t = $("tip"); t.innerHTML = html; t.style.display = "block";
+  t.style.left = Math.min(innerWidth - t.offsetWidth - 8, e.clientX + 14) + "px"; t.style.top = (e.clientY - t.offsetHeight - 10) + "px"; }
+function untip() { $("tip").style.display = "none"; }
+function hoverPatient(e, c, value) {
+  if (!run) return;
+  const q = Math.round((e.offsetX - 2) / (c.clientWidth - 4) * run.p.n);
+  if (q < 1 || q > Math.floor(at)) return untip();
+  tip(e, `<b>patient ${q}</b><br>` + run.alloc[q - 1].map((_, j) => `<i style="background:${COL[j]}"></i>${NAME[j]} ${value(q, j)}`).join("<br>"));
+}
+$("allocC").onmousemove = (e) => hoverPatient(e, $("allocC"), (q, j) => pct(run.alloc[q - 1][j], 1));
+$("countC").onmousemove = (e) => hoverPatient(e, $("countC"), (q, j) => run.pts[q][j]);
+$("dens").onmousemove = (e) => {
+  if (!run || e.clientX > layout(innerWidth, innerHeight).R) return untip();
+  const i = Math.floor(at);
+  tip(e, `<b>after ${i} patients</b><br>` + run.rates.map((_, j) => {
+    const a = 1 + run.resp[i][j], b = 1 + run.pts[i][j] - run.resp[i][j], [lo, hi] = interval(a, b);
+    return `<i style="background:${COL[j]}"></i>${NAME[j]} mean ${pct(a / (a + b), 1)}, 95% ${pct(lo)}–${pct(hi)}`;
+  }).join("<br>"));
+};
+for (const c of ["allocC", "countC", "dens"]) $(c).addEventListener("mouseleave", untip);
+
+// ---- controls ----
+const FMT = { n: (v) => v, burnin: (v) => v, every: (v) => v, eff: (v) => v.toFixed(4), fut: (v) => v.toFixed(3),
+  alpha: (v) => v.toFixed(3), speed: (v) => v, sims: (v) => v.toLocaleString() };
+function show(id) { $(id + "V").textContent = FMT[id](+$(id).value); }
+function changed() {
+  if (ocData) $("oc").classList.add("stale");
+  clearTimeout(changed._t); changed._t = setTimeout(trial, 120);
+}
+for (const id of Object.keys(FMT)) {
+  $(id).addEventListener("input", () => {
+    show(id);
+    if (id === "n") { $("burnin").max = +$("n").value; show("burnin"); }
+    if (id !== "speed" && id !== "sims") changed();
+  });
+  show(id);
+}
+function rateRows() {
+  $("rates").innerHTML = st.rates.slice(0, st.k).map((r, j) =>
+    `<div class="row"><label for="r${j}"><span class="sw" style="background:${COL[j]}"></span>${NAME[j]}</label>` +
+    `<input id="r${j}" type="range" min="0.05" max="0.95" step="0.01" value="${r}"><output id="r${j}V">${pct(r)}</output></div>`).join("");
+  for (let j = 0; j < st.k; j++) $("r" + j).addEventListener("input", (e) => { st.rates[j] = +e.target.value; $("r" + j + "V").textContent = pct(st.rates[j]); changed(); });
+}
+for (const b of $("arms").children) b.onclick = () => {
+  st.k = +b.dataset.k; for (const o of $("arms").children) o.classList.toggle("on", o === b); rateRows(); changed();
+};
+for (const r of ["thompson", "pbest"]) $(r).onclick = () => {
+  st.rule = r; $("thompson").classList.toggle("on", r === "thompson"); $("pbest").classList.toggle("on", r === "pbest"); changed();
+};
+$("again").onclick = () => { st.seed++; trial(); };
+$("ocB").onclick = oc;
+if (innerWidth < 760) $("card").open = false;
+addEventListener("resize", () => { draw(); if (ocData) renderOC(); });
+rateRows();
+trial();
+</script>
+</body>
+</html>

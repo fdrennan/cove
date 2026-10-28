@@ -1,0 +1,26 @@
+# cove.ndexr.io, every user: `cove multiuser` as root, built from this
+# working tree by the ubuntu user unit cove-onprem (onprem/run.sh), which
+# publishes each build as a release under /usr/local/lib/cove (root-owned,
+# readable by every account - each person's session runs its release's binary
+# as them) and restarts this unit only when the server's own code changed.
+# Install: onprem/install-multiuser.sh.
+#
+# KillMode=process: stopping or restarting the server leaves every session
+# running; the next server takes them back (multiuser.rs adopt). It was
+# `mixed`, which SIGKILLed the whole cgroup - every save of the working tree
+# signed everyone out (operator, 2026-10-18).
+[Unit]
+Description=cove.ndexr.io for every ndexr user (cove multiuser, live from source)
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/lib/cove/cove multiuser --listen 127.0.0.1:8796 --web-dir /usr/local/lib/cove/web --config /home/ubuntu/ndexr/src/domains/drennanfreddy/cove.ndexr.io/onprem/multiuser.conf
+Restart=always
+RestartSec=2
+KillMode=process
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,3 @@
+target/
+# up.sh's pid and log.
+.run/

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Cove
+GenericName=Agent Development Environment
+Comment=Use agents to weave scientific software into new applications, on the ndexr stack
+Exec=cove
+Icon=io.ndexr.cove
+Terminal=false
+Categories=Development;IDE;
+Keywords=ndexr;rstudio;r;python;ide;shiny;
+StartupWMClass=io.ndexr.cove
+StartupNotify=true

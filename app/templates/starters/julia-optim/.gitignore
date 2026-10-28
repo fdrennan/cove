@@ -1,0 +1,6 @@
+# Packages come from the ndexr stack's Julia set; a local environment stays local.
+Manifest.toml
+LocalPreferences.toml
+*.log
+# up.sh's pid and log.
+.run/

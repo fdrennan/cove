@@ -1,0 +1,19 @@
+Static instances of ndexr.io's own Inter (src/vendor/fonts/InterVariable.woff2),
+plus JetBrains Mono 2.304 for code (JetBrainsMono-Regular.ttf from
+JetBrainsMono-2.304.zip, sha256 6f6376c6…, the source Inlet 0012 ships):
+the Regolith look. egui reads TTF and draws a variable font only at its default
+instance, hence fixed weights here.
+Regenerate Inter with fontTools: instancer.instantiateVariableFont(..., {"wght": N}).
+Inter: SIL OFL 1.1. JetBrains Mono: SIL OFL 1.1.
+
+Symbol fallbacks (2026-10-18), last in every family so they only fill gaps:
+DejaVuSans-symbols.ttf and NotoSansSymbols2-symbols.ttf, cut from the system's
+DejaVuSans.ttf and NotoSansSymbols2-Regular.ttf with fontTools (stack env
+env/r4.6_py3.13-release):
+  python3 -m fontTools.subset <font> --no-hinting --layout-features='' \
+    --unicodes=U+2190-21FF,U+2300-23FF,U+2500-25FF,U+2600-27BF,U+27F0-27FF,U+2900-297F,U+2B00-2BFF,U+FF01-FF5E
+DejaVu: Bitstream Vera / public-domain changes. Noto Sans Symbols 2: SIL OFL 1.1.
+theme.rs `every_symbol_in_the_ui_has_a_glyph` fails on any UI symbol none of them draws.
+
+Licence texts: LICENSE-OFL.txt (Inter, JetBrains Mono, Noto Sans Symbols 2)
+and LICENSE-DejaVu.txt (DejaVu), shipped beside the fonts as their licences ask.

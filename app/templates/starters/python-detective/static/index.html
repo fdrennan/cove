@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>Dataset Detective · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="stage">
+  <aside class="glass panel">
+    <header>
+      <h1>Dataset Detective</h1>
+      <p id="about">pandas on four classic tables.</p>
+    </header>
+
+    <div class="seg" id="datasets"></div>
+
+    <div class="facts">
+      <div><b id="f-rows">–</b><span class="k">rows</span></div>
+      <div><b id="f-cols">–</b><span class="k">columns</span></div>
+      <div><b id="f-complete">–</b><span class="k">complete</span></div>
+      <div><b id="f-ms">–</b><span class="k">ms</span></div>
+    </div>
+
+    <details class="tune" open>
+      <summary>Tune</summary>
+      <label class="row">blank cells at random <output id="missing-v">0%</output><input id="missing" type="range" min="0" max="0.4" step="0.01" value="0"></label>
+      <label class="row">outlier |z| over <output id="z-v">3.0</output><input id="z" type="range" min="1.5" max="5" step="0.1" value="3"></label>
+      <label class="row">outlier fence, × IQR <output id="iqr-v">1.5</output><input id="iqr" type="range" min="0.5" max="4" step="0.1" value="1.5"></label>
+      <button id="reseed" type="button" class="ghost">New blanks</button>
+    </details>
+
+    <h2>Findings</h2>
+    <ol id="findings" class="findings"></ol>
+  </aside>
+
+  <section class="board">
+    <article class="glass card wide">
+      <header><h3>Columns</h3><span class="hint" id="cols-hint"></span></header>
+      <div class="table-wrap"><table id="columns"></table></div>
+    </article>
+
+    <article class="glass card">
+      <header><h3>Correlation</h3>
+        <div class="seg small" id="method">
+          <button type="button" data-k="pearson" class="on">Pearson</button>
+          <button type="button" data-k="spearman">Spearman</button>
+        </div>
+      </header>
+      <div class="canvas-box square"><canvas id="heat" aria-label="Correlation heatmap"></canvas></div>
+      <div class="ramp"><span>−1</span><i></i><span>+1</span></div>
+    </article>
+
+    <article class="glass card">
+      <header><h3>Distribution</h3>
+        <div class="controls">
+          <select id="dist-col" aria-label="column"></select>
+          <select id="dist-by" aria-label="split by"></select>
+          <label class="check"><input id="dist-log" type="checkbox"> log</label>
+        </div>
+      </header>
+      <div class="canvas-box"><canvas id="dist" aria-label="Histogram"></canvas></div>
+      <label class="row inline">bins <output id="bins-v">24</output><input id="bins" type="range" min="6" max="60" step="1" value="24"></label>
+      <div class="legend" id="dist-legend"></div>
+      <p class="stat-line" id="dist-stats"></p>
+    </article>
+
+    <article class="glass card wide">
+      <header><h3>Scatter</h3>
+        <div class="controls">
+          <select id="sx" aria-label="x"></select>
+          <select id="sy" aria-label="y"></select>
+          <select id="sc" aria-label="colour by"></select>
+          <label class="check"><input id="sfit" type="checkbox" checked> fit</label>
+        </div>
+      </header>
+      <div class="canvas-box tall"><canvas id="scatter" aria-label="Scatter plot"></canvas></div>
+      <div class="legend" id="sc-legend"></div>
+      <p class="stat-line" id="sc-stats"></p>
+    </article>
+  </section>
+</main>
+<div id="tip" class="tip" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

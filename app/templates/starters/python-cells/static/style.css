@@ -1,0 +1,131 @@
+:root {
+  --bg: #0b1020;
+  --glass: rgba(16, 22, 42, 0.62);
+  --line: rgba(255, 255, 255, 0.09);
+  --text: #e8ecf6;
+  --muted: #9aa6c2;
+  --accent: #3987e5;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { background: radial-gradient(70% 60% at 65% 35%, #131c3a 0%, var(--bg) 70%) fixed; }
+
+.glass { background: var(--glass); border: 1px solid var(--line); border-radius: 18px;
+  backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .45); }
+
+.stage { min-height: 100vh; display: grid; grid-template-columns: 340px 1fr; }
+.main { grid-column: 2; grid-row: 1; padding: 18px 24px 24px; display: grid; gap: 18px; align-content: start; min-width: 0; }
+
+/* the embedding */
+.plot { margin: 0; display: grid; gap: 10px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.toolbar .seg { flex: 0 1 auto; }
+.gene input { font: 500 15px system-ui, sans-serif; color: var(--text); background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; width: 200px; }
+.canvas-wrap { position: relative; }
+#embedding, .empty { width: 100%; height: min(72vh, 760px); display: block; border-radius: 22px;
+  background: rgba(255, 255, 255, .02); box-shadow: 0 30px 90px rgba(0, 0, 0, .45), 0 0 0 1px var(--line);
+  transition: opacity .25s; cursor: crosshair; }
+.empty { position: absolute; inset: 0; overflow: hidden; }
+.empty span { position: absolute; width: 36%; aspect-ratio: 1; border-radius: 50%; filter: blur(50px); opacity: .45;
+  animation: float 14s ease-in-out infinite alternate; }
+.empty span:nth-child(1) { background: #3987e5; left: 8%; top: 12%; }
+.empty span:nth-child(2) { background: #d95926; right: 6%; top: 30%; animation-delay: -5s; }
+.empty span:nth-child(3) { background: #199e70; left: 30%; bottom: 4%; animation-delay: -9s; }
+@keyframes float { to { transform: translate(12%, -10%) scale(1.15); } }
+body.busy #embedding, body.busy .steps { opacity: .55; }
+
+.tip { position: absolute; pointer-events: none; background: rgba(11, 16, 32, .92); border: 1px solid var(--line);
+  border-radius: 8px; padding: 4px 9px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.tip b { color: var(--text); }
+
+.scores { position: absolute; top: 16px; right: 16px; display: flex; gap: 22px; padding: 12px 20px; }
+.scores div { display: grid; }
+.scores .k { color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
+.scores b { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text); font-size: 14px; }
+.legend button { font: inherit; color: inherit; background: none; border: 1px solid transparent; border-radius: 999px;
+  padding: 3px 10px 3px 6px; cursor: pointer; }
+.legend button:hover, .legend button.on { border-color: var(--line); background: rgba(255, 255, 255, .06); }
+.legend span span, .legend button span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend i, .card h2 i, .heat th i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.legend .ramp i { width: 120px; border-radius: 5px; margin: 0 6px; }
+
+/* the step cards */
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; transition: opacity .25s; }
+.card { padding: 16px 18px; min-width: 0; }
+.card.wide { grid-column: 1 / -1; }
+.card header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.card h2 { margin: 0; font-size: 17px; font-weight: 650; }
+.card small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.card header button { font: 600 20px system-ui; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.note { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+.note b { color: var(--text); font-weight: 600; }
+.sw { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+.qc { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.scroll { overflow-x: auto; }
+.gene-label, .row-label { cursor: pointer; }
+.gene-label:hover { fill: #fff; text-decoration: underline; }
+
+#cluster-card p { margin: 0 0 8px; color: var(--muted); }
+#cluster-card table, .heat { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+#cluster-card th, #cluster-card td { padding: 4px 14px 4px 0; text-align: right; }
+#cluster-card th:first-child, #cluster-card td:first-child { text-align: left; }
+#cluster-card th { color: var(--muted); font-weight: 500; }
+.link { font: inherit; color: var(--text); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+.heat th { color: var(--muted); font-weight: 500; font-size: 12px; padding: 4px 6px; text-align: center; vertical-align: bottom; }
+.heat td { min-width: 42px; height: 28px; text-align: center; border: 2px solid var(--bg); border-radius: 4px; }
+.heat tr th:first-child { text-align: left; white-space: nowrap; color: var(--text); }
+
+/* the controls */
+.panel { grid-column: 1; grid-row: 1; margin: 18px 0 18px 18px; padding: 20px; display: flex; flex-direction: column; gap: 12px;
+  align-self: start; position: sticky; top: 18px; max-height: calc(100vh - 36px); overflow-y: auto; }
+.panel h1 { margin: 0; font-size: 28px; font-weight: 700;
+  background: linear-gradient(90deg, #4cc3df, #b49cf0 60%, #ef9a5c); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.panel header p { margin: 2px 0 0; color: var(--muted); }
+details { border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; font-weight: 600; font-size: 15px; list-style-position: outside; }
+details[open] summary { margin-bottom: 10px; }
+.sliders { display: grid; gap: 12px; margin-top: 10px; }
+
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { flex: 1 1 auto; font: 500 14px system-ui, sans-serif; color: var(--muted); padding: 7px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .04); cursor: pointer; }
+.seg button.on { color: var(--text); background: rgba(57, 135, 229, .22); border-color: rgba(57, 135, 229, .6); }
+
+.row { display: grid; grid-template-columns: 1fr auto; color: var(--muted); font-size: 15px; }
+.row output { color: var(--text); font-variant-numeric: tabular-nums; }
+.row input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+
+.buttons { display: flex; gap: 8px; }
+.buttons button { flex: 1; font: 600 16px system-ui, sans-serif; color: var(--text); padding: 11px; border-radius: 12px;
+  border: 1px solid rgba(57, 135, 229, .7); background: linear-gradient(135deg, rgba(57, 135, 229, .5), rgba(144, 133, 233, .42)); cursor: pointer; }
+.buttons button:hover { filter: brightness(1.15); }
+.buttons output { color: var(--muted); font-weight: 500; margin-left: 6px; }
+.error { margin: 0; color: #ffb3a8; font-size: 14px; }
+
+@media (max-width: 860px) {
+  .stage { grid-template-columns: 1fr; }
+  .main { grid-column: 1; grid-row: 1; padding: 12px; }
+  #embedding, .empty { height: 92vw; }
+  .scores { position: static; margin-top: 10px; justify-content: space-around; gap: 14px; padding: 8px 12px; }
+  .scores b { font-size: 18px; }
+  .gene input { width: 150px; }
+  .panel { grid-row: 2; margin: 0 12px 16px; position: static; max-height: none; }
+}
+
+/* Phones (measured at 390 px, 2026-10-27): the cluster x type table is 510 px
+   and the dot plot 688 px, so both scroll sideways in their cards. The table
+   keeps its row labels pinned while it scrolls, like Dataset Detective's;
+   the dot plot scrolls as drawn - shrunk to 366 px its gene labels would be
+   too small to read. */
+@media (max-width: 560px) {
+  .heat tr th:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); }
+  .heat td { min-width: 34px; height: 26px; }
+  .heat th { padding: 4px 4px; }
+  #cluster-card th, #cluster-card td { padding: 4px 10px 4px 0; }
+}

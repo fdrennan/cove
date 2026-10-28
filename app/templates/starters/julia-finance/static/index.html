@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Monte Carlo Pricer · __HOST__</title>
+<style>
+  :root { --glass: rgba(10, 13, 22, 0.72); --edge: rgba(255, 255, 255, 0.12); --text: #e8edf8; --mute: #b9c3d8;
+    --path: #5ac8fa; --strike: #ff9650; --mc: #3ddc97; --bs: #f0dc78; --accent: #8f7bff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; color: var(--text); overflow: hidden;
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(ellipse at 45% 40%, #16203d 0%, #090c16 55%, #04050a 100%); }
+  canvas { display: block; }
+  #paths { position: fixed; inset: 0; width: 100vw; height: 100vh; }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 16px;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+  details { position: fixed; top: 16px; right: 16px; width: 340px; max-height: calc(100vh - 32px); overflow: auto; padding: 12px 16px; }
+  summary { font-size: 19px; font-weight: 650; cursor: pointer; }
+  details[open] summary { margin-bottom: 8px; }
+  .row { display: grid; grid-template-columns: 96px 1fr 64px; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { color: var(--mute); font-size: 14px; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .seg { display: flex; gap: 6px; margin: 6px 0 8px; }
+  button { flex: 1; font: inherit; color: var(--text); cursor: pointer; border: 1px solid var(--edge); border-radius: 10px;
+    padding: 7px 10px; background: rgba(255, 255, 255, 0.06); }
+  button:hover { background: rgba(255, 255, 255, 0.13); }
+  button.on { background: rgba(143, 123, 255, 0.35); border-color: rgba(143, 123, 255, 0.7); }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .tile { background: rgba(255, 255, 255, 0.06); border-radius: 10px; padding: 7px 10px; }
+  .tile b { display: block; font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile span { font-size: 13px; color: var(--mute); }
+  .good b { color: var(--mc); } .bad b { color: #ff7a7e; }
+  .mini { position: fixed; bottom: 16px; width: min(420px, 30vw); height: 180px; padding: 8px 10px 6px; }
+  .mini h3 { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
+  .mini canvas { width: 100%; height: 140px; }
+  #conv { left: 16px; } #ends { left: calc(32px + min(420px, 30vw)); }
+  #title { position: fixed; top: 16px; left: 16px; padding: 10px 16px; }
+  #title b { font-size: 16px; } #title span { color: var(--mute); font-size: 14px; display: block; }
+  @media (max-width: 760px) {
+    details { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; max-height: 45vh; }
+    .mini { display: none; }
+    #title { left: 10px; right: 10px; top: 10px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="paths"></canvas>
+<div id="title" class="glass"><b>Monte Carlo Pricer</b><span id="sub">simulating…</span></div>
+
+<div id="conv" class="glass mini"><h3>The price as paths are added</h3><canvas id="convC"></canvas></div>
+<div id="ends" class="glass mini"><h3>Where the stock ends</h3><canvas id="endsC"></canvas></div>
+
+<details id="card" class="glass" open>
+  <summary>The option</summary>
+  <div class="seg"><button id="call" class="on">Call</button><button id="put">Put</button></div>
+  <div class="row"><label for="s">stock, S</label><input id="s" type="range" min="20" max="200" step="1" value="100"><output id="sV"></output></div>
+  <div class="row"><label for="k">strike, K</label><input id="k" type="range" min="20" max="200" step="1" value="105"><output id="kV"></output></div>
+  <div class="row"><label for="sigma">volatility</label><input id="sigma" type="range" min="0.05" max="1" step="0.01" value="0.25"><output id="sigmaV"></output></div>
+  <div class="row"><label for="r">rate, r</label><input id="r" type="range" min="0" max="0.1" step="0.0025" value="0.03"><output id="rV"></output></div>
+  <div class="row"><label for="t">years, T</label><input id="t" type="range" min="0.1" max="5" step="0.05" value="1"><output id="tV"></output></div>
+  <div class="row"><label for="n">paths</label><input id="n" type="range" min="3" max="6.3" step="0.1" value="5.3"><output id="nV"></output></div>
+  <div class="seg"><button id="again">Simulate again</button></div>
+  <div class="tiles" id="tiles"></div>
+</details>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const st = { type: "call", seed: 1 };
+const fmt = (x, d = 3) => x.toFixed(d);
+let last = null, inflight = 0;
+
+const params = () => ({ type: st.type, seed: st.seed, s: +$("s").value, k: +$("k").value, sigma: +$("sigma").value,
+  r: +$("r").value, t: +$("t").value, n: Math.round(10 ** +$("n").value) });
+
+async function price() {
+  const mine = ++inflight, p = params();
+  const r = await fetch("api/price", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) });
+  if (mine !== inflight) return;
+  const x = await r.json();
+  if (!r.ok) { $("sub").textContent = "error: " + x.error; return; }
+  last = { ...x, p };
+  draw();
+}
+
+function fit(c) {
+  const dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return [g, w, h];
+}
+
+function drawPaths() {
+  const [g, w, h] = fit($("paths"));
+  g.clearRect(0, 0, w, h);
+  const { paths, times, p } = last;
+  const all = paths.flat(); all.sort((a, b) => a - b);
+  const lo = Math.min(all[Math.floor(all.length * 0.005)], p.k), hi = Math.max(all[Math.floor(all.length * 0.995)], p.k);
+  const right = innerWidth > 760 ? 380 : 20, L = 70, R = w - right, T = 90, B = h - (innerWidth > 760 ? 230 : 60);
+  const X = (t) => L + (t / p.t) * (R - L), Y = (v) => B - (v - lo) / (hi - lo) * (B - T);
+  g.strokeStyle = "rgba(255,255,255,0.08)"; g.fillStyle = "#c3cad8"; g.font = "13px system-ui";
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, y = Y(v);
+    g.beginPath(); g.moveTo(L, y); g.lineTo(R, y); g.stroke(); g.fillText(v.toFixed(0), L - 40, y + 4);
+  }
+  for (const path of paths) {
+    const end = path[path.length - 1], itm = p.type === "call" ? end > p.k : end < p.k;
+    g.strokeStyle = itm ? "rgba(90,200,250,0.30)" : "rgba(143,163,200,0.10)"; g.lineWidth = itm ? 1.2 : 1;
+    g.beginPath();
+    path.forEach((v, i) => (i ? g.lineTo(X(times[i]), Y(v)) : g.moveTo(X(times[i]), Y(v))));
+    g.stroke();
+  }
+  g.setLineDash([8, 6]); g.strokeStyle = "#ff9650"; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(L, Y(p.k)); g.lineTo(R, Y(p.k)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "#ff9650"; g.fillText("strike " + p.k, L + 6, Y(p.k) - 8);
+  g.fillStyle = "#c3cad8"; g.fillText("0", X(0) - 4, B + 20); g.fillText(p.t + " years", X(p.t) - 40, B + 20);
+}
+
+function plot(id, xs, series, opts = {}) {
+  const [g, w, h] = fit($(id));
+  g.clearRect(0, 0, w, h);
+  const xlo = Math.min(...xs), xhi = Math.max(...xs);
+  const vals = series.flatMap((s) => s.y).concat(opts.h ?? []);
+  const ylo = opts.ylo ?? Math.min(...vals), yhi = opts.yhi ?? Math.max(...vals);
+  const tx = opts.logx ? (x) => (Math.log(x) - Math.log(xlo)) / (Math.log(xhi) - Math.log(xlo)) : (x) => (x - xlo) / (xhi - xlo);
+  const X = (x) => 4 + tx(x) * (w - 8), Y = (y) => h - 4 - (y - ylo) / (yhi - ylo || 1) * (h - 8);
+  for (const s of series) {
+    if (s.band) {
+      g.fillStyle = s.band; g.beginPath();
+      xs.forEach((x, i) => (i ? g.lineTo(X(x), Y(s.hi[i])) : g.moveTo(X(x), Y(s.hi[i]))));
+      for (let i = xs.length - 1; i >= 0; i--) g.lineTo(X(xs[i]), Y(s.lo[i]));
+      g.fill();
+    }
+    if (s.bars) { g.fillStyle = s.bars; xs.forEach((x, i) => { const bw = (w - 8) / xs.length; g.fillRect(X(x) - bw / 2, Y(s.y[i]), bw - 1, h - 4 - Y(s.y[i])); }); continue; }
+    g.strokeStyle = s.col; g.lineWidth = s.lw ?? 2; g.setLineDash(s.dash ?? []);
+    g.beginPath(); xs.forEach((x, i) => (i ? g.lineTo(X(x), Y(s.y[i])) : g.moveTo(X(x), Y(s.y[i])))); g.stroke(); g.setLineDash([]);
+  }
+  if (opts.h !== undefined) { g.setLineDash([6, 5]); g.strokeStyle = "#f0dc78"; g.beginPath(); g.moveTo(4, Y(opts.h)); g.lineTo(w - 4, Y(opts.h)); g.stroke(); g.setLineDash([]); }
+  if (opts.v !== undefined) { g.setLineDash([6, 5]); g.strokeStyle = "#ff9650"; g.beginPath(); g.moveTo(X(opts.v), 4); g.lineTo(X(opts.v), h - 4); g.stroke(); g.setLineDash([]); }
+}
+
+function draw() {
+  if (!last) return;
+  const x = last, off = (x.mc - x.bs) / x.se;
+  drawPaths();
+  $("sub").textContent = `${x.paths.length} of ${x.n.toLocaleString()} paths drawn · priced in ${x.millis} ms on ${x.threads} threads · bright paths end in the money`;
+  const c = x.converge;
+  plot("convC", c.map((r) => r[0]), [{ y: c.map((r) => r[1]), col: "#3ddc97", band: "rgba(61,220,151,0.18)", lo: c.map((r) => r[1] - 1.96 * r[2]), hi: c.map((r) => r[1] + 1.96 * r[2]) }],
+       // Scaled to the estimate from 2,000 paths on: the first hundred swing so
+       // far that, at full scale, the settling that matters was a flat line.
+       (() => { const k = c.filter((r) => r[0] >= 2000), lo = k.map((r) => r[1] - 1.96 * r[2]), hi = k.map((r) => r[1] + 1.96 * r[2]);
+                return { logx: true, h: x.bs, ylo: Math.min(...lo, x.bs), yhi: Math.max(...hi, x.bs) }; })());
+  const e = x.ends, mids = e.edges.slice(0, -1).map((v, i) => (v + e.edges[i + 1]) / 2);
+  plot("endsC", mids, [{ y: e.density, bars: "rgba(90,200,250,0.45)" }, { y: e.theory, col: "#f0dc78", lw: 2.2 }], { ylo: 0, v: x.p.k });
+  const tile = (v, l, cls = "") => `<div class="tile ${cls}"><b>${v}</b><span>${l}</span></div>`;
+  $("tiles").innerHTML = tile(fmt(x.mc), "Monte Carlo price") + tile(fmt(x.bs), "Black-Scholes price") +
+    tile("± " + fmt(1.96 * x.se), "95% interval, half width") +
+    tile((off >= 0 ? "+" : "") + off.toFixed(2) + " se", "Monte Carlo minus closed form", Math.abs(off) <= 2 ? "good" : "bad") +
+    tile(Math.round(100 * x.itm) + "%", "paths ending in the money") + tile(x.n.toLocaleString(), "paths simulated");
+}
+
+for (const [id, f] of [["s", (v) => v], ["k", (v) => v], ["sigma", (v) => v.toFixed(2)], ["r", (v) => (100 * v).toFixed(2) + "%"], ["t", (v) => v.toFixed(2)], ["n", (v) => Math.round(10 ** v).toLocaleString()]]) {
+  const el = $(id), out = $(id + "V"), show = () => (out.textContent = f(+el.value));
+  el.addEventListener("input", () => { show(); clearTimeout(el._t); el._t = setTimeout(price, 60); });
+  show();
+}
+$("call").onclick = () => { st.type = "call"; $("call").classList.add("on"); $("put").classList.remove("on"); price(); };
+$("put").onclick = () => { st.type = "put"; $("put").classList.add("on"); $("call").classList.remove("on"); price(); };
+$("again").onclick = () => { st.seed++; price(); };
+if (innerWidth < 760) $("card").open = false;
+addEventListener("resize", draw);
+price();
+</script>
+</body>
+</html>

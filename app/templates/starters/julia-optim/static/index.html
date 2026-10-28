@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Optimizer Race · __HOST__</title>
+<style>
+  :root { --glass: rgba(10, 13, 22, 0.74); --edge: rgba(255, 255, 255, 0.12); --text: #e8edf8; --mute: #b9c3d8; --accent: #8f7bff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; color: var(--text); overflow: hidden;
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(ellipse at 40% 45%, #16203d 0%, #090c16 55%, #04050a 100%); }
+  #view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; touch-action: manipulation; }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 16px;
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+  #title { position: fixed; top: 16px; left: 16px; padding: 10px 16px; max-width: calc(100vw - 420px); }
+  #title b { font-size: 16px; } #title span { color: var(--mute); font-size: 14px; display: block; }
+  details { position: fixed; top: 16px; right: 16px; width: 372px; max-height: calc(100vh - 32px); overflow: auto; padding: 12px 16px; }
+  summary { font-size: 19px; font-weight: 650; cursor: pointer; }
+  details[open] summary { margin-bottom: 8px; }
+  .seg { display: flex; gap: 6px; margin: 6px 0 8px; flex-wrap: wrap; }
+  button { flex: 1; font: inherit; font-size: 14px; color: var(--text); cursor: pointer; border: 1px solid var(--edge); border-radius: 10px;
+    padding: 6px 8px; background: rgba(255, 255, 255, 0.06); }
+  button:hover { background: rgba(255, 255, 255, 0.13); }
+  button.on { background: rgba(143, 123, 255, 0.35); border-color: rgba(143, 123, 255, 0.7); }
+  code { display: block; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #f0dc78;
+    background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 6px 8px; overflow-x: auto; white-space: pre; }
+  .row { display: grid; grid-template-columns: 92px 1fr 64px; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { color: var(--mute); font-size: 14px; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  th { text-align: left; color: var(--mute); font-weight: 500; padding: 3px 4px; }
+  td { padding: 4px; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+  td.n, th.n { text-align: right; }
+  tr.racer { cursor: pointer; } tr.off td { opacity: 0.35; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .st { font-size: 12px; color: var(--mute); }
+  .st.converged { color: #3ddc97; } .st.diverged { color: #ff7a7e; }
+  h4 { margin: 12px 0 4px; font-size: 14px; font-weight: 600; }
+  .ad { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .tile { background: rgba(255, 255, 255, 0.06); border-radius: 10px; padding: 6px 9px; }
+  .tile b { display: block; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile span { font-size: 12.5px; color: var(--mute); }
+  @media (max-width: 760px) {
+    #title { left: 10px; right: 10px; top: 10px; max-width: none; padding: 8px 12px; }
+    details { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; max-height: 48vh; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="title" class="glass"><b>Optimizer Race</b><span id="sub">loading surfaces…</span></div>
+
+<details id="card" class="glass" open>
+  <summary>The race</summary>
+  <div class="seg" id="surfs"></div>
+  <code id="src"></code>
+  <div class="row"><label for="scale">step size</label><input id="scale" type="range" min="-1.5" max="1.5" step="0.05" value="0"><output id="scaleV"></output></div>
+  <div class="row"><label for="iters">step limit</label><input id="iters" type="range" min="1.5" max="4.6" step="0.05" value="3.7"><output id="itersV"></output></div>
+  <div class="seg"><button id="replay">Replay</button><button id="reset">Default start</button></div>
+  <table><thead><tr><th>optimizer</th><th class="n">steps</th><th class="n">f final</th><th>ended</th></tr></thead><tbody id="board"></tbody></table>
+  <h4>At the start point, by ForwardDiff</h4>
+  <div class="ad" id="ad"></div>
+</details>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const COLORS = { "Gradient descent": "#ff7a7e", "Momentum": "#ffb454", "Adam": "#f0dc78",
+                 "Nelder-Mead": "#3ddc97", "BFGS": "#5ac8fa", "Newton": "#d59bff" };
+const st = { surfaces: [], cur: null, grid: null, img: null, race: null, start: null, hidden: new Set(), t0: 0, inflight: 0 };
+const ANIM_MS = 4500;
+
+// Low values dark navy, high values pale: the minima sit in the dark and the
+// coloured paths stay readable over every part of the map.
+const STOPS = [[0, [8, 14, 34]], [0.25, [22, 48, 96]], [0.5, [44, 96, 140]], [0.75, [110, 150, 170]], [1, [214, 222, 230]]];
+function cmap(t) {
+  for (let i = 1; i < STOPS.length; i++) if (t <= STOPS[i][0]) {
+    const [a, ca] = STOPS[i - 1], [b, cb] = STOPS[i], u = (t - a) / (b - a);
+    return ca.map((c, k) => c + u * (cb[k] - c));
+  }
+  return STOPS[STOPS.length - 1][1];
+}
+
+const fmt = (v) => v == null ? "–" : Math.abs(v) < 1e-3 && v !== 0 ? v.toExponential(1) : Math.abs(v) >= 1e4 ? v.toExponential(2) : v.toFixed(4).replace(/\.?0+$/, "") || "0";
+const narrow = () => innerWidth <= 760;
+
+// The square plot, centred in the space the card leaves free.
+function frame() {
+  const W = innerWidth, H = innerHeight;
+  const L = 16, R = narrow() ? W - 16 : W - 404, T = narrow() ? 84 : 86, B = narrow() ? H - 70 : H - 16;
+  const size = Math.max(120, Math.min(R - L, B - T));
+  return { x: L + (R - L - size) / 2, y: T + (B - T - size) / 2, size };
+}
+function toPx(x, y) {
+  const f = frame(), s = st.cur;
+  return [f.x + (x - s.xlim[0]) / (s.xlim[1] - s.xlim[0]) * f.size, f.y + (s.ylim[1] - y) / (s.ylim[1] - s.ylim[0]) * f.size];
+}
+function toXY(px, py) {
+  const f = frame(), s = st.cur;
+  const u = (px - f.x) / f.size, v = (py - f.y) / f.size;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
+  return [s.xlim[0] + u * (s.xlim[1] - s.xlim[0]), s.ylim[1] - v * (s.ylim[1] - s.ylim[0])];
+}
+
+async function loadSurface(id) {
+  st.cur = st.surfaces.find((s) => s.id === id);
+  st.start = [...st.cur.start];
+  for (const b of $("surfs").children) b.classList.toggle("on", b.dataset.id === id);
+  $("src").textContent = "f(x, y) = " + st.cur.src;
+  const g = await (await fetch("api/surface?id=" + id + "&n=200")).json();
+  st.grid = g;
+  const c = document.createElement("canvas"); c.width = c.height = g.n;
+  const im = c.getContext("2d").createImageData(g.n, g.n);
+  for (let i = 0; i < g.z.length; i++) {
+    const [r, gg, b] = cmap((g.z[i] - g.zmin) / (g.zmax - g.zmin || 1));
+    im.data[4 * i] = r; im.data[4 * i + 1] = gg; im.data[4 * i + 2] = b; im.data[4 * i + 3] = 255;
+  }
+  c.getContext("2d").putImageData(im, 0, 0);
+  st.img = c;
+  race();
+}
+
+async function race() {
+  const mine = ++st.inflight;
+  const body = { surface: st.cur.id, x: st.start[0], y: st.start[1],
+                 iters: Math.round(10 ** +$("iters").value), scale: 10 ** +$("scale").value };
+  const r = await fetch("api/race", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const x = await r.json();
+  if (mine !== st.inflight) return;
+  if (!r.ok) { $("sub").textContent = "error: " + x.error; return; }
+  st.race = x; st.t0 = performance.now();
+  $("sub").textContent = `${x.runs.length} optimizers from (${fmt(st.start[0])}, ${fmt(st.start[1])}) · solved in ${x.millis} ms on ${x.threads} threads · click the map to start somewhere else`;
+  adPanel(x.start);
+  requestAnimationFrame(tick);
+}
+
+function adPanel(s) {
+  const [l1, l2] = s.eig, shape = l1 > 0 && l2 > 0 ? "a bowl (both curvatures up)" : l1 < 0 && l2 < 0 ? "a hilltop (both down)" : "a saddle (one up, one down)";
+  const v = (a) => "(" + a.map(fmt).join(", ") + ")";
+  const tile = (b, l) => `<div class="tile"><b title="${b}">${b}</b><span>${l}</span></div>`;
+  $("ad").innerHTML = tile(fmt(s.f), "f at the start") + tile(v(s.grad), "gradient ∇f") +
+    tile(`[${fmt(s.hess[0][0])} ${fmt(s.hess[0][1])}; ${fmt(s.hess[1][0])} ${fmt(s.hess[1][1])}]`, "Hessian ∇²f") + tile(v(s.eig), "Hessian eigenvalues: " + shape) +
+    tile(s.fd_err.toExponential(1), "error a finite difference makes") + tile("exact, to round-off", "error ForwardDiff makes");
+}
+
+// The race clock runs on a log scale of steps, so Newton's handful and
+// gradient descent's thousands both play out in the same few seconds.
+function clock() {
+  if (!st.race) return [0, 1];
+  const most = Math.max(...st.race.runs.map((r) => r.steps), 1);
+  const u = Math.min(1, (performance.now() - st.t0) / ANIM_MS);
+  return [Math.expm1(u * Math.log1p(most)), u];
+}
+
+function board(K) {
+  const rows = [...st.race.runs].sort((a, b) => (a.status === "converged") === (b.status === "converged") ? a.steps - b.steps : a.status === "converged" ? -1 : 1);
+  const mins = st.cur.minima;
+  $("board").innerHTML = rows.map((r) => {
+    const done = K >= r.steps, hit = r.dist != null && r.dist < 1e-3;
+    // A converged run away from every known minimum sits in a local one
+    // (Rastrigin's dimples) or in a flat valley (Beale's, running to -∞ in x).
+    const ended = !done ? "racing" : hit ? `minimum (${fmt(mins[r.nearest - 1][0])}, ${fmt(mins[r.nearest - 1][1])})`
+      : r.status === "converged" && r.gnorm != null && r.gnorm < 1e-3 ? "local minimum" : r.status === "converged" ? "stalled" : r.status;
+    return `<tr class="racer ${st.hidden.has(r.name) ? "off" : ""}" data-n="${r.name}"><td><span class="dot" style="background:${COLORS[r.name]}"></span>${r.name}</td>
+      <td class="n">${done ? r.steps.toLocaleString() : Math.floor(K).toLocaleString()}</td><td class="n">${done ? fmt(r.f) : "…"}</td>
+      <td><span class="st ${done ? (hit ? "converged" : r.status.replace(" ", "")) : ""}">${ended}</span></td></tr>`;
+  }).join("");
+  for (const tr of $("board").children) tr.onclick = () => { const n = tr.dataset.n; st.hidden.has(n) ? st.hidden.delete(n) : st.hidden.add(n); draw(); board(clock()[0]); };
+}
+
+function draw() {
+  const c = $("view"), dpr = devicePixelRatio || 1, W = innerWidth, H = innerHeight;
+  if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  if (!st.img) return;
+  const f = frame();
+  g.save(); g.beginPath(); g.roundRect(f.x, f.y, f.size, f.size, 14); g.clip();
+  g.imageSmoothingEnabled = true; g.drawImage(st.img, f.x, f.y, f.size, f.size);
+  // Contour lines from Julia's marching squares.
+  g.strokeStyle = "rgba(255,255,255,0.16)"; g.lineWidth = 1; g.beginPath();
+  for (const seg of st.grid.contours) for (let i = 0; i < seg.length; i += 4) {
+    const [a, b] = toPx(seg[i], seg[i + 1]), [p, q] = toPx(seg[i + 2], seg[i + 3]); g.moveTo(a, b); g.lineTo(p, q);
+  }
+  g.stroke();
+  // Known minima: white rings.
+  for (const [x, y] of st.cur.minima) { const [px, py] = toPx(x, y); g.strokeStyle = "#fff"; g.lineWidth = 2; g.beginPath(); g.arc(px, py, 7, 0, 7); g.stroke(); }
+  const [K] = st.race ? clock() : [0];
+  if (st.race) for (const r of st.race.runs) {
+    if (st.hidden.has(r.name)) continue;
+    const col = COLORS[r.name];
+    g.strokeStyle = col; g.lineWidth = 2.2; g.lineJoin = "round"; g.shadowColor = col; g.shadowBlur = 6;
+    g.beginPath();
+    let head = null;
+    for (const [x, y, k] of r.path) {
+      if (k > K) break;
+      const [px, py] = toPx(x, y);
+      head ? g.lineTo(px, py) : g.moveTo(px, py); head = [px, py];
+    }
+    g.stroke(); g.shadowBlur = 0;
+    if (head) { g.fillStyle = col; g.beginPath(); g.arc(head[0], head[1], 4.5, 0, 7); g.fill(); }
+  }
+  // The start point.
+  const [sx, sy] = toPx(...st.start);
+  g.fillStyle = "#fff"; g.beginPath(); g.arc(sx, sy, 5, 0, 7); g.fill();
+  g.restore();
+  g.strokeStyle = "rgba(255,255,255,0.18)"; g.lineWidth = 1; g.beginPath(); g.roundRect(f.x, f.y, f.size, f.size, 14); g.stroke();
+  // Axis ranges on dark pills: the map's high corners are pale.
+  const s = st.cur;
+  g.font = "12px system-ui";
+  const pill = (t, x, y) => { const w = g.measureText(t).width + 12; g.fillStyle = "rgba(6,9,18,0.72)"; g.beginPath(); g.roundRect(x, y - 14, w, 20, 8); g.fill(); g.fillStyle = "#dfe5f1"; g.fillText(t, x + 6, y); };
+  pill(`x ${s.xlim[0]} … ${s.xlim[1]}`, f.x + 10, f.y + f.size - 12);
+  const yt = `y ${s.ylim[0]} … ${s.ylim[1]}`;
+  pill(yt, f.x + f.size - 22 - g.measureText(yt).width, f.y + f.size - 12);
+}
+
+function tick() {
+  if (!st.race) return;
+  const [K, u] = clock();
+  draw(); board(K);
+  if (u < 1) requestAnimationFrame(tick);
+}
+
+$("view").addEventListener("click", (e) => {
+  if (!st.cur) return;
+  const p = toXY(e.clientX, e.clientY);
+  if (!p) return;
+  st.start = p; race();
+});
+for (const [id, show] of [["scale", (v) => "× " + (10 ** v).toPrecision(2)], ["iters", (v) => Math.round(10 ** v).toLocaleString()]]) {
+  const el = $(id), out = $(id + "V"), upd = () => (out.textContent = show(+el.value));
+  el.addEventListener("input", () => { upd(); clearTimeout(el._t); el._t = setTimeout(race, 120); });
+  upd();
+}
+$("replay").onclick = () => { st.t0 = performance.now(); requestAnimationFrame(tick); };
+$("reset").onclick = () => { st.start = [...st.cur.start]; race(); };
+addEventListener("resize", draw);
+if (narrow()) $("card").open = false;
+
+(async () => {
+  st.surfaces = await (await fetch("api/surfaces")).json();
+  $("surfs").innerHTML = st.surfaces.map((s) => `<button data-id="${s.id}">${s.label}</button>`).join("");
+  for (const b of $("surfs").children) b.onclick = () => loadSurface(b.dataset.id);
+  loadSurface(st.surfaces[0].id);
+})();
+</script>
+</body>
+</html>

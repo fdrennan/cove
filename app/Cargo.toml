@@ -1,0 +1,88 @@
+[package]
+name = "cove"
+version = "0.1.7"
+edition = "2021"
+description = "Cove — build and manage scientific software at any scale, kernel to user: immutable environments, customisable without breaking earlier ones"
+license = "MIT"
+
+[[bin]]
+name = "cove"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The UI's HTTP client to `cove serve` (backend.rs) — fetch() in a
+# browser, a thread natively.
+ehttp = "0.7"
+# The kernels' plots (png, ide.rs).
+image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif", "bmp"] }
+# The Files pane's Upload / Download dialogs (ide.rs): AppKit, the XDG desktop
+# portal (pure Rust over D-Bus - no GTK to link), Win32, and a file input in
+# the browser.
+rfd = "0.15"
+# The Terminal tab (term.rs): a VT100/xterm screen, parsed on both ends - the
+# server keeps one per PTY to repaint a reconnecting tab, the UI draws its own.
+vt100 = "0.16"
+# Find in the editor and in files (ide.rs find, host.rs grep): Regex mode.
+regex-lite = "0.1"
+
+# Native: the desktop app (wgpu on macOS, glow on Linux) and the server.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+eframe = { version = "0.36", features = ["wgpu", "glow", "persistence"] }
+# `cove serve` (server.rs).
+tiny_http = "0.12"
+# Waits on rfd's async dialogs from a worker thread (ide.rs transfers).
+pollster = "0.4"
+# The Data tab (db.rs): the person's SQLite database, read natively - SQLite
+# compiled in, so a cell, a Mac and Windows need no libsqlite3.
+rusqlite = { version = "0.37", features = ["bundled", "hooks", "column_decltype"] }
+
+# `cove multiuser` (multiuser.rs): PAM loaded with dlopen, getpwnam_r,
+# initgroups/setgid/setuid for each person's session; serve's SIGTERM.
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+libc = "0.2"
+
+# The browser build: WebGL through glow, persistence in localStorage.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["glow", "persistence", "default_fonts"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+# The Software tab's clock (software.rs now_secs).
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Document", "Element", "HtmlCanvasElement", "HtmlElement", "HtmlIFrameElement", "Location", "Node", "Storage", "UrlSearchParams", "Window", "console"] }
+
+# The App panel's embedded browser on the desktop (webview.rs): the live site
+# inside the IDE window - WKWebView on macOS, WebKitGTK 4.1 on Linux (X11).
+# Off by default: the same binary is the server (serve / multiuser), which must
+# never need WebKit or GTK on a server or in a cell. The desktop packages turn
+# it on: build-dmg.sh and build-linux.sh pass --features webview.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+wry = { version = "0.53", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", optional = true }
+
+[features]
+webview = ["dep:wry", "dep:gtk"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# On-prem cove.ndexr.io rebuilds on every source change (onprem/run.sh):
+# release speed without fat LTO, so a change is live in seconds, not minutes.
+[profile.onprem]
+inherits = "release"
+# Unwind, not abort: this build is the shared multi-user server, where one
+# request's panic under "abort" took Cove down for everyone - a curly quote in
+# mask_secrets restarted it every 5 s for ~25 minutes (2026-10-18, request #35).
+# Unwinding loses only the request that panicked.
+panic = "unwind"
+lto = false
+codegen-units = 16
+incremental = true
+strip = false

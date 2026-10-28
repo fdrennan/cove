@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>Topic map · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="stage">
+  <section class="main">
+    <figure class="plot">
+      <svg id="map" viewBox="0 0 1000 1000" role="img" aria-label="Documents placed by t-SNE, marked by dominant topic"></svg>
+      <div id="empty" class="empty"><span></span><span></span><span></span></div>
+      <div id="tip" class="tip glass" hidden></div>
+      <figcaption class="scores glass">
+        <div title="mean NPMI of each topic's top ten words: -1 to 1, higher is more coherent"><span class="k">NPMI</span><b id="npmi">–</b></div>
+        <div title="mean UMass of each topic's top ten words: 0 is the ceiling"><span class="k">UMass</span><b id="umass">–</b></div>
+        <div title="adjusted mutual information between dominant topic and field: 1 is a perfect match, 0 is chance"><span class="k">vs fields</span><b id="ami">–</b></div>
+        <div><span class="k">fit</span><b id="fitms">–</b></div>
+      </figcaption>
+    </figure>
+
+    <div class="cards">
+      <section class="glass card">
+        <h2>Topics</h2>
+        <ol id="topics" class="topics"></ol>
+      </section>
+      <section class="glass card" id="detail-card">
+        <h2 id="detail-title">More like this</h2>
+        <p id="detail-meta" class="meta">Pick a point on the map.</p>
+        <div id="detail-mix" class="mix"></div>
+        <p id="detail-text" class="body"></p>
+        <ol id="neighbours" class="neighbours"></ol>
+      </section>
+    </div>
+  </section>
+
+  <aside class="glass panel">
+    <header>
+      <h1>Topic map</h1>
+      <p>Themes in <b id="ndocs">–</b> abstracts from <b id="nfields">–</b> fields.</p>
+    </header>
+
+    <div class="seg" id="method">
+      <button type="button" data-k="nmf" class="on">NMF</button>
+      <button type="button" data-k="lda">LDA</button>
+    </div>
+
+    <label class="row">topics k <output id="k-v">6</output><input id="k" type="range" min="2" max="8" step="1" value="6"></label>
+    <figure class="sweep">
+      <svg id="sweep" viewBox="0 0 300 160" role="img" aria-label="Mean NPMI coherence and agreement with the fields for each k"></svg>
+      <figcaption>Every k, refitted: coherence and agreement with the fields. Click a bar to use it.</figcaption>
+    </figure>
+
+    <label class="row">longest n-gram <output id="ngram-v">1</output><input id="ngram" type="range" min="1" max="3" step="1" value="1"></label>
+    <label class="row">min documents <output id="min_df-v">2</output><input id="min_df" type="range" min="1" max="10" step="1" value="2"></label>
+    <label class="row">max share of documents <output id="max_df-v">50%</output><input id="max_df" type="range" min="0.1" max="1" step="0.05" value="0.5"></label>
+    <label class="row">t-SNE perplexity <output id="perplexity-v">15</output><input id="perplexity" type="range" min="5" max="40" step="1" value="15"></label>
+
+    <div class="buttons">
+      <button id="reseed" type="button" title="refit with a new random seed">New seed</button>
+    </div>
+
+    <label class="paste">
+      <span>Your text</span>
+      <textarea id="paste" rows="5" placeholder="Paste an abstract or a paragraph"></textarea>
+    </label>
+    <div class="buttons">
+      <button id="place-btn" class="primary" type="button">Place it</button>
+    </div>
+    <p id="placed" class="meta" hidden></p>
+
+    <div class="legend" id="legend"></div>
+  </aside>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

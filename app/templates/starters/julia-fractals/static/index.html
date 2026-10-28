@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fractal Explorer · __HOST__</title>
+<style>
+  :root { --glass: rgba(9, 12, 22, 0.66); --edge: rgba(255, 255, 255, 0.13); --text: #eaeef8; --mute: #aab4cc; --accent: #8f7bff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #03040a; color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; touch-action: none; }
+  #box { position: fixed; border: 1.5px solid rgba(255,255,255,0.9); background: rgba(143,123,255,0.15);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 0 24px rgba(143,123,255,0.5); pointer-events: none; display: none; border-radius: 3px; }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 18px;
+    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  header { position: fixed; top: 16px; left: 16px; padding: 12px 18px; }
+  h1 { margin: 0; font-size: 21px; font-weight: 650; }
+  h1 span { background: linear-gradient(90deg, #4fe3ff, var(--accent), #ff5fb7); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #stats { margin-top: 3px; color: var(--mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+  #stats b { color: var(--text); font-weight: 600; }
+  #panel { position: fixed; right: 16px; top: 16px; width: 300px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; background: rgba(255,255,255,0.06); border-radius: 12px; padding: 3px; }
+  .seg button { border: 0; background: transparent; }
+  .seg button.on { background: linear-gradient(135deg, rgba(79,227,255,0.35), rgba(143,123,255,0.5)); }
+  button { font: inherit; font-weight: 600; color: var(--text); cursor: pointer; border: 1px solid var(--edge);
+    border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,0.06); }
+  button:hover { background: rgba(255,255,255,0.12); }
+  .row { display: grid; grid-template-columns: 72px 1fr 52px; gap: 10px; align-items: center; font-size: 14px; color: var(--mute); }
+  .row output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .pals { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .pals button { height: 26px; padding: 0; border-radius: 8px; border: 2px solid transparent; }
+  .pals button.on { border-color: #fff; box-shadow: 0 0 12px rgba(255,255,255,0.4); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #mini { position: fixed; left: 16px; bottom: 16px; padding: 8px; }
+  #mini canvas { display: block; width: 240px; height: 160px; border-radius: 12px; cursor: crosshair; touch-action: none; }
+  #mini .cap { font-size: 12px; color: var(--mute); padding: 6px 4px 0; font-variant-numeric: tabular-nums; }
+  #mini.hidden { display: none; }
+  @media (max-width: 700px) {
+    header { top: 10px; left: 10px; right: 10px; padding: 10px 14px; }
+    h1 { font-size: 18px; }
+    #panel { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; padding: 10px 12px; gap: 8px; }
+    #mini { left: auto; right: 10px; bottom: auto; top: 86px; padding: 6px; }
+    #mini canvas { width: 150px; height: 100px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="box"></div>
+
+<header class="glass">
+  <h1><span>Fractal Explorer</span></h1>
+  <div id="stats">&nbsp;</div>
+</header>
+
+<section id="panel" class="glass">
+  <div class="seg"><button id="m-mandel" class="on">Mandelbrot</button><button id="m-julia">Julia</button></div>
+  <div class="row"><label for="iter">iterations</label><input id="iter" type="range" min="4" max="13" step="0.25" value="8.6"><output id="iterV"></output></div>
+  <div class="pals" id="pals"></div>
+  <div class="actions"><button id="out">Zoom out</button><button id="home">Home</button></div>
+</section>
+
+<div id="mini" class="glass hidden"><canvas id="minic"></canvas><div class="cap" id="cap"></div></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const view = $("view"), vctx = view.getContext("2d");
+  const mini = $("minic"), mctx = mini.getContext("2d");
+
+  // Swatches drawn from the same cosine palettes the server uses.
+  const PALS = {
+    aurora: [[0.5,0.5,0.5],[0.5,0.5,0.5],[1,1,1],[0.3,0.2,0.2]],
+    ember:  [[0.5,0.3,0.2],[0.5,0.35,0.25],[1,0.9,0.7],[0,0.1,0.2]],
+    ocean:  [[0.2,0.4,0.55],[0.25,0.35,0.4],[1,1,1],[0.55,0.45,0.35]],
+    neon:   [[0.5,0.5,0.5],[0.5,0.5,0.5],[2,1,0],[0.5,0.2,0.25]],
+    ivory:  [[0.62,0.58,0.52],[0.38,0.38,0.4],[1,1,1],[0,0.03,0.08]],
+  };
+  const col = (p, t) => "rgb(" + [0,1,2].map(k => Math.round(255 * Math.max(0, Math.min(1, p[0][k] + p[1][k] * Math.cos(2 * Math.PI * (p[2][k] * t + p[3][k])))))).join(",") + ")";
+
+  const HOME = { mandelbrot: { cx: -0.6, cy: 0, span: 3.4 }, julia: { cx: 0, cy: 0, span: 3.4 } };
+  const s = { kind: "mandelbrot", cx: -0.6, cy: 0, span: 3.4, jr: -0.8, ji: 0.156, palette: "aurora", iter: 400 };
+  let W = 0, H = 0;
+  const scale = () => s.span / Math.min(W, H);    // complex units per CSS pixel
+
+  $("pals").innerHTML = Object.keys(PALS).map(n =>
+    `<button data-p="${n}" title="${n}" style="background:linear-gradient(90deg,${[0,0.2,0.4,0.6,0.8,1].map(t => col(PALS[n], t)).join(",")})"></button>`).join("");
+  const markPal = () => document.querySelectorAll("#pals button").forEach(b => b.classList.toggle("on", b.dataset.p === s.palette));
+  document.querySelectorAll("#pals button").forEach(b => b.onclick = () => { s.palette = b.dataset.p; markPal(); draw(); drawMini(); });
+  markPal();
+
+  const iter = $("iter");
+  const syncIter = () => { s.iter = Math.round(Math.pow(2, +iter.value)); $("iterV").textContent = s.iter; };
+  iter.oninput = syncIter; iter.onchange = () => draw(); syncIter();
+
+  // One request at a time per surface: a newer view cancels the older one.
+  const pending = {};
+  async function fetchRGBA(tag, q, w, h) {
+    pending[tag]?.abort();
+    const ctl = pending[tag] = new AbortController();
+    const r = await fetch("render?" + new URLSearchParams({ ...q, w, h }), { signal: ctl.signal });
+    if (!r.ok) throw new Error((await r.json()).error);
+    const buf = await r.arrayBuffer();
+    return { img: new ImageData(new Uint8ClampedArray(buf), w, h), ms: r.headers.get("X-Render-Ms"), threads: r.headers.get("X-Threads") };
+  }
+  const params = () => ({ kind: s.kind, cx: s.cx, cy: s.cy, iter: s.iter, palette: s.palette, jr: s.jr, ji: s.ji });
+
+  // A quarter-resolution pass first, then the full image over it.
+  const off = document.createElement("canvas");
+  // The server renders at most 3840 x 2400 (server.jl /render) and clamps a
+  // larger ask, so pixels per CSS pixel are capped here to match: past it the
+  // reply was smaller than the ImageData built for it, which threw.
+  async function draw() {
+    const dpr = Math.min(devicePixelRatio || 1, 2, 3840 / W, 2400 / H);
+    const fw = Math.min(3840, Math.round(W * dpr)), fh = Math.min(2400, Math.round(H * dpr));
+    view.width = fw; view.height = fh;
+    try {
+      for (const f of [0.25, 1]) {
+        const w = Math.max(8, Math.round(fw * f)), h = Math.max(8, Math.round(fh * f));
+        const r = await fetchRGBA("view", { ...params(), scale: scale() / dpr / f }, w, h);
+        off.width = w; off.height = h; off.getContext("2d").putImageData(r.img, 0, 0);
+        vctx.imageSmoothingEnabled = true; vctx.drawImage(off, 0, 0, fw, fh);
+        const zoom = HOME[s.kind].span / s.span;
+        $("stats").innerHTML = `<b>${w}×${h}</b> in <b>${r.ms} ms</b> · ${r.threads} threads · zoom <b>${zoom < 1e4 ? zoom.toFixed(zoom < 10 ? 1 : 0) : zoom.toExponential(1)}×</b>`;
+      }
+    } catch (e) { if (e.name !== "AbortError") $("stats").textContent = e.message; }
+  }
+
+  // The small Mandelbrot: pick the Julia constant c on it.
+  const MINI = { cx: -0.6, cy: 0, span: 2.6 };
+  let miniImg = null;
+  async function drawMini() {
+    const dpr = Math.min(devicePixelRatio || 1, 2), r0 = mini.getBoundingClientRect();
+    const w = Math.round(r0.width * dpr), h = Math.round(r0.height * dpr);
+    if (!w || !h) return;
+    mini.width = w; mini.height = h;
+    try {
+      const r = await fetchRGBA("mini", { kind: "mandelbrot", cx: MINI.cx, cy: MINI.cy, iter: 300, palette: s.palette, scale: MINI.span / Math.min(w, h) }, w, h);
+      miniImg = r.img; paintMini();
+    } catch (e) {}
+  }
+  function paintMini() {
+    if (!miniImg) return;
+    mctx.putImageData(miniImg, 0, 0);
+    const w = mini.width, h = mini.height, sc = MINI.span / Math.min(w, h);
+    const x = w / 2 + (s.jr - MINI.cx) / sc, y = h / 2 - (s.ji - MINI.cy) / sc;
+    mctx.strokeStyle = "#fff"; mctx.lineWidth = 2; mctx.shadowColor = "#fff"; mctx.shadowBlur = 8;
+    mctx.beginPath(); mctx.arc(x, y, 6, 0, 7); mctx.stroke(); mctx.shadowBlur = 0;
+    $("cap").textContent = `c = ${s.jr.toFixed(4)} ${s.ji < 0 ? "−" : "+"} ${Math.abs(s.ji).toFixed(4)}i`;
+  }
+  function pickC(ev) {
+    const r = mini.getBoundingClientRect(), sc = MINI.span / Math.min(r.width, r.height);
+    s.jr = MINI.cx + (ev.clientX - r.left - r.width / 2) * sc;
+    s.ji = MINI.cy - (ev.clientY - r.top - r.height / 2) * sc;
+    paintMini();
+    if (s.kind !== "julia") setKind("julia", false);
+    draw();
+  }
+  let picking = false;
+  mini.addEventListener("pointerdown", e => { picking = true; mini.setPointerCapture(e.pointerId); pickC(e); });
+  mini.addEventListener("pointermove", e => { if (picking) pickC(e); });
+  mini.addEventListener("pointerup", () => picking = false);
+
+  function setKind(kind, home = true) {
+    s.kind = kind;
+    if (home) Object.assign(s, HOME[kind]);
+    else Object.assign(s, HOME.julia);
+    $("m-mandel").classList.toggle("on", kind === "mandelbrot");
+    $("m-julia").classList.toggle("on", kind === "julia");
+    $("mini").classList.toggle("hidden", kind !== "julia");
+    if (kind === "julia") drawMini();
+  }
+  $("m-mandel").onclick = () => { setKind("mandelbrot"); draw(); };
+  $("m-julia").onclick = () => { setKind("julia"); draw(); };
+  $("home").onclick = () => { Object.assign(s, HOME[s.kind]); draw(); };
+  $("out").onclick = () => { s.span = Math.min(s.span * 2.5, 8); draw(); };
+
+  // On the big view a click zooms in where it lands; a drag zooms to the box.
+  // In the Mandelbrot view, Alt+click (or a long press) opens that point's Julia set.
+  const toC = (x, y) => [s.cx + (x - W / 2) * scale(), s.cy - (y - H / 2) * scale()];
+  let down = null, pressTimer = null;
+  view.addEventListener("pointerdown", e => {
+    view.setPointerCapture(e.pointerId);
+    down = { x: e.clientX, y: e.clientY };
+    if (s.kind === "mandelbrot") pressTimer = setTimeout(() => { openJulia(down.x, down.y); down = null; }, 650);
+  });
+  view.addEventListener("pointermove", e => {
+    if (!down) return;
+    const dx = e.clientX - down.x, dy = e.clientY - down.y;
+    if (Math.hypot(dx, dy) > 6) clearTimeout(pressTimer);
+    const b = $("box");
+    b.style.display = Math.hypot(dx, dy) > 6 ? "block" : "none";
+    b.style.left = Math.min(down.x, e.clientX) + "px"; b.style.top = Math.min(down.y, e.clientY) + "px";
+    b.style.width = Math.abs(dx) + "px"; b.style.height = Math.abs(dy) + "px";
+  });
+  view.addEventListener("pointerup", e => {
+    clearTimeout(pressTimer);
+    $("box").style.display = "none";
+    if (!down) return;
+    const dx = e.clientX - down.x, dy = e.clientY - down.y;
+    if (Math.hypot(dx, dy) <= 6) {
+      if (e.altKey && s.kind === "mandelbrot") { openJulia(e.clientX, e.clientY); down = null; return; }
+      [s.cx, s.cy] = toC(e.clientX, e.clientY);
+      s.span /= e.shiftKey ? 0.4 : 2.5;
+    } else {
+      [s.cx, s.cy] = toC(down.x + dx / 2, down.y + dy / 2);
+      const k = Math.max(Math.abs(dx) / W, Math.abs(dy) / H);
+      s.span *= Math.max(k, 1e-6);
+    }
+    s.span = Math.max(s.span, 1e-13);
+    down = null;
+    draw();
+  });
+  function openJulia(x, y) {
+    [s.jr, s.ji] = toC(x, y);
+    setKind("julia", false);
+    draw();
+  }
+  view.addEventListener("wheel", e => {
+    e.preventDefault();
+    const f = Math.exp(e.deltaY * 0.0015), [x, y] = toC(e.clientX, e.clientY);
+    s.span = Math.max(1e-13, Math.min(8, s.span * f));
+    const sc = scale();
+    s.cx = x - (e.clientX - W / 2) * sc; s.cy = y + (e.clientY - H / 2) * sc;
+    clearTimeout(view._wheel); view._wheel = setTimeout(draw, 90);
+  }, { passive: false });
+  view.addEventListener("contextmenu", e => e.preventDefault());
+
+  function resize() { W = innerWidth; H = innerHeight; draw(); if (s.kind === "julia") drawMini(); }
+  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(resize, 150); });
+  resize();
+})();
+</script>
+</body>
+</html>

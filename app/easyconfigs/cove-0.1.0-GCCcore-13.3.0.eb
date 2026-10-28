@@ -1,0 +1,83 @@
+# EasyBuild easyconfig for cove — the native egui shell around the
+# ndexr CLI and Claude Code (Console / Workspace / Agent).
+#
+# ── STAGED, NOT INSTALLED ─────────────────────────────────────────────────────
+# Authored in cove.ndexr.io (where the crate lives); easyconfigs are eb.ndexr.io's
+# to own. Apply it with a single copy:
+#
+#   mkdir -p src/domains/drennanfreddy/eb.ndexr.io/easyconfigs/n/cove
+#   cp src/domains/drennanfreddy/cove.ndexr.io/app/easyconfigs/cove-0.1.0-GCCcore-13.3.0.eb \
+#      src/domains/drennanfreddy/eb.ndexr.io/easyconfigs/n/cove/
+#
+# Same shape as ndexr-cli: a local git source packed by eb/stage-git-sources.sh,
+# so it cannot build until the tag exists in the cove.ndexr.io repo:
+#
+#     git -C src/domains/drennanfreddy/cove.ndexr.io tag -a v0.1.0 -m 'cove 0.1.0'
+#
+# The crate is under app/ in that repo (the root is the cove.ndexr.io Shiny
+# domain), hence start_dir = 'app'.
+#
+# ── WHY THESE DEPENDENCIES ────────────────────────────────────────────────────
+# Nothing graphical is linked at build time: winit and glutin dlopen libX11,
+# libxkbcommon, libwayland-client and libGL/libEGL at startup. They are runtime
+# dependencies so a module load on a cluster login node, an Open OnDemand
+# desktop or a cell finds them without the host's /usr/lib. On Linux the app
+# renders through OpenGL (Mesa llvmpipe works with no GPU); NDEXR_RENDERER=wgpu
+# opts into Vulkan. The folder picker talks to the XDG desktop portal over
+# D-Bus in pure Rust, so there is no GTK in the closure.
+#
+# Rust 1.96: egui/eframe 0.36 require rustc >= 1.95.
+#
+#   module load EasyBuild
+#   eb cove-0.1.0-GCCcore-13.3.0.eb --robot
+#   module load cove/0.1.0-GCCcore-13.3.0 ndexr-cli
+#   cove
+
+easyblock = 'Cargo'
+
+name = 'cove'
+version = '0.1.0'
+
+homepage = 'https://cove.ndexr.io'
+description = """ndexr desktop: a native window around the ndexr CLI and Claude Code. Run any
+ndexr command with history, act on a project folder with one click (glimpse, doctor, status,
+ps, check), and drive Claude Code headless or in a terminal. Output streams live and stays
+responsive on 100k-line jobs."""
+
+toolchain = {'name': 'GCCcore', 'version': '13.3.0'}
+
+sources = [{
+    'git_config': {
+        'url': '/home/ubuntu/ndexr/src/domains/drennanfreddy',
+        'repo_name': 'cove.ndexr.io',
+        'tag': 'v%(version)s',
+        'keep_git_dir': False,
+    },
+    'filename': 'cove-%(version)s.tar.gz',
+}]
+checksums = [None]
+
+start_dir = 'app'
+
+builddependencies = [
+    ('binutils', '2.42'),
+    ('Rust', '1.96.0'),
+]
+
+dependencies = [
+    ('X11', '20240607'),
+    ('Wayland', '1.23.0'),
+    ('Mesa', '24.1.3'),
+]
+
+# Cargo reaches crates.io for the closure. The unit tests are pure (ANSI
+# stripping, shell quoting) and need no display, so they run.
+offline = False
+enable_tests = True
+
+sanity_check_paths = {
+    'files': ['bin/cove'],
+    'dirs': [],
+}
+
+moduleclass = 'tools'

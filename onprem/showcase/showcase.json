@@ -1,0 +1,272 @@
+{
+  "slides": [
+    {
+      "kind": "text",
+      "title": "Traceable scientific control",
+      "secs": 24,
+      "body": "Atlas gives an organisation a model of its scientific software that anyone can inspect, from the platform underneath to the analysis on top. It is there to establish five things: what the organisation has, where each piece came from, what actually runs, who is responsible for it, and why its use is acceptable.\n\nThe promise is simple to say. The organisation can explain the software beneath a result, see where it depends on binaries it did not build, and show the evidence behind accepting those dependencies, or changing them."
+    },
+    {
+      "kind": "text",
+      "title": "Cove starts with an opinion",
+      "secs": 22,
+      "body": "The future of scientific software management requires machine code to be built and owned by the company doing the science. Validation in a regulatory setting ultimately means proving, from kernel to solution, that you can explain, see and modify every possible detail that could change your solution.\n\nSo the default is to compile from source, here - no apt-get underneath, no public binaries from conda or Posit Package Manager by habit. Where a binary built elsewhere is used anyway, it is never hidden: it shows as external, with what uses it and who accepted it."
+    },
+    {
+      "kind": "builds",
+      "title": "Every one of these, compiled here",
+      "secs": 16
+    },
+    {
+      "kind": "log",
+      "title": "The newest build log",
+      "secs": 16
+    },
+    {
+      "kind": "floors",
+      "title": "Two kernels, two floors",
+      "secs": 22,
+      "caption": "Every stack is built twice - for x86-64 and for arm64 - and each stands on the oldest Linux its own C library will run on. Read live from the stack: the kernel each guarantees, the glibc it ships, the headers it was built against, and the kernels it has been proven on."
+    },
+    {
+      "kind": "text",
+      "title": "Each layer in its place",
+      "secs": 24,
+      "body": "The kernel is the floor, and the stack rises from it in the order Canada's national computing centres settled on (Boissonneault, Oldeman and Taylor, PEARC'19). The kernel, drivers and daemons stay local to each machine and its admins. Over them a compatibility layer, our Gentoo Prefix, carries its own glibc and the rest of a distribution, so nothing above depends on the host. On that, EasyBuild builds toolchains - compiler, MPI and maths libraries - once for each CPU architecture, and presents them as modules. Each language's own installer then builds its packages against the stack, and env sets freeze them under one name. Over all of it stand the applications, and the machine, routing and front door that serve them."
+    },
+    {
+      "kind": "text",
+      "title": "A recipe, a binary, a choice, a run",
+      "secs": 24,
+      "body": "Each layer plays a different part, and Atlas says which. A build configuration (an EasyBuild easyconfig, a Portage ebuild) describes how software should be produced. A binary is one particular output of it. An environment selects particular binaries and packages under one name. An execution is what was actually used.\n\nSo an R environment leads to the EasyBuild build of R it loads, and from there through its toolchain to Gentoo Prefix and the kernel. A line straight down to the base would be easier to draw, and it would hide the very construction history Atlas exists to explain."
+    },
+    {
+      "kind": "atlas",
+      "lang": "prefix",
+      "focus": "sys-libs/glibc",
+      "title": "Everything starts in C",
+      "secs": 20,
+      "caption": "The Linux kernel is written in C, and so is glibc, the C library every program here runs on - compiled in our own Gentoo Prefix, not taken from the host. Linus Torvalds has long argued that C, small and close to the machine, is enough to build a whole system. Follow the lines up from this star: compilers, languages, R and Python, and every application above them begin here."
+    },
+    {
+      "kind": "atlas",
+      "lang": "prefix",
+      "focus": "sys-devel/binutils",
+      "title": "The linker and assembler, built here",
+      "secs": 16,
+      "caption": "binutils turns compiler output into programs and libraries. It is built inside the Prefix from source, so nothing on the host decides how a binary is linked."
+    },
+    {
+      "kind": "atlas",
+      "lang": "prefix",
+      "focus": "sys-devel/gcc",
+      "title": "The Prefix's own compiler",
+      "secs": 16,
+      "caption": "GCC, built in the Prefix to bootstrap everything after it. The compilers EasyBuild uses above are built with this one, never with the host's."
+    },
+    {
+      "kind": "atlas",
+      "lang": "prefix",
+      "focus": "dev-lang/perl",
+      "title": "Perl, the toolsmith",
+      "secs": 16,
+      "caption": "Configure scripts, autotools and OpenSSL's own build all need Perl, so the Prefix carries its own - pinned like everything else."
+    },
+    {
+      "kind": "atlas",
+      "lang": "prefix",
+      "focus": "dev-lang/python",
+      "title": "The Prefix's own Python",
+      "secs": 16,
+      "caption": "Portage is written in Python, so the Prefix builds a Python for itself first. It is not the Python an analysis uses - that comes from EasyBuild on the next layer - which keeps the tools that build the stack apart from the tools the science runs on."
+    },
+    {
+      "kind": "atlas",
+      "lang": "prefix",
+      "focus": "sys-apps/portage",
+      "title": "Why Portage",
+      "secs": 24,
+      "caption": "Portage is Gentoo's package manager, and the reason this floor can be trusted. Every package is an ebuild: a short, readable recipe naming the exact source tarball, its checksum, the patches applied and the flags it is configured with. Portage builds each from source in dependency order, records what it installed, and can rebuild any one of them - so the libraries under everything are known, reproducible and changeable, not inherited from whatever distribution the host runs. In a Prefix it does all of this inside one directory, without root, which is what lets the same floor be laid on any Linux new enough for its kernel."
+    },
+    {
+      "kind": "atlas",
+      "lang": "easybuild",
+      "focus": "GCCcore",
+      "title": "The compiler everything shares",
+      "secs": 16,
+      "caption": "EasyBuild takes over from Portage for scientific software. Its unit is the toolchain, and GCCcore is the compiler every module shares - which is why an R package and a Python wheel built here agree on every ABI."
+    },
+    {
+      "kind": "atlas",
+      "lang": "easybuild",
+      "focus": "foss",
+      "title": "One toolchain: compiler, MPI and maths",
+      "secs": 16,
+      "caption": "foss fixes the versions of GCC, OpenMPI, FlexiBLAS, FFTW and ScaLAPACK together. Every scientific module above is built against exactly this set."
+    },
+    {
+      "kind": "atlas",
+      "lang": "easybuild",
+      "focus": "OpenBLAS",
+      "title": "Linear algebra, compiled for this machine",
+      "secs": 16,
+      "caption": "OpenBLAS is the BLAS and LAPACK under R's matrix maths and numpy alike - built from source here, behind FlexiBLAS, so the backend can change without rebuilding a single package."
+    },
+    {
+      "kind": "atlas",
+      "lang": "easybuild",
+      "focus": "R",
+      "title": "R itself, from source",
+      "secs": 18,
+      "caption": "R is the largest recipe in the stack: built on the foss BLAS, ICU, cairo and Pango, Java, Rust, PostgreSQL, HDF5, PROJ, GDAL and more. Every one of them is a module you can open, read, patch and rebuild."
+    },
+    {
+      "kind": "atlas",
+      "lang": "easybuild",
+      "focus": "GDAL",
+      "title": "The geospatial knot",
+      "secs": 16,
+      "caption": "GDAL is built on PROJ, GEOS, OpenJPEG, LibTIFF, Xerces-C++ and more. This is where an operating-system package hides the most, and where Cove shows the most."
+    },
+    {
+      "kind": "atlas",
+      "lang": "easybuild",
+      "focus": "env/r4.6_py3.13-release",
+      "title": "An environment: one name for R, Python and their packages",
+      "secs": 26,
+      "set": "r4.6_py3.13-release",
+      "caption": "env/r4.6_py3.13-release loads R, Python and the tools its packages need, and points both at its own site library. Its real settings, read from the module and from R itself:"
+    },
+    {
+      "kind": "atlas",
+      "lang": "R",
+      "focus": "rlang",
+      "title": "The R package everyone stands on",
+      "secs": 16,
+      "caption": "rlang sits under a large share of the R packages in these sets. Change it and much of the R universe changes with it - so it is built once, here, and pinned per environment."
+    },
+    {
+      "kind": "atlas",
+      "lang": "R",
+      "focus": "tidyverse",
+      "title": "One library(), many packages",
+      "secs": 16,
+      "caption": "One library() call loads dozens of packages, each compiled against this R, each with its own version recorded."
+    },
+    {
+      "kind": "atlas",
+      "lang": "R",
+      "focus": "tidyCDISC",
+      "title": "Where regulatory work lives",
+      "secs": 18,
+      "caption": "tidyCDISC - clinical data in CDISC form - is among the most connected packages in the R sets. Through its dependencies it reaches most of the stack below: the chain a validation has to explain, end to end."
+    },
+    {
+      "kind": "atlas",
+      "lang": "R",
+      "focus": "autoslider.core",
+      "title": "The deepest chain",
+      "secs": 16,
+      "caption": "autoslider.core turns clinical tables into slides, and sits many layers above its first dependency - every layer between visible, versioned and rebuildable from source."
+    },
+    {
+      "kind": "atlas",
+      "lang": "Python",
+      "focus": "numpy",
+      "title": "Python's floor",
+      "secs": 16,
+      "caption": "numpy is compiled from source against the stack's own BLAS and gfortran, not taken as a wheel from PyPI - and much of the Python here builds directly on it."
+    },
+    {
+      "kind": "atlas",
+      "lang": "Python",
+      "focus": "matplotlib",
+      "title": "A compiled Python package and what it needs",
+      "secs": 16,
+      "caption": "matplotlib and what it is built on - numpy, pillow, contourpy, kiwisolver, fonttools - each one built from source in this stack."
+    },
+    {
+      "kind": "atlas",
+      "lang": "Python",
+      "focus": "jupyter-server",
+      "title": "The notebook, all the way down",
+      "secs": 16,
+      "caption": "The notebook server and everything under it. Open any star to see what it is built on; sign in to open it as source."
+    },
+    {
+      "kind": "text",
+      "title": "What a clean system means",
+      "secs": 26,
+      "body": "Clean has an operational meaning here. Every component should have five things known about it: its identity (the exact artifact), its provenance (source, builder, publication channel and build evidence), its purpose (which environments and applications need it), its responsibility (who maintains or accepted it) and its status (intended use, approval, exceptions, retirement).\n\nAn undocumented component becomes an investigation. An obsolete one becomes a candidate for retirement. An approved external dependency becomes an explicit part of the system. The goal is a system where every component has an accountable explanation and every remaining gap is visible."
+    },
+    {
+      "kind": "text",
+      "title": "Declared, installed, observed",
+      "secs": 24,
+      "body": "Catching software that should not be there takes more than the dependency graph. Atlas compares three states. The declared state is what an environment is supposed to use: its manifest, its easyconfig, its architectures. The installed state is what is actually present on disk. The observed state is what an application actually loaded or ran.\n\nWhere they differ, something needs explaining: a different runtime, an unrecorded library, an unexpected download, an artifact that is not the approved release. Atlas reads the declared and installed states today; observing executions is the next layer."
+    },
+    {
+      "kind": "atlas",
+      "title": "A binary we did not build",
+      "lang": "Python",
+      "focus": "torch",
+      "secs": 20,
+      "caption": "torch is installed from a wheel built elsewhere and downloaded: its own record says manylinux_2_28, where the packages compiled here say linux_x86_64. So does pyarrow. That is not a verdict on either. It is a fact the organisation has to be able to see, and then explain or replace."
+    },
+    {
+      "kind": "text",
+      "title": "External is not the same as unapproved",
+      "secs": 24,
+      "body": "External origin, unknown provenance and unapproved use are three separate findings, and Atlas keeps them apart. An externally built binary may be deliberately approved. An internally built one may still be awaiting review. An artifact with no local build record has unknown provenance until evidence says where it came from.\n\nFor each finding the questions are the same: where did it enter the system, what uses it, what evidence is there, who accepted it, and what changes if it is replaced. Answered across the whole stack, they show exactly where the organisation relies on Posit, on an operating-system distributor, on another research infrastructure, or on its own builders."
+    },
+    {
+      "kind": "text",
+      "title": "Software, and the evidence for it",
+      "secs": 26,
+      "body": "In a regulated setting the value is the connection between the software and the evidence: an artifact's identity, its intended use, its assessment, its approval and where it is actually deployed. That is what supports investigation, review, change control and reconstructing a computational method.\n\nBuilding from source gives the organisation more control over that record; validation still asks whether the configured system is fit for its intended use. The R Foundation's own guidance places installation, validation and use with the organisation and limits its scope to base R and the recommended packages. External software is then accepted on explicit supplier evidence and a recorded decision - the risk-based approach FDA's current software assurance guidance takes in its own scope."
+    },
+    {
+      "kind": "text",
+      "title": "Workbench, Connect and Package Manager, as one system",
+      "secs": 24,
+      "body": "A pharmaceutical company buys three things from Posit: a place to write applications (Workbench), a place to publish them (Connect) and a place to get packages (Package Manager).\n\nCove is all three, on the stack you have just walked through. You write in Cove - agents, R, Python and a terminal - in your own domain. Each domain is a live application on its own address, behind its own sign-in. And the packages are this stack: every R and Python package compiled here, versioned, with the record of how it was built."
+    },
+    {
+      "kind": "text",
+      "title": "Past the Dockerfile",
+      "secs": 22,
+      "body": "The usual reassurance is continuity: keep your Dockerfile, or install from scratch and open the ports, and the vendor will be there next year. That is a container around software someone else compiled.\n\nRebuilding the whole system is now easy enough to own outright - the package manager, the place applications run and the place they are written, from the kernel up. A company that owns its build does not depend on any vendor's future."
+    },
+    {
+      "kind": "text",
+      "title": "What changes for the people doing the work",
+      "secs": 20,
+      "body": "An analyst keeps R, Python and the packages they know, built here instead of downloaded. Their application runs on its own address while they work on it. And every environment it ever ran in stays as it was: a published environment never changes; a new one is made beside it."
+    },
+    {
+      "kind": "text",
+      "title": "Four promises the layers keep",
+      "secs": 20,
+      "body": "Available everywhere: one build, served read-only to every machine through CVMFS. Decoupled from the operating system: the compatibility layer means a host upgrade breaks nothing above it. Tracked and reproducible: every recipe is a file under version control, and an env set never changes once frozen. A familiar interface: module load, the same in a cell, on a workstation or on a cluster."
+    },
+    {
+      "kind": "text",
+      "title": "Immutable, public, free",
+      "secs": 18,
+      "body": "Cove will be the clearest and most publicly accessible place to get genuinely immutable software suites: suites that can publicly prove the system is validated, given to others completely free, where anyone can patch and modify the suite, safely."
+    },
+    {
+      "kind": "text",
+      "title": "Built to traverse and change the stack",
+      "secs": 20,
+      "body": "Cove is built to traverse a system of dependencies, change any part of it and test the change. The source of R, Python, a compiler or any package in the stack opens as a project, is patched, and is built into a new environment without altering the published ones.\n\nIt is a system for managing a fully organised software suite - for building and validating systems for regulatory use."
+    },
+    {
+      "kind": "text",
+      "title": "Look around",
+      "secs": 14,
+      "body": "Everything here is public: the whole stack in the atlas, every package in Packages, and in Builds how each was built, on which machine, how long it took - and the machines' logs, live.\n\nSign in to open any of it as source, patch it and build your own environment."
+    }
+  ],
+  "about": "Captions explain; numbers are live. Counts, build totals and timings come from the catalog (Catalog::live_facts) as the n-boxes report - never write a count into a caption."
+}

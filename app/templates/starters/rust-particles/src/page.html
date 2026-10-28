@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Particle Universe · __HOST__</title>
+<style>
+  :root { --glass: rgba(9, 12, 22, 0.66); --edge: rgba(255, 255, 255, 0.13); --text: #eaeef8; --mute: #aab4cc; --accent: #ff9d5c; --cool: #5cc8ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #03040a; color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; touch-action: none; }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 18px;
+    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  header { position: fixed; top: 16px; left: 16px; padding: 12px 18px; max-width: calc(100vw - 360px); }
+  h1 { margin: 0; font-size: 21px; font-weight: 650; }
+  h1 span { background: linear-gradient(90deg, var(--cool), #c8a2ff, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #stats { margin-top: 3px; color: var(--mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+  #stats b { color: var(--text); font-weight: 600; }
+  #rate { margin-top: 6px; font: 600 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--accent); font-variant-numeric: tabular-nums; }
+  #rate small { color: var(--mute); font-weight: 500; font-size: 12px; }
+  #panel { position: fixed; right: 16px; top: 16px; width: 316px; padding: 14px 16px; display: flex; flex-direction: column; gap: 11px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); background: rgba(255,255,255,0.06); border-radius: 12px; padding: 3px; }
+  .seg button { border: 0; background: transparent; padding: 7px 4px; }
+  .seg button.on { background: linear-gradient(135deg, rgba(92,200,255,0.35), rgba(255,157,92,0.45)); }
+  button { font: inherit; font-weight: 600; color: var(--text); cursor: pointer; border: 1px solid var(--edge);
+    border-radius: 10px; padding: 8px 10px; background: rgba(255,255,255,0.06); }
+  button:hover { background: rgba(255,255,255,0.12); }
+  .row { display: grid; grid-template-columns: 82px 1fr 58px; gap: 10px; align-items: center; font-size: 14px; color: var(--mute); }
+  .row output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .drift { display: flex; flex-direction: column; gap: 4px; }
+  .drift .cap { display: flex; justify-content: space-between; font-size: 13px; color: var(--mute); font-variant-numeric: tabular-nums; }
+  .drift .cap b { color: var(--text); font-weight: 600; }
+  #spark { width: 100%; height: 64px; display: block; border-radius: 10px; background: rgba(0,0,0,0.35); }
+  #fold { display: none; }
+  #err { color: #f87171; font-size: 13px; min-height: 0; }
+  @media (max-width: 700px) {
+    header { top: 10px; left: 10px; right: 10px; padding: 10px 14px; max-width: none; }
+    h1 { font-size: 18px; }
+    #rate { font-size: 13px; }
+    #panel { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; padding: 10px 12px; gap: 8px; max-height: 58vh; }
+    #fold { display: block; }
+    #panel.folded .more { display: none; }
+    .row { grid-template-columns: 70px 1fr 52px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view" title="click: drop a star · drag: pan · scroll: zoom"></canvas>
+
+<header class="glass">
+  <h1><span>Particle Universe</span></h1>
+  <div id="stats">&nbsp;</div>
+  <div id="rate">&nbsp;</div>
+</header>
+
+<section id="panel" class="glass">
+  <div class="seg" id="presets">
+    <button data-p="galaxies" class="on">Collision</button><button data-p="disc">Disc</button><button data-p="collapse">Collapse</button>
+  </div>
+  <div class="drift">
+    <div class="cap"><span>energy drift ΔE/E₀</span><b id="driftV">—</b></div>
+    <canvas id="spark"></canvas>
+  </div>
+  <div class="actions"><button id="run">Pause</button><button id="fold">Controls</button></div>
+  <div class="more">
+    <div style="display:flex;flex-direction:column;gap:9px">
+      <div class="row"><label for="g">G</label><input id="g" type="range" min="0.1" max="4" step="0.05" value="1"><output></output></div>
+      <div class="row"><label for="soft">softening ε</label><input id="soft" type="range" min="0.003" max="0.15" step="0.001" value="0.02"><output></output></div>
+      <div class="row"><label for="dt">time step</label><input id="dt" type="range" min="0.0002" max="0.012" step="0.0002" value="0.002"><output></output></div>
+      <div class="row"><label for="spf">steps/frame</label><input id="spf" type="range" min="1" max="40" step="1" value="6"><output></output></div>
+      <div class="row"><label for="n">bodies</label><input id="n" type="range" min="500" max="20000" step="500" value="4000"><output></output></div>
+      <div class="row"><label for="mass">star mass</label><input id="mass" type="range" min="0.1" max="3" step="0.1" value="0.5"><output></output></div>
+      <div class="actions"><button id="reset">Restart</button><button id="home">Recentre</button></div>
+      <div id="err"></div>
+    </div>
+  </div>
+</section>
+
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const HEADER = 16; // floats ahead of the positions, as server.rs writes them
+const view = $("view"), ctx = view.getContext("2d");
+const spark = $("spark"), sctx = spark.getContext("2d");
+const dpr = () => Math.min(window.devicePixelRatio || 1, 2);
+
+let preset = "galaxies", running = true, inflight = false;
+let cam = { x: 0, y: 0, zoom: 1 };          // world centre and zoom; radius 1.7 fits at zoom 1
+let prev = null, prevEpoch = -1, drift = [], lastEpoch = -1;
+
+const sliders = ["g", "soft", "dt", "spf", "n", "mass"];
+const fmtS = { g: (v) => (+v).toFixed(2), soft: (v) => (+v).toFixed(3), dt: (v) => (+v).toFixed(4), spf: (v) => v, n: (v) => (+v).toLocaleString("en-US"), mass: (v) => (+v).toFixed(1) };
+for (const id of sliders) {
+  const el = $(id), out = el.parentElement.querySelector("output");
+  const show = () => { out.textContent = fmtS[id](el.value); };
+  el.addEventListener("input", show); show();
+}
+// A new body count needs a new universe; the other sliders ride on each frame.
+$("n").addEventListener("change", () => reset());
+
+function resize() {
+  const d = dpr();
+  view.width = Math.round(innerWidth * d); view.height = Math.round(innerHeight * d);
+  const r = spark.getBoundingClientRect();
+  spark.width = Math.round(r.width * d); spark.height = Math.round(r.height * d);
+  ctx.fillStyle = "#03040a"; ctx.fillRect(0, 0, view.width, view.height);
+}
+addEventListener("resize", resize);
+
+// On a wide screen the panel covers the right edge, so the universe centres
+// in the space left of it.
+function room() { return innerWidth > 700 ? view.width - 350 * dpr() : view.width; }
+function scale() { return Math.min(room(), view.height) / (2 * 1.7) * cam.zoom; }
+function toScreen(x, y) { const s = scale(); return [room() / 2 + (x - cam.x) * s, view.height / 2 - (y - cam.y) * s]; }
+function toWorld(px, py) { const s = scale(), d = dpr(); return [cam.x + (px * d - room() / 2) / s, cam.y - (py * d - view.height / 2) / s]; }
+
+const q = () => `g=${$("g").value}&soft=${$("soft").value}&dt=${$("dt").value}`;
+
+async function reset() {
+  $("err").textContent = "";
+  try {
+    const r = await fetch(`reset?preset=${preset}&n=${$("n").value}&soft=${$("soft").value}&seed=${(Math.random() * 1e9) | 0}`, { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error);
+    cam = { x: 0, y: 0, zoom: 1 };
+    ctx.fillStyle = "#03040a"; ctx.fillRect(0, 0, view.width, view.height);
+  } catch (e) { $("err").textContent = e.message; }
+}
+
+// Speed palette: cold blue through white to hot orange, eight bins so the
+// canvas changes fillStyle eight times a frame, not once per body.
+const BINS = 8;
+const COLORS = Array.from({ length: BINS }, (_, i) => {
+  const t = i / (BINS - 1);
+  const c = t < 0.5 ? [70 + 370 * t, 140 + 220 * t, 255] : [255, 250 - 200 * (t - 0.5), 255 - 330 * (t - 0.5)];
+  return `rgba(${c.map((v) => Math.max(0, Math.min(255, v | 0))).join(",")},0.85)`;
+});
+
+function draw(h, pos) {
+  const n = h[0], nh = h[1], epoch = h[12];
+  const W = view.width, H = view.height, s = scale(), d = dpr();
+  // Fading the last frame instead of clearing it leaves short orbit trails.
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "rgba(3,4,10,0.32)"; ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = "lighter";
+
+  // Speed from the move since the last frame: free, and no velocities on the wire.
+  const same = prev && prevEpoch === epoch && prev.length === pos.length;
+  const sp = new Float32Array(n);
+  if (same) for (let i = 0; i < n; i++) sp[i] = Math.hypot(pos[2 * i] - prev[2 * i], pos[2 * i + 1] - prev[2 * i + 1]);
+  let ref = 0;
+  if (same) { const sample = []; for (let i = nh; i < n; i += Math.max(1, (n / 256) | 0)) sample.push(sp[i]); sample.sort((a, b) => a - b); ref = sample[(sample.length * 0.9) | 0] || 0; }
+
+  const paths = Array.from({ length: BINS }, () => new Path2D());
+  const px = Math.max(1, 1.3 * d);
+  const [cx, cy] = toScreen(0, 0);
+  for (let i = nh; i < n; i++) {
+    const x = cx + pos[2 * i] * s, y = cy - pos[2 * i + 1] * s;
+    if (x < -2 || y < -2 || x > W + 2 || y > H + 2) continue;
+    const b = ref > 0 ? Math.min(BINS - 1, ((sp[i] / ref) * (BINS - 2)) | 0) : 2;
+    paths[b].rect(x, y, px, px);
+  }
+  for (let b = 0; b < BINS; b++) { ctx.fillStyle = COLORS[b]; ctx.fill(paths[b]); }
+
+  for (let i = 0; i < nh; i++) {
+    const [x, y] = toScreen(pos[2 * i], pos[2 * i + 1]);
+    const r = 14 * d;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, "rgba(255,255,240,1)"); g.addColorStop(0.25, "rgba(255,200,120,0.7)"); g.addColorStop(1, "rgba(255,120,40,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  prev = pos.slice(); prevEpoch = epoch;
+}
+
+const big = (v) => v >= 1e9 ? (v / 1e9).toFixed(2) + " G" : v >= 1e6 ? (v / 1e6).toFixed(2) + " M" : v >= 1e3 ? (v / 1e3).toFixed(1) + " k" : v.toFixed(0) + " ";
+function report(h) {
+  const [n, nh, t, , E, E0, , , ms, bsps, ips, threads, epoch] = h;
+  $("stats").innerHTML = `<b>${n.toLocaleString("en-US")}</b> bodies${nh ? ` · <b>${nh}</b> star${nh > 1 ? "s" : ""}` : ""} · t <b>${t.toFixed(2)}</b> · <b>${ms.toFixed(2)}</b> ms/step · <b>${threads}</b> threads`;
+  if (bsps > 0) $("rate").innerHTML = `${big(bsps)}body·steps/s <small>· ${big(ips)}pairs/s</small>`;
+  if (epoch !== lastEpoch) { drift = []; lastEpoch = epoch; }
+  const dv = (E - E0) / Math.abs(E0 || 1);
+  drift.push(dv); if (drift.length > 400) drift.shift();
+  $("driftV").textContent = (dv >= 0 ? "+" : "") + dv.toExponential(2);
+  sparkline();
+}
+
+function sparkline() {
+  const W = spark.width, H = spark.height;
+  sctx.clearRect(0, 0, W, H);
+  if (drift.length < 2) return;
+  const m = Math.max(1e-12, ...drift.map(Math.abs));
+  sctx.strokeStyle = "rgba(255,255,255,0.18)"; sctx.lineWidth = 1;
+  sctx.beginPath(); sctx.moveTo(0, H / 2); sctx.lineTo(W, H / 2); sctx.stroke();
+  sctx.strokeStyle = "#ff9d5c"; sctx.lineWidth = 1.5 * dpr();
+  sctx.beginPath();
+  drift.forEach((v, i) => {
+    const x = (i / 399) * W, y = H / 2 - (v / m) * (H / 2 - 4);
+    i ? sctx.lineTo(x, y) : sctx.moveTo(x, y);
+  });
+  sctx.stroke();
+  sctx.fillStyle = "rgba(234,238,248,0.75)"; sctx.font = `${11 * dpr()}px system-ui`;
+  sctx.fillText(`±${m.toExponential(1)}`, 6 * dpr(), 13 * dpr());
+}
+
+// The next frame is fetched while this one is painted; painting happens in the
+// animation callback, so the canvas changes once per display refresh.
+let ready = null;
+async function fetchFrame() {
+  inflight = true;
+  try {
+    const r = await fetch(`frame?steps=${$("spf").value}&${q()}`, { cache: "no-store" });
+    if (!r.ok) throw new Error((await r.json()).error || r.status);
+    ready = new Float32Array(await r.arrayBuffer());
+    $("err").textContent = "";
+  } catch (e) { $("err").textContent = e.message; }
+  inflight = false;
+}
+function tick() {
+  if (ready) {
+    const h = Array.from(ready.subarray(0, HEADER));
+    draw(h, ready.subarray(HEADER));
+    report(h);
+    ready = null;
+  }
+  if (running && !inflight && !document.hidden) fetchFrame();
+  requestAnimationFrame(tick);
+}
+
+// Pointer: a click drops a star, a drag pans, a wheel or pinch zooms.
+let down = null, pinch = null;
+const pts = new Map();
+view.addEventListener("pointerdown", (e) => { view.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), zoom: cam.zoom }; down = null; }
+  else down = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }; });
+view.addEventListener("pointermove", (e) => {
+  if (!pts.has(e.pointerId)) return;
+  pts.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pinch && pts.size === 2) { const [a, b] = [...pts.values()]; cam.zoom = Math.max(0.1, Math.min(40, pinch.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / pinch.d)); return; }
+  if (!down) return;
+  const dx = e.clientX - down.x, dy = e.clientY - down.y;
+  if (Math.hypot(dx, dy) > 6) down.moved = true;
+  if (down.moved) { const s = scale() / dpr(); cam.x = down.cx - dx / s; cam.y = down.cy + dy / s; }
+});
+view.addEventListener("pointerup", async (e) => {
+  pts.delete(e.pointerId);
+  if (pts.size < 2) pinch = null;
+  if (!down || down.moved) { down = null; return; }
+  down = null;
+  const [x, y] = toWorld(e.clientX, e.clientY);
+  const r = await fetch(`drop?x=${x.toFixed(4)}&y=${y.toFixed(4)}&mass=${$("mass").value}`, { method: "POST" });
+  if (!r.ok) $("err").textContent = (await r.json()).error;
+});
+view.addEventListener("pointercancel", (e) => { pts.delete(e.pointerId); down = null; pinch = null; });
+view.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const [wx, wy] = toWorld(e.clientX, e.clientY);
+  const z = Math.max(0.1, Math.min(40, cam.zoom * Math.exp(-e.deltaY * 0.0015)));
+  // Zoom about the pointer: the world point under it stays under it.
+  cam.zoom = z; const [nx, ny] = toWorld(e.clientX, e.clientY);
+  cam.x += wx - nx; cam.y += wy - ny;
+}, { passive: false });
+
+$("presets").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  preset = b.dataset.p;
+  for (const x of $("presets").children) x.classList.toggle("on", x === b);
+  reset();
+});
+$("reset").onclick = () => reset();
+$("home").onclick = () => { cam = { x: 0, y: 0, zoom: 1 }; };
+$("run").onclick = () => { running = !running; $("run").textContent = running ? "Pause" : "Run"; };
+$("fold").onclick = () => $("panel").classList.toggle("folded");
+if (innerWidth <= 700) $("panel").classList.add("folded");
+
+resize();
+reset().then(() => requestAnimationFrame(tick));
+})();
+</script>
+</body>
+</html>

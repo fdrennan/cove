@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pattern Lab · __HOST__</title>
+<style>
+  :root { --glass: rgba(8, 12, 18, 0.68); --edge: rgba(255, 255, 255, 0.13); --text: #eaf2f0; --mute: #a9bcb8; --accent: #3fd6b0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #03060a; color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #view { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; cursor: crosshair; touch-action: none; }
+  #brush { position: fixed; border: 1.5px solid rgba(255,255,255,0.75); border-radius: 50%; pointer-events: none; display: none;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.35), 0 0 18px rgba(63,214,176,0.45); transform: translate(-50%, -50%); }
+  .glass { background: var(--glass); border: 1px solid var(--edge); border-radius: 18px;
+    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  header { position: fixed; top: 16px; left: 16px; padding: 12px 18px; max-width: calc(100vw - 360px); }
+  h1 { margin: 0; font-size: 21px; font-weight: 650; }
+  h1 span { background: linear-gradient(90deg, #ffd36b, var(--accent), #5aa8ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  #stats { margin-top: 3px; color: var(--mute); font-size: 13px; font-variant-numeric: tabular-nums; }
+  #stats b { color: var(--text); font-weight: 600; }
+  details { position: fixed; right: 16px; top: 16px; width: 316px; max-height: calc(100vh - 32px); overflow: auto; padding: 12px 16px 14px; }
+  summary { font-size: 17px; font-weight: 650; cursor: pointer; }
+  details[open] summary { margin-bottom: 10px; }
+  .body { display: flex; flex-direction: column; gap: 11px; }
+  .presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  button { font: inherit; font-weight: 600; color: var(--text); cursor: pointer; border: 1px solid var(--edge);
+    border-radius: 10px; padding: 7px 8px; background: rgba(255,255,255,0.06); }
+  button:hover { background: rgba(255,255,255,0.12); }
+  .presets button { font-size: 14px; }
+  .presets button.on { background: linear-gradient(135deg, rgba(255,211,107,0.3), rgba(63,214,176,0.45)); border-color: rgba(63,214,176,0.7); }
+  .presets button small { display: block; font-weight: 400; font-size: 11px; color: var(--mute); font-variant-numeric: tabular-nums; }
+  .row { display: grid; grid-template-columns: 78px 1fr 58px; gap: 10px; align-items: center; font-size: 14px; color: var(--mute); }
+  .row output { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .maps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .maps button { height: 26px; padding: 0; border-radius: 8px; border: 2px solid transparent; }
+  .maps button.on { border-color: #fff; box-shadow: 0 0 12px rgba(255,255,255,0.4); }
+  .actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  #run.paused { background: rgba(255,211,107,0.25); border-color: rgba(255,211,107,0.6); }
+  @media (max-width: 700px) {
+    header { top: 10px; left: 10px; right: 10px; max-width: none; padding: 10px 14px; }
+    h1 { font-size: 18px; }
+    details { top: auto; bottom: 10px; left: 10px; right: 10px; width: auto; max-height: 55vh; padding: 10px 12px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="brush"></div>
+
+<header class="glass">
+  <h1><span>Pattern Lab</span></h1>
+  <div id="stats">&nbsp;</div>
+</header>
+
+<details id="card" class="glass" open>
+  <summary>Gray-Scott</summary>
+  <div class="body">
+    <div class="presets" id="presets"></div>
+    <div class="row"><label for="f">feed, F</label><input id="f" type="range" min="0.005" max="0.1" step="0.0001" value="0.0367"><output id="fV"></output></div>
+    <div class="row"><label for="k">kill, k</label><input id="k" type="range" min="0.04" max="0.075" step="0.0001" value="0.0649"><output id="kV"></output></div>
+    <div class="row"><label for="du">diffuse u</label><input id="du" type="range" min="0.05" max="0.25" step="0.0001" value="0.2097"><output id="duV"></output></div>
+    <div class="row"><label for="dv">diffuse v</label><input id="dv" type="range" min="0.02" max="0.25" step="0.0001" value="0.105"><output id="dvV"></output></div>
+    <div class="row"><label for="steps">steps/frame</label><input id="steps" type="range" min="1" max="120" step="1" value="24"><output id="stepsV"></output></div>
+    <div class="row"><label for="r">brush</label><input id="r" type="range" min="1" max="24" step="1" value="5"><output id="rV"></output></div>
+    <div class="maps" id="maps"></div>
+    <div class="actions"><button id="run">Pause</button><button id="reseed">Reseed</button><button id="clear">Clear</button></div>
+  </div>
+</details>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const view = $("view"), vctx = view.getContext("2d");
+  const off = document.createElement("canvas"), octx = off.getContext("2d");
+
+  // One grid per tab, kept across reloads; the server holds it under this id.
+  const id = sessionStorage.getItem("pattern-lab-id") ||
+    (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
+  sessionStorage.setItem("pattern-lab-id", id);
+
+  // Colour maps over the catalyst v, dark where the dish is empty.
+  const MAPS = {
+    lagoon: ["#03060a", "#06263f", "#0f6f8a", "#3fd6b0", "#d9fff1"],
+    ember:  ["#050307", "#3b0b2e", "#b3262d", "#ff9a3c", "#fff2c4"],
+    orchid: ["#05040c", "#2a1457", "#7b5cff", "#ff5fb7", "#ffe9f5"],
+    moss:   ["#020604", "#0f3b1f", "#3fae5a", "#d9f27a", "#fffde8"],
+    bone:   ["#08080a", "#3a3632", "#8d8478", "#d8d0c2", "#fbf8f2"],
+  };
+  const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  function lut(stops) {
+    const out = new Uint32Array(256), c = stops.map(hex);
+    for (let i = 0; i < 256; i++) {
+      const t = i / 255 * (c.length - 1), j = Math.min(c.length - 2, Math.floor(t)), a = t - j;
+      const [r, g, b] = [0, 1, 2].map(n => Math.round(c[j][n] + (c[j + 1][n] - c[j][n]) * a));
+      out[i] = (255 << 24) | (b << 16) | (g << 8) | r;     // little-endian RGBA as one word
+    }
+    return out;
+  }
+  let map = "lagoon", LUT = lut(MAPS[map]);
+  $("maps").innerHTML = Object.keys(MAPS).map(n =>
+    `<button data-m="${n}" title="${n}" style="background:linear-gradient(90deg,${MAPS[n].join(",")})"></button>`).join("");
+  const markMap = () => document.querySelectorAll("#maps button").forEach(b => b.classList.toggle("on", b.dataset.m === map));
+  document.querySelectorAll("#maps button").forEach(b => b.onclick = () => { map = b.dataset.m; LUT = lut(MAPS[map]); markMap(); paint(); });
+  markMap();
+
+  const SL = { f: 4, k: 4, du: 4, dv: 3, steps: 0, r: 0 };
+  const val = n => +$(n).value;
+  const syncOut = () => Object.entries(SL).forEach(([n, d]) => $(n + "V").textContent = val(n).toFixed(d));
+  Object.keys(SL).forEach(n => $(n).addEventListener("input", () => { syncOut(); markPreset(); }));
+  syncOut();
+
+  let presets = [];
+  function markPreset() {
+    document.querySelectorAll("#presets button").forEach((b, i) =>
+      b.classList.toggle("on", Math.abs(presets[i].f - val("f")) < 5e-5 && Math.abs(presets[i].k - val("k")) < 5e-5));
+  }
+
+  // What the next frame request carries besides the parameters.
+  let reset = null, drops = [], running = true, seed = 1;
+  const reseed = pattern => { reset = pattern; seed = Math.floor(Math.random() * 1e9); };
+
+  fetch("api/info").then(r => r.json()).then(info => {
+    presets = info.presets;
+    if (info.max_cells !== maxCells) { maxCells = info.max_cells; size(); }
+    $("presets").innerHTML = presets.map((p, i) =>
+      `<button data-i="${i}">${p.name}<small>${p.f.toFixed(4)} · ${p.k.toFixed(4)}</small></button>`).join("");
+    document.querySelectorAll("#presets button").forEach(b => b.onclick = () => {
+      const p = presets[+b.dataset.i];
+      $("f").value = p.f; $("k").value = p.k; $("du").value = info.du; $("dv").value = info.dv;
+      syncOut(); markPreset(); reseed("scatter");
+    });
+    markPreset();
+  }).catch(() => {});
+
+  $("run").onclick = () => { running = !running; $("run").textContent = running ? "Pause" : "Run"; $("run").classList.toggle("paused", !running); };
+  $("reseed").onclick = () => reseed("scatter");
+  $("clear").onclick = () => reseed("blank");
+  addEventListener("keydown", e => { if (e.code === "Space" && e.target === document.body) { e.preventDefault(); $("run").click(); } });
+
+  // The grid: one cell per three CSS pixels, held under the server's cap.
+  let W = 0, H = 0, gw = 0, gh = 0, maxCells = 300000, img = null, last = null;
+  function size() {
+    W = innerWidth; H = innerHeight;
+    let c = 3;
+    while (Math.round(W / c) * Math.round(H / c) > maxCells) c += 0.5;
+    gw = Math.max(16, Math.round(W / c)); gh = Math.max(16, Math.round(H / c));
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    view.width = Math.round(W * dpr); view.height = Math.round(H * dpr);
+    off.width = gw; off.height = gh; img = octx.createImageData(gw, gh);
+    paint();
+  }
+  function paint() {
+    if (!last || last.length !== gw * gh) return;
+    const px = new Uint32Array(img.data.buffer);
+    for (let i = 0; i < last.length; i++) px[i] = LUT[last[i]];
+    octx.putImageData(img, 0, 0);
+    vctx.imageSmoothingEnabled = true; vctx.imageSmoothingQuality = "high";
+    vctx.drawImage(off, 0, 0, view.width, view.height);
+  }
+
+  // Click or drag to drop catalyst. Points along a drag are filled in at half
+  // a brush apart, so a fast stroke draws a line instead of a dotted trail.
+  let painting = false, prev = null;
+  const frac = e => [e.clientX / W, e.clientY / H];
+  function addDrop(p) {
+    if (prev) {
+      const gap = Math.hypot((p[0] - prev[0]) * gw, (p[1] - prev[1]) * gh), n = Math.min(40, Math.floor(gap / Math.max(1, val("r") / 2)));
+      for (let i = 1; i <= n; i++) drops.push([prev[0] + (p[0] - prev[0]) * i / (n + 1), prev[1] + (p[1] - prev[1]) * i / (n + 1)]);
+    }
+    drops.push(p); prev = p;
+  }
+  function moveBrush(e) {
+    const b = $("brush"), d = 2 * val("r") * W / gw;
+    b.style.display = "block"; b.style.left = e.clientX + "px"; b.style.top = e.clientY + "px";
+    b.style.width = b.style.height = d + "px";
+  }
+  view.addEventListener("pointerdown", e => { view.setPointerCapture(e.pointerId); painting = true; prev = null; addDrop(frac(e)); moveBrush(e); });
+  view.addEventListener("pointermove", e => { moveBrush(e); if (painting) addDrop(frac(e)); });
+  view.addEventListener("pointerup", () => { painting = false; prev = null; });
+  view.addEventListener("pointerleave", () => $("brush").style.display = "none");
+  view.addEventListener("contextmenu", e => e.preventDefault());
+
+  // One frame in flight at a time: ask for the next once this one is drawn.
+  let fps = 0, tPrev = performance.now();
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function loop() {
+    for (;;) {
+      if (!running && !drops.length && !reset) { await sleep(80); continue; }
+      const body = { id, w: gw, h: gh, f: val("f"), k: val("k"), du: val("du"), dv: val("dv"),
+                     steps: running ? val("steps") : 0, r: val("r") };
+      if (reset) { body.reset = reset; body.seed = seed; reset = null; }
+      if (drops.length) { body.drops = drops.splice(0, 256); }
+      try {
+        const r = await fetch("api/frame", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+        const buf = new Uint8Array(await r.arrayBuffer());
+        if (buf.length === gw * gh) { last = buf; paint(); }
+        const now = performance.now(), dt = now - tPrev; tPrev = now;
+        if (running) fps = fps ? 0.9 * fps + 0.1 * (1000 / dt) : 1000 / dt;
+        const ms = +r.headers.get("X-Step-Ms"), sps = running ? Math.round(fps * body.steps) : 0;
+        $("stats").innerHTML = `<b>${gw}×${gh}</b> cells · <b>${ms.toFixed(2)} ms</b> a step on <b>${r.headers.get("X-Threads")}</b> threads · ` +
+          `${sps.toLocaleString()} steps/s · t = ${(+r.headers.get("X-Steps")).toLocaleString()}`;
+      } catch (e) {
+        $("stats").textContent = e.message; await sleep(1000);
+      }
+      await new Promise(requestAnimationFrame);
+    }
+  }
+
+  let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(size, 150); });
+  if (innerWidth < 700) $("card").open = false;
+  size();
+  loop();
+})();
+</script>
+</body>
+</html>

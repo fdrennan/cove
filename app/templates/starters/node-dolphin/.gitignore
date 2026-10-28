@@ -1,0 +1,4 @@
+# The server-side score board: runtime state written by server.js, not source.
+data/
+# up.sh's pid and log.
+.run/

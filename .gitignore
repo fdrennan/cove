@@ -1,0 +1,33 @@
+# .gitignore for cove.ndexr.io
+
+# ── OS / editor cruft ──
+.DS_Store
+Thumbs.db
+*~
+*.swp
+
+# ── R session artifacts ──
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata
+
+# ── Local secrets / env ──
+.env
+.env.local
+
+# ── Backups / scratch ──
+*.bak
+*.tmp
+*.log
+
+# ── Vendored RStudio source (reference only; sparse checkout @ v2024.12.0+467) ──
+.rstudio-src/
+
+# ── Rust app build output (copied from dmg.ndexr.io) ──
+app/target/
+app/dist/
+images/dist/
+
+# ── Headless Chrome profiles left by screenshot runs (2026-10-26) ──
+app/ud-*/
