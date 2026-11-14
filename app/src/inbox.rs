@@ -70,6 +70,9 @@ enum Show {
 pub struct Inbox {
     pub open: bool,
     tab: Tab,
+    /// On a phone the list and what is picked in it are one pane at a time:
+    /// whether the picked request or conversation is the one showing.
+    phone_detail: bool,
     view: Slot<Result<InboxView, String>>,
     asked: f64,
     in_flight: Arc<Mutex<bool>>,
@@ -274,13 +277,20 @@ impl Inbox {
         }
         let view = self.view.lock().unwrap().clone();
         let mut open = true;
-        let w = (ctx.content_rect().width() - 40.0).min(860.0);
-        let h = (ctx.content_rect().height() - 90.0).min(600.0);
+        let screen = ctx.content_rect();
+        // A phone: the screen, under the top bar, and not a window to drag -
+        // capped at 600 it ended a third of the way up and an open request's
+        // reply box drew past its edge (operator, 2026-11-01).
+        let phone = screen.width() < 600.0;
+        let w = (screen.width() - if phone { 12.0 } else { 40.0 }).min(860.0);
+        let h = if phone { screen.height() - 76.0 } else { (screen.height() - 90.0).min(600.0) };
         // In front of the windows, always: Builds' charts paint on the
         // foreground layer and had covered it (operator, 2026-10-18).
         let id = egui::Id::new("messages-window");
         ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, id));
-        egui::Window::new("Messages").id(id).order(egui::Order::Foreground).open(&mut open).collapsible(false).resizable(true).default_size([w, h]).show(ctx, |ui| {
+        let mut window = egui::Window::new("Messages").id(id).order(egui::Order::Foreground).open(&mut open).collapsible(false);
+        window = if phone { window.resizable(false).fixed_size([w, h]).anchor(egui::Align2::CENTER_TOP, [0.0, 40.0]) } else { window.resizable(true).default_size([w, h]) };
+        window.show(ctx, |ui| {
             let Some(view) = view else {
                 ui.spinner();
                 return;
@@ -321,7 +331,20 @@ impl Inbox {
     }
 
     fn requests(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, v: &InboxView) {
-        ui.horizontal(|ui| {
+        // A phone (operator, 2026-11-01, screenshots: the hint drawn over
+        // "done" and "all", the list squeezed into half the width): one pane.
+        let narrow = ui.available_width() < 600.0;
+        if narrow && self.phone_detail {
+            if let Some(r) = self.picked.and_then(|id| v.requests.iter().find(|r| r.id == id)).cloned() {
+                if back(ui, "← requests") {
+                    self.phone_detail = false;
+                }
+                self.request(ui, ctx, backend, v, &r);
+                return;
+            }
+            self.phone_detail = false;
+        }
+        ui.horizontal_wrapped(|ui| {
             if v.admin {
                 let before = self.mine_only;
                 ui.selectable_value(&mut self.mine_only, false, "everyone's");
@@ -335,9 +358,11 @@ impl Inbox {
             ui.selectable_value(&mut self.show, Show::Active, "open");
             ui.selectable_value(&mut self.show, Show::Done, "done");
             ui.selectable_value(&mut self.show, Show::Every, "all");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new("new requests: ? Help in the toolbar").size(11.0).color(theme::hush()));
-            });
+            if !narrow {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new("new requests: ? Help in the toolbar").size(11.0).color(theme::hush()));
+                });
+            }
         });
         let list: Vec<&RequestView> = v
             .requests
@@ -348,12 +373,32 @@ impl Inbox {
                 Show::Every => true,
             })
             .collect();
-        if self.picked.is_none() {
+        if self.picked.is_none() && !narrow {
             self.picked = list.first().map(|r| r.id);
         }
         let h = ui.available_height();
+        if narrow {
+            if self.request_list(ui, v, &list, h) {
+                self.phone_detail = true;
+            }
+            return;
+        }
         ui.columns(2, |c| {
-            egui::ScrollArea::vertical().id_salt("inbox-reqs").max_height(h).auto_shrink([false, false]).show(&mut c[0], |ui| {
+            self.request_list(&mut c[0], v, &list, h);
+            let picked = self.picked.and_then(|id| v.requests.iter().find(|r| r.id == id)).cloned();
+            match picked {
+                Some(r) => self.request(&mut c[1], ctx, backend, v, &r),
+                None => {
+                    c[1].label(RichText::new("Pick a request.").color(theme::muted()));
+                }
+            }
+        });
+    }
+
+    /// The requests the filters leave, newest first; whether one was picked.
+    fn request_list(&mut self, ui: &mut egui::Ui, v: &InboxView, list: &[&RequestView], h: f32) -> bool {
+        let mut chose = false;
+            egui::ScrollArea::vertical().id_salt("inbox-reqs").max_height(h).auto_shrink([false, false]).show(ui, |ui| {
                 // "Nothing here" with every request resolved read as "no one
                 // has asked you anything" (operator, 2026-10-18, request #32):
                 // say what the other filters hold, and offer them.
@@ -377,7 +422,7 @@ impl Inbox {
                         self.picked = None;
                     }
                 }
-                for r in &list {
+                for r in list {
                     let on = self.picked == Some(r.id);
                     let resp = egui::Frame::new()
                         .fill(if on { theme::surface_hi() } else { Color32::TRANSPARENT })
@@ -403,23 +448,19 @@ impl Inbox {
                         })
                         .response
                         .interact(egui::Sense::click());
-                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && self.picked != Some(r.id) {
-                        self.picked = Some(r.id);
-                        self.draft.clear();
+                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        chose = true;
+                        if self.picked != Some(r.id) {
+                            self.picked = Some(r.id);
+                            self.draft.clear();
+                        }
                     }
                 }
             });
-            let picked = self.picked.and_then(|id| v.requests.iter().find(|r| r.id == id)).cloned();
-            match picked {
-                Some(r) => self.request(&mut c[1], ctx, backend, v, &r, h),
-                None => {
-                    c[1].label(RichText::new("Pick a request.").color(theme::muted()));
-                }
-            }
-        });
+        chose
     }
 
-    fn request(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, v: &InboxView, r: &RequestView, h: f32) {
+    fn request(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, v: &InboxView, r: &RequestView) {
         // Read: the sender's unread answers stop being new.
         if r.mine && r.unread && self.seen.insert((r.id, r.messages.len())) {
             self.act(backend, ctx, InboxAct::Seen { id: r.id });
@@ -506,7 +547,9 @@ impl Inbox {
         }
         ui.separator();
         let composer_h = 92.0;
-        egui::ScrollArea::vertical().id_salt(("inbox-thread", r.id)).max_height((h - 120.0 - composer_h).max(80.0)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+        // The thread takes what the actions above left: they wrap to more
+        // rows on a phone than a fixed allowance for them assumed.
+        egui::ScrollArea::vertical().id_salt(("inbox-thread", r.id)).max_height((ui.available_height() - composer_h - 12.0).max(80.0)).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
             bubble(ui, if r.mine { "you" } else { &r.username }, &r.created, &r.what, r.mine, false);
             if !r.trying.trim().is_empty() {
                 ui.label(RichText::new(format!("trying to: {}", r.trying)).size(11.5).color(theme::muted()));
@@ -556,6 +599,18 @@ impl Inbox {
     /// Chat: conversations on the left, the thread on the right.
     fn chat(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, v: &InboxView) {
         let w = ui.available_width();
+        // A phone: the conversations, or the one open, the whole width.
+        if w < 600.0 {
+            if self.phone_detail && !self.chat_with.trim().is_empty() {
+                if back(ui, "← conversations") {
+                    self.phone_detail = false;
+                }
+                self.thread(ui, ctx, backend, v);
+            } else {
+                self.phone_detail = self.conversations(ui, ctx, backend, v);
+            }
+            return;
+        }
         egui::Panel::left("chat-list")
             .resizable(true)
             .show_separator_line(true)
@@ -568,12 +623,12 @@ impl Inbox {
 
     /// The list: what waits on me (asks to connect, group places, domains
     /// offered - one click each), the team, my groups, then people.
-    fn conversations(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, v: &InboxView) {
-        if let Some(level) = findable_switch(ui, v) {
-            self.act(backend, ctx, InboxAct::Findable { level });
-        }
+    /// Whether one was opened.
+    fn conversations(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, v: &InboxView) -> bool {
+        // Everyone on ndexr is findable by everyone (operator, 2026-11-02), so
+        // there is no "who can find you" switch: the search is the whole list.
         ui.add_space(4.0);
-        let r = ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("⚲ find someone, or type a username…").desired_width(f32::INFINITY));
+        let r = ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("⚲ find anyone on ndexr by name…").desired_width(f32::INFINITY));
         if r.changed() {
             self.asked = f64::NEG_INFINITY;
         }
@@ -591,15 +646,8 @@ impl Inbox {
                     }
                     connect_button(ui, connected(&p.username), &p.username, &mut acts);
                 }
-                // Private people are never listed, but anyone may ask one to
-                // connect by their exact username - they choose whether to accept.
-                if !v.found.iter().any(|p| p.username.eq_ignore_ascii_case(&find)) && connected(&find).is_none() && !find.eq_ignore_ascii_case(&v.me) {
-                    if v.found.is_empty() {
-                        ui.label(RichText::new("No public person by that name.").size(11.5).color(theme::muted()));
-                    }
-                    if ui.button(format!("☍ Ask {find} to connect")).on_hover_text("sent to the account with exactly this username; they accept or decline").clicked() {
-                        acts.push(InboxAct::Connect { to: find.clone() });
-                    }
+                if v.found.is_empty() {
+                    ui.label(RichText::new("No one on ndexr by that name.").size(12.5).color(theme::text()));
                 }
                 return;
             }
@@ -695,6 +743,7 @@ impl Inbox {
                 }
             });
         });
+        let opened = open.is_some();
         if let Some(c) = open {
             self.chat_with = c;
             self.reply_to = None;
@@ -704,6 +753,7 @@ impl Inbox {
         for a in acts {
             self.act(backend, ctx, a);
         }
+        opened
     }
 
     /// One conversation, Discord-like (a person's request, 2026-10-18:
@@ -717,7 +767,7 @@ impl Inbox {
         if self.chat_with.trim().is_empty() {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.label(RichText::new("Pick a conversation, or find someone public.").color(theme::muted()));
+                ui.label(RichText::new("Pick a conversation, or find anyone on ndexr.").color(theme::muted()));
                 ui.label(RichText::new("Send messages, files, and the sites you're building.").size(11.5).color(theme::hush()));
             });
             return;
@@ -898,12 +948,15 @@ impl Inbox {
                         let name = if s.mine { "you" } else { s.owner.as_str() };
                         card(ui, name, &s.at, s.mine, |ui| {
                             ui.label(RichText::new(format!("⛓ {}", s.domain)).strong().color(theme::text_strong()));
+                            let can = crate::access::role_words(&s.role);
+                            let open = can.trim_start_matches("can ");
                             let words = match (s.mine, s.status.as_str(), s.group > 0) {
-                                (true, _, true) => format!("shared with {} - everyone in it can open it", s.to),
+                                (true, _, true) => format!("shared with {} - everyone in it {can}", s.to),
                                 (true, "offered", _) => format!("shared with {} - waiting for them to accept", s.to),
                                 (true, "declined", _) => format!("{} turned it down", s.to),
-                                (true, _, _) => format!("shared with {} - they can open it", s.to),
-                                (false, "offered", _) => "shared with you - accept to open it".to_owned(),
+                                (true, _, _) => format!("shared with {} - they {can}", s.to),
+                                (false, "offered", _) => format!("shared with you - accept to {open}"),
+                                (false, _, _) if s.role != "use" => format!("shared with you - you {can}, and it is among your projects"),
                                 _ => "shared with you".to_owned(),
                             };
                             ui.label(RichText::new(words).size(10.5).color(theme::muted()));
@@ -1062,7 +1115,7 @@ impl Inbox {
                     .response
                     .on_hover_text("people you are connected with; they accept to join");
                     if let Some(d) = share_menu(ui, &self.domains, &format!("everyone in {} can open it", g.name)) {
-                        acts.push(InboxAct::Share { domain: d, to: String::new(), group: g.id });
+                        acts.push(InboxAct::Share { domain: d, to: String::new(), group: g.id, role: String::new() });
                     }
                     if ui.small_button("Leave").clicked() {
                         acts.push(InboxAct::GroupLeave { id: g.id });
@@ -1073,7 +1126,7 @@ impl Inbox {
                     connect_button(ui, c, who, &mut acts);
                     if c.is_some_and(|c| c.status == "accepted") || v.admin {
                         if let Some(d) = share_menu(ui, &self.domains, &format!("{who} accepts, then can open it")) {
-                            acts.push(InboxAct::Share { domain: d, to: who.to_owned(), group: 0 });
+                            acts.push(InboxAct::Share { domain: d, to: who.to_owned(), group: 0, role: String::new() });
                         }
                     }
                 }
@@ -1104,7 +1157,7 @@ impl Inbox {
         let what = std::mem::take(&mut self.chat_draft);
         let (backend, slot, ctx, here) = (backend.clone(), self.sent.clone(), ctx.clone(), self.here.clone());
         let pick = async move {
-            let Some(f) = rfd::AsyncFileDialog::new().set_title("Attach to a request").pick_file().await else { return };
+            let Some(f) = crate::pick::files("Attach to a request", false).await.and_then(|v| v.into_iter().next()) else { return };
             let name = f.file_name();
             let bytes = f.read().await;
             if bytes.len() > crate::api::REQUEST_FILES_MAX {
@@ -1131,7 +1184,7 @@ impl Inbox {
     fn send_file(&self, backend: &Backend, ctx: &egui::Context, to: String) {
         let (backend, slot, ctx) = (backend.clone(), self.sent.clone(), ctx.clone());
         let pick = async move {
-            let Some(f) = rfd::AsyncFileDialog::new().set_title("Send in Chat").pick_file().await else { return };
+            let Some(f) = crate::pick::files("Send in Chat", false).await.and_then(|v| v.into_iter().next()) else { return };
             let name = f.file_name();
             let bytes = f.read().await;
             if bytes.len() > crate::api::DM_FILE_MAX {
@@ -1331,29 +1384,9 @@ mod tests {
     }
 }
 
-/// Who can find me, see I am here and write to me first (user_presence
-/// findable): Nobody · My organization · Everyone, and one line on what the
-/// choice means. Some(level) when another was clicked. Messages and
-/// Project › Access draw the same switch.
-pub fn findable_switch(ui: &mut egui::Ui, v: &InboxView) -> Option<String> {
-    let now = if v.findable.is_empty() { if v.public { "public" } else { "private" } } else { v.findable.as_str() };
-    let org_tip = if v.has_org {
-        "people whose email has the same domain as yours - your organization".to_owned()
-    } else {
-        "your email's domain is shared by strangers (gmail.com and the like), so it is not an organization".to_owned()
-    };
-    let items = [
-        ("Nobody".to_owned(), "only people you connect with, or write to first, can write to you".to_owned(), now == "private", true),
-        ("My organization".to_owned(), org_tip, now == "org", v.has_org),
-        ("Everyone".to_owned(), "anyone on ndexr can find you, see you are here and write to you".to_owned(), now == "public", true),
-    ];
-    ui.label(RichText::new("Who can find you").size(13.0).strong().color(theme::text_strong()));
-    let pick = crate::agent::segmented(ui, false, &items).map(|i| ["private", "org", "public"][i].to_owned()).filter(|l| l != now);
-    let words = match now {
-        "public" => "Anyone on ndexr can find you and write to you.",
-        "org" => "People at your organization can find you and write to you.",
-        _ => "Only people you connect with, or write to first, can write to you.",
-    };
-    ui.label(RichText::new(words).size(12.5).color(theme::text()));
-    pick
+/// A phone's way back from a picked request or conversation to its list.
+fn back(ui: &mut egui::Ui, word: &str) -> bool {
+    let b = ui.add(egui::Button::new(RichText::new(word).size(14.0)).min_size(egui::vec2(0.0, 34.0))).clicked();
+    ui.add_space(2.0);
+    b
 }

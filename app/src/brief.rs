@@ -96,6 +96,163 @@ pub fn brief(minutes: u32, fresh: bool) -> RecapBrief {
     view
 }
 
+/// Most of a reply that is read for its spoken line: the end is where an
+/// agent says what it did and what it needs.
+const SPOKEN_REPLY_MAX: usize = 6000;
+const SPOKEN_INSTRUCTIONS: &str = "You are a colleague answering across the desk. Voice: warm, natural and conversational, \
+at an easy pace. Say it once, plainly; never spell out punctuation or markup.";
+
+/// An agent's finished reply, as one or two sentences said aloud - or
+/// nothing. Speak is for a conversation, not a reading of the chat: it talks
+/// only when the person asked a question it can answer, or when the agent
+/// needs something from them (operator, 2026-11-05: "it shouldn't turn into a
+/// meeting where everyone's interrupting each other ... it only speaks when you
+/// ask or if it really needs something from you"). The full reply stays in
+/// the chat.
+pub fn spoken(asked: &str, reply: &str) -> Result<crate::api::Spoken, String> {
+    let key = crate::host::openai_key().ok_or("no OpenAI key on this server (OPENAI_API_KEY)")?;
+    let reply = prose(reply);
+    if reply.trim().is_empty() {
+        return Ok(Default::default());
+    }
+    let tail: String = {
+        let n = reply.chars().count();
+        reply.chars().skip(n.saturating_sub(SPOKEN_REPLY_MAX)).collect()
+    };
+    let system = "A person is working with a coding agent by voice. You decide whether the agent's finished reply \
+        should be said aloud, and if so you write what is said. Speak ONLY when (a) the person's message asked a \
+        question the reply answers, or (b) the reply needs something from the person: a question, a choice, a \
+        confirmation, or it is blocked. Otherwise stay silent - finished work, progress, summaries and lists stay in \
+        the chat. When you speak: one or two short sentences, at most 40 words, said to the person as you. Give the \
+        answer, or the one thing needed from them. No code, file names, paths, commands, URLs, markdown or numbers \
+        nobody needs; say what a thing is, not what it is called on disk. No filler, no greeting, no sign-off. \
+        Answer as JSON: {\"speak\": true|false, \"line\": \"...\"}.";
+    let user = format!("The person said:\n{}\n\nThe agent replied (its end, if long):\n{tail}", clip(asked, 2000));
+    let body = serde_json::json!({
+        "model": "gpt-4.1-mini",
+        "temperature": 0.3,
+        "max_tokens": 200,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+    });
+    let v = openai_json("chat/completions", &key, &body, 60)?;
+    let out: Value = serde_json::from_str(v["choices"][0]["message"]["content"].as_str().unwrap_or("{}")).unwrap_or_default();
+    let line = out["line"].as_str().unwrap_or("").trim().to_owned();
+    if !out["speak"].as_bool().unwrap_or(false) || line.is_empty() {
+        return Ok(Default::default());
+    }
+    let tts = serde_json::json!({
+        "model": TTS_MODEL, "voice": "alloy", "input": line, "instructions": SPOKEN_INSTRUCTIONS, "response_format": "mp3",
+    });
+    let r = openai("audio/speech", &key, &tts, 60)?;
+    if !r.ok {
+        return Err(format!("OpenAI voice: {}", r.status_text));
+    }
+    Ok(crate::api::Spoken { line, audio: crate::api::b64_encode(&r.bytes) })
+}
+
+/// Listen under an agent's reply: all of it, read aloud as written (operator,
+/// 2026-11-13: "for the responses that we get, we need to be able to push a
+/// button within that response ... convert into audio so that we can listen to
+/// it"). The words only - no code blocks, markdown marks or addresses - in
+/// pieces under the speech model's 4,096-character input, one mp3. Spoken
+/// replies (Speak) stay `spoken`'s: a line, and only when it is wanted.
+pub fn read_aloud(text: &str) -> Result<crate::api::Spoken, String> {
+    let key = crate::host::openai_key().ok_or("no OpenAI key on this server (OPENAI_API_KEY)")?;
+    let words = aloud(text);
+    if words.trim().is_empty() {
+        return Err("this reply has nothing to read - it is all code".into());
+    }
+    let mut mp3 = Vec::new();
+    for piece in pieces(&words, READ_PIECE).into_iter().take(READ_PIECES) {
+        let tts = serde_json::json!({
+            "model": TTS_MODEL, "voice": "alloy", "input": piece, "instructions": SPOKEN_INSTRUCTIONS, "response_format": "mp3",
+        });
+        let r = openai("audio/speech", &key, &tts, 120)?;
+        if !r.ok {
+            let v: Value = serde_json::from_slice(&r.bytes).unwrap_or_default();
+            return Err(format!("OpenAI voice: {}", v["error"]["message"].as_str().unwrap_or(&r.status_text)));
+        }
+        // mp3 frames stand alone: pieces played end to end are one reading.
+        mp3.extend_from_slice(&r.bytes);
+    }
+    Ok(crate::api::Spoken { line: words, audio: crate::api::b64_encode(&mp3) })
+}
+
+/// Characters per spoken piece (the model takes 4,096), and how many pieces
+/// at most: about 28,000 characters, a long reply read whole.
+const READ_PIECE: usize = 3500;
+const READ_PIECES: usize = 8;
+
+/// A reply as words to say: code blocks out, inline code and emphasis marks
+/// off, a link's words kept and its address dropped, headings and bullets as
+/// plain lines.
+fn aloud(t: &str) -> String {
+    let mut out = String::new();
+    for l in prose(t).lines() {
+        let l = l.trim();
+        if l.is_empty() || l.chars().all(|c| matches!(c, '-' | '|' | ':' | ' ' | '*' | '_' | '=')) {
+            out.push('\n');
+            continue;
+        }
+        // A table row: its cells, one after another.
+        if l.starts_with('|') && l.ends_with('|') {
+            let cells: Vec<&str> = l.trim_matches('|').split('|').map(str::trim).filter(|c| !c.is_empty()).collect();
+            out.push_str(&cells.join(", ").replace(['`', '*'], ""));
+            out.push('\n');
+            continue;
+        }
+        let l = l.trim_start_matches(['#', '>']).trim_start();
+        let l = l.strip_prefix("- ").or_else(|| l.strip_prefix("* ")).unwrap_or(l);
+        // [words](address) -> words; a bare address -> "a link".
+        let mut s = String::new();
+        let mut rest = l;
+        while let Some(i) = rest.find('[') {
+            let (before, after) = rest.split_at(i);
+            match after.find("](").and_then(|j| after[j..].find(')').map(|k| (j, j + k))) {
+                Some((j, k)) => {
+                    s.push_str(before);
+                    s.push_str(&after[1..j]);
+                    rest = &after[k + 1..];
+                }
+                None => {
+                    s.push_str(before);
+                    s.push('[');
+                    rest = &after[1..];
+                }
+            }
+        }
+        s.push_str(rest);
+        let s: Vec<String> = s.split(' ').map(|w| if w.starts_with("http://") || w.starts_with("https://") { "a link".to_owned() } else { w.to_owned() }).collect();
+        let s = s.join(" ").replace(['`', '*'], "").replace("__", "");
+        out.push_str(s.trim());
+        out.push('\n');
+    }
+    // One pause between paragraphs, however many blank lines made them.
+    let mut tidy = out.trim().to_owned();
+    while tidy.contains("\n\n\n") {
+        tidy = tidy.replace("\n\n\n", "\n\n");
+    }
+    tidy
+}
+
+/// `t` in pieces of at most `n` characters, cut at a paragraph, else a
+/// sentence, else a space.
+fn pieces(t: &str, n: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = t.trim();
+    while rest.chars().count() > n {
+        let head: String = rest.chars().take(n).collect();
+        let cut = head.rfind("\n\n").or_else(|| head.rfind(". ").map(|i| i + 1)).or_else(|| head.rfind(' ')).filter(|&i| i > 0).unwrap_or(head.len());
+        out.push(rest[..cut].trim().to_owned());
+        rest = rest[cut..].trim_start();
+    }
+    if !rest.is_empty() {
+        out.push(rest.to_owned());
+    }
+    out
+}
+
 fn now() -> i64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
@@ -387,6 +544,18 @@ const REQUESTS: &str = "select coalesce(json_agg(x order by x.at desc), '[]') fr
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_reply_is_read_as_words() {
+        let r = "## What changed\n\n**Listen** is under every reply - see [the release](https://cove.ndexr.io/x).\n\n```bash\nrm -rf /\n```\n\n- one `thing`\n- see https://example.com now\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+        let a = super::aloud(r);
+        assert_eq!(a, "What changed\n\nListen is under every reply - see the release.\n\none thing\nsee a link now\n\na, b\n\n1, 2");
+        assert!(!a.contains("rm -rf") && !a.contains("http"));
+        let long = "Sentence one is here. ".repeat(400);
+        let p = super::pieces(&long, 3500);
+        assert!(p.len() >= 3 && p.iter().all(|x| x.chars().count() <= 3500 && x.ends_with('.')), "{:?}", p.iter().map(|x| x.len()).collect::<Vec<_>>());
+        assert_eq!(p.join(" ").split_whitespace().count(), long.split_whitespace().count());
+    }
+
     #[test]
     fn chunks_stay_under_the_voice_limit_and_keep_sentences_whole() {
         let para = "One sentence here. ".repeat(30);

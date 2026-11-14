@@ -56,12 +56,14 @@ pub mod pty {
 [ -r /etc/bash.bashrc ] && . /etc/bash.bashrc
 [ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"
 # Prepended in turn, so the person's own ~/.local/bin wins, then the host's
-# /opt/ndexr/bin, then Cove's shared copies (claude, run.sh publish_claude).
-for d in /usr/local/lib/cove/bin /opt/ndexr/bin "$HOME/.local/bin"; do
+# /opt/ndexr/bin. claude itself is /usr/local/bin/claude, a link into CernVM-FS;
+# Cove's shared copy goes last, for when the stack is not mounted.
+for d in /opt/ndexr/bin "$HOME/.local/bin"; do
   case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
 done
-# The shared claude cannot update itself (root-owned); Cove's build refreshes it.
-[ "$(command -v claude 2>/dev/null)" = /usr/local/lib/cove/bin/claude ] && export DISABLE_AUTOUPDATER=1
+case ":$PATH:" in *:/usr/local/lib/cove/bin:*) ;; *) PATH="$PATH:/usr/local/lib/cove/bin" ;; esac
+# A shared claude cannot update itself (read-only); publishing refreshes it.
+case "$(command -v claude 2>/dev/null)" in "$HOME"/*) ;; *) export DISABLE_AUTOUPDATER=1 ;; esac
 if [ -n "${COVE_USE_SH:-}" ] && [ -r "$COVE_USE_SH" ]; then
   set +u
   . "$COVE_USE_SH" >/dev/null 2>&1 || echo "could not enter the ndexr stack through $COVE_USE_SH"

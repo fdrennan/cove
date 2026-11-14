@@ -36,6 +36,22 @@ pub enum Query {
     /// environment's commands (operator, 2026-10-15: "each language needs its
     /// autocomplete running"). Only while the kernel is idle.
     Complete { lang: Lang, line: String, cursor: usize },
+    /// The editor's completion (ide.rs `editor_complete`): `lang` is the
+    /// code's language at the cursor - "r", "python", "julia" and "shell"
+    /// complete in their session, from what it has loaded (argument names
+    /// inside a call included); "rust" asks rust-analyzer about the crate the
+    /// file is in (lsp.rs), which needs the whole `text` and the line's index
+    /// `row`. `line` is the cursor's line, `col` the cursor in it (chars).
+    CodeComplete {
+        path: String,
+        lang: String,
+        line: String,
+        col: usize,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        row: usize,
+    },
     /// An ask in the R, Python or shell input - Agent ticked, or spoken (operator, 2026-10-18):
     /// code in `lang` for what was asked, written with the console's recent
     /// lines and environment as `context`. The language model is OpenAI's, not
@@ -59,6 +75,14 @@ pub enum Query {
     /// or try a proxy against our servers. Setup and apply run as jobs; their
     /// progress is `StackJob`.
     StackSetup,
+    /// Build the stack on this machine from source (`ndexr stack up` into
+    /// `StackView::build_dir`), no root; a job like `StackSetup`. `report`:
+    /// the person allowed its errors to go to ndexr.io (`--report-errors`),
+    /// and the build reruns on the release that fixes them (`--follow-releases`).
+    StackBuild {
+        #[serde(default)]
+        report: bool,
+    },
     StackApply { cvmfs: CvmfsSettings },
     StackTest { proxy: String },
     StackJob,
@@ -169,6 +193,14 @@ pub enum Query {
     /// Messages (inbox.rs): the person's requests and their threads (an
     /// admin's: everyone's, with `all`), who is live and public, and the chat
     /// with `chat` (a username, "" = none). Also stamps them as here.
+    /// The project search's view of ndexr (ide.rs project_finder, the New
+    /// project dialog): the shares offered to me that I have not taken, and
+    /// which of `names` someone else already holds - so a name that is taken
+    /// is never offered to create (operator, 2026-11-03).
+    ProjectNames {
+        #[serde(default)]
+        names: Vec<String>,
+    },
     Inbox {
         #[serde(default)]
         all: bool,
@@ -194,6 +226,8 @@ pub enum Query {
     /// CVMFS module, the sessions loading it - and, for `set` ("" = none),
     /// each of its packages at each stage. Answered by the root server, which
     /// reads the kit and the sessions; the session counts are an admin's only.
+    /// No view asks it since the Packages mode went (2026-10-29); it stays
+    /// answered for releases that still have that mode open.
     PackageFlow {
         set: String,
         /// A package of `set` to trace: its dependencies, what needs it, the
@@ -208,10 +242,28 @@ pub enum Query {
     /// voiced on the server. Answers with where it has got to; ask again
     /// until `state` is ready. `fresh` makes a new one. An ndexr admin only.
     RecapBrief { minutes: u32, #[serde(default)] fresh: bool },
+    /// Speak (brief.rs `spoken`): an agent's finished reply, said aloud only
+    /// when the person asked something or the agent needs them. Answers with
+    /// the line and its mp3, or an empty line for nothing worth saying.
+    Spoken { asked: String, reply: String },
+    /// Listen under a reply (brief.rs `read_aloud`): the whole reply, read
+    /// aloud as it is - no choosing, unlike Speak. Answers with the text read
+    /// and its mp3.
+    ReadAloud { text: String },
     ListDir { path: String },
     ReadFile { path: String },
+    /// The end of a project's app log (host.rs `app_log`): what its run.sh
+    /// writes, as up.sh redirects it - the Logs tab follows it.
+    /// `build` true: the last Build's output (.cove/run/build.log) instead.
+    AppLog { path: String, #[serde(default)] build: bool },
     /// Find in files (host.rs `grep`): every line under `root` that matches.
     Grep { root: String, query: String, case: bool, regex: bool },
+    /// `ndexr glimpse` of a folder (host.rs `glimpse`): its tree and each
+    /// file's text as one block, for the Files pane's Copy glimpse (request #164).
+    Glimpse { path: String },
+    /// Make the project another type (dotcove.rs TYPES, set_type): Settings ›
+    /// Info's Type menu. Answers what it is now.
+    AppType { host: String, language: String },
     /// Put the person's Rust app live (app/assets/deploy-app.sh, run by `cove
     /// multiuser`): built and served as them, routed at https://<host>/.
     DeployApp { host: String },
@@ -231,6 +283,27 @@ pub enum Query {
     /// Put a saved version back: what is there now is saved as a version
     /// first, then the project's files become that version's, as a new one.
     VersionRestore { host: String, sha: String },
+    /// The project's container image, made, published to ECR and kept by
+    /// ndexr (`ndexr image`, docs/container-images.md): `verb` "status" what
+    /// is published and what it needs to run (ImageStatus); "build" a new
+    /// version, as a job (JobView); "job" that build as far as it got;
+    /// "pull" a short-lived login that pulls only this owner's images
+    /// (ImageLogin).
+    Image { host: String, verb: String },
+    /// The Git window (gitview.rs): the files one version changed against its
+    /// first parent - each with how (A, M, D, R, or ? for not yet tracked) and
+    /// lines added and removed. `sha` "" is what changed since the last saved
+    /// version, untracked files included.
+    GitChanges { host: String, sha: String },
+    /// One file's unified diff in that version (`old` is its name before a
+    /// rename, else ""); `sha` "" against the last saved version.
+    GitDiff {
+        host: String,
+        sha: String,
+        path: String,
+        #[serde(default)]
+        old: String,
+    },
     /// Route a published domain to its app's APP_PORT (app/assets/route-app.sh,
     /// run as root by `cove multiuser`): the one step of Up a person's session
     /// cannot take itself.
@@ -356,6 +429,33 @@ pub enum Query {
     InstallJob,
     InstallStop,
     MyBuilds,
+}
+
+impl Query {
+    /// What only the platform answers, asked of it from a cell (desktop
+    /// backend.rs, and a cell's own server.rs for any older client): an agent
+    /// run lives on the platform (host.rs agent_run_as, as the person), so its
+    /// polls, Stop, thread and the Claude sign-in it uses are asked there too -
+    /// a cell answered a platform run's poll with an empty chunk, not an error.
+    /// Messages and requests are the platform's database. Requests #183, #187.
+    pub fn platform_only(&self) -> bool {
+        matches!(
+            self,
+            Query::AgentRun { .. }
+                | Query::AgentPoll { .. }
+                | Query::AgentStop { .. }
+                | Query::AgentHistory { .. }
+                | Query::ClaudeStatus
+                | Query::ClaudeConnect { .. }
+                | Query::ClaudeForget
+                | Query::SendRequest { .. }
+                | Query::Inbox { .. }
+                | Query::InboxAct { .. }
+                | Query::ProjectNames { .. }
+                | Query::Spoken { .. }
+                | Query::ReadAloud { .. }
+        )
+    }
 }
 
 /// What a person's files take on ndexr's machine against their plan, as
@@ -853,6 +953,15 @@ pub struct AgentTurn {
     pub prompt: String,
     pub events: Vec<AgentEvent>,
     pub done: bool,
+    /// Who sent it, when that was someone other than the person looking - a
+    /// site admin's Exec working in their site (request #176, 2026-11-01:
+    /// "the ui just looks as if I ran it"). Empty: the viewer's own.
+    #[serde(default)]
+    pub by: String,
+    /// When it was sent, Unix seconds (its prompt file's time); 0 unknown.
+    /// Shown beside it (operator, 2026-11-09: "timestamp visible on threads").
+    #[serde(default)]
+    pub at: i64,
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize)]
@@ -888,6 +997,10 @@ pub struct Modules {
 pub struct Completion {
     pub start: usize,
     pub items: Vec<String>,
+    /// Beside each item, what it is (rust-analyzer's type or signature);
+    /// empty when the language says nothing more.
+    #[serde(default)]
+    pub detail: Vec<String>,
 }
 
 /// The machine's settings. Empty means "not chosen yet": the app asks.
@@ -912,6 +1025,12 @@ pub struct Settings {
     /// cvmfs build, or a connection to the server").
     #[serde(default)]
     pub stack_dir: String,
+    /// Airgap mode (operator, 2026-11-13: "cove.ndexr.io should have airgap
+    /// mode"): Cove asks nothing of the network - no update checks, no
+    /// software catalog fetch, no ndexr sign-in - and the stack is a copy on
+    /// this machine (`stack_dir`), never CVMFS or a download.
+    #[serde(default)]
+    pub airgap: bool,
     /// Read from settings saved before the one module, never written: the
     /// first of them that is set becomes `module` (`one_module`).
     #[serde(default, skip_serializing)]
@@ -1058,6 +1177,13 @@ pub struct StackView {
     /// Why the stack cannot come to this machine at all (macOS, Windows).
     #[serde(default)]
     pub unsupported: String,
+    /// Where "build it here" puts the stack (~/.ndexr/stack, which
+    /// stack_root finds by itself once its use.sh is there).
+    #[serde(default)]
+    pub build_dir: String,
+    /// A build there has been started (`<build_dir>/.build/up.json`).
+    #[serde(default)]
+    pub building: bool,
 }
 
 /// One effective CVMFS parameter and the file it came from.
@@ -1163,6 +1289,80 @@ pub struct Version {
     pub message: String,
 }
 
+/// A project's container image as ndexr reports it (`ndexr image status`,
+/// docs/container-images.md).
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageStatus {
+    pub repository: String,
+    pub building: bool,
+    /// Every version ever published, newest first; none is ever overwritten.
+    pub versions: Vec<ImageVersion>,
+    /// The project changed since the newest version was built.
+    pub changed_since: bool,
+    pub needs: ImageNeeds,
+    pub port: String,
+    pub health: String,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageVersion {
+    pub tag: String,
+    pub digest: String,
+    pub built_at: String,
+    /// The project's saved version it was built from.
+    pub source: String,
+    pub size_bytes: u64,
+    pub validated: bool,
+}
+
+/// What an image needs to run, measured when it was built - never assumed
+/// from the project's type.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageNeeds {
+    /// The ndexr stack mounted at /opt/ndexr/stack (CVMFS stack.ndexr.io).
+    pub stack: bool,
+    pub stack_revision: String,
+    pub triple: String,
+    pub modules: Vec<String>,
+    /// ndexr's own R code, carried in the image at the revision built from.
+    pub platform_r: bool,
+    pub gpu: bool,
+    pub services: Vec<String>,
+    pub arch: String,
+    /// Every host folder the image needed bound read-only to answer its
+    /// health check (the stack, and the package sets when env/ modules point
+    /// there). Empty from an ndexr that does not measure it: then the stack
+    /// alone, when `stack`.
+    pub binds: Vec<String>,
+}
+
+/// A registry login that pulls only its owner's images, until `expires_at`.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImageLogin {
+    pub registry: String,
+    pub username: String,
+    pub password: String,
+    pub expires_at: String,
+    pub repository: String,
+}
+
+/// One file a version changed (Query::GitChanges): `status` is git's letter
+/// (A, M, D, R, C, T) or "?" for a file git does not track yet; `old` its
+/// name before a rename; `added`/`removed` lines, both -1 for a binary file.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GitFile {
+    pub path: String,
+    pub old: String,
+    pub status: String,
+    pub added: i64,
+    pub removed: i64,
+}
+
 /// A project by the app contract (apps.rs): its app.env's language, kind
 /// (port | module), port and health path; which of build.sh / up.sh / down.sh
 /// it has; whether APP_HEALTH answers on APP_PORT; and whether app.env was
@@ -1244,6 +1444,22 @@ pub struct Probe {
 
 /// One shell word, single-quoted. Shared: the UI builds the commands it shows
 /// (in a browser too), and the machine quotes its paths.
+/// The Posit mark a host name holds, if any: Posit's trademark guidelines
+/// allow none in a domain name (operator, 2026-10-29), and Cove's release
+/// gate fails while one is served (onprem/compliance.py MARKS - the same
+/// four words, matched the same way). Positron before Posit, so the word
+/// named is the one written.
+pub fn posit_mark(host: &str) -> Option<&'static str> {
+    let h = host.to_ascii_lowercase();
+    ["rstudio", "positron", "posit", "shiny"].into_iter().find(|m| h.contains(m))
+}
+
+/// Why a name with a Posit mark is refused, with a name that would do.
+pub fn posit_mark_words(host: &str, mark: &str) -> String {
+    let instead = if mark == "shiny" { "lessons" } else { "app" };
+    format!("\"{mark}\" is Posit's trademark and cannot be in an ndexr address - try {}", host.to_ascii_lowercase().replace(mark, instead))
+}
+
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
@@ -1287,13 +1503,16 @@ pub enum InboxAct {
     GroupJoin { id: i64, accept: bool },
     GroupLeave { id: i64 },
     /// Share my `domain` with a person I am connected with (`to`), or a group
-    /// I am in (`group`, when not 0).
+    /// I am in (`group`, when not 0). `role` "use" opens it; "edit" lets them
+    /// work on its files and its agent too (share_editors). "" is "use".
     Share {
         domain: String,
         #[serde(default)]
         to: String,
         #[serde(default)]
         group: i64,
+        #[serde(default)]
+        role: String,
     },
     /// A domain offered to me: take it, or (false) turn it down.
     ShareDecide { id: i64, accept: bool },
@@ -1396,6 +1615,15 @@ pub struct Recap {
 
 /// Go's Briefing: `state` writing · recording · ready · failed; `script` from
 /// recording on; `audio` (base64 mp3) only when ready.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Spoken {
+    pub line: String,
+    /// base64 mp3; empty when `line` is.
+    pub audio: String,
+}
+
+/// Go's Briefing (see above).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RecapBrief {
@@ -1887,7 +2115,7 @@ pub struct GroupView {
 pub struct ShareView {
     pub id: i64,
     pub domain: String,
-    /// "use" (open it through its gate).
+    /// "use" (open it through its gate) or "edit" (work on it too).
     pub role: String,
     /// "offered", "accepted" or "declined".
     pub status: String,
@@ -1973,6 +2201,16 @@ pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_posit_mark_is_found_as_the_gate_finds_it() {
+        assert_eq!(super::posit_mark("shiny-2028.ndexr.io"), Some("shiny"));
+        assert_eq!(super::posit_mark("My-RStudio.ndexr.io"), Some("rstudio"));
+        assert_eq!(super::posit_mark("positron.ndexr.io"), Some("positron"));
+        assert_eq!(super::posit_mark("inlet.ndexr.io"), None);
+        assert_eq!(super::posit_mark_words("shiny-2028.ndexr.io", "shiny"), "\"shiny\" is Posit's trademark and cannot be in an ndexr address - try lessons-2028.ndexr.io");
+    }
+
     #[test]
     fn a_start_says_where_it_has_got_to() {
         use super::{start_phase, BoxView, JobView};
@@ -2235,4 +2473,31 @@ pub struct AssistReply {
     pub code: String,
     #[serde(default)]
     pub model: String,
+}
+
+/// Query::ProjectNames' answer.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectNames {
+    /// Shared with me and waiting for me to take it.
+    pub offered: Vec<OfferedShare>,
+    /// Of the names asked about, the ones someone else holds.
+    pub taken: Vec<TakenName>,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OfferedShare {
+    pub id: i64,
+    pub domain: String,
+    /// Who shared it, as others see them.
+    pub owner: String,
+    pub role: String,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TakenName {
+    pub host: String,
+    pub owner: String,
 }

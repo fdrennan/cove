@@ -37,6 +37,9 @@ pub const MARKS: &[Mark] = &[
     mark!("wasm", "WebAssembly", false),
     mark!("rust", "Rust", true),
     mark!("julia", "Julia", false),
+    mark!("cplusplus", "C++", false),
+    mark!("typescript", "TypeScript", false),
+    mark!("code", "An IDE", true),
 ];
 
 pub fn mark(key: &str) -> Option<&'static Mark> {
@@ -53,9 +56,13 @@ pub fn of_way(lang: &str, framework: &str) -> &'static str {
         "Python" if framework.contains("Streamlit") => "streamlit",
         "Python" => "python",
         "React" => "react",
+        "Node" => "nodejs",
         "Rust" if framework.contains("WebAssembly") => "wasm",
         "Rust" => "rust",
         "Julia" => "julia",
+        "C++" => "cplusplus",
+        "TypeScript" => "typescript",
+        "VS Code" => "code",
         _ => "",
     }
 }

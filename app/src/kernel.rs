@@ -239,7 +239,7 @@ impl State {
                 let id = f.next().and_then(|n| n.trim().parse().ok()).unwrap_or(0);
                 let start = f.next().and_then(|n| n.trim().parse().ok()).unwrap_or(0);
                 let items = f.filter(|i| !i.is_empty()).map(str::to_owned).collect();
-                self.compl = Some((id, crate::api::Completion { start, items }));
+                self.compl = Some((id, crate::api::Completion { start, items, ..Default::default() }));
             }
             "TABLE" => {
                 let mut f = rest.splitn(3, '\t');
@@ -1482,11 +1482,25 @@ import ast, os, sys, traceback
 
 
 def complete(line, cursor):
-    """The names that may finish the word before `cursor`, as Python's own
-    REPL completes them (rlcompleter over __main__, i.e. reticulate's `py`):
-    [where the word starts, candidates]."""
+    """The names that may finish the word before `cursor`: jedi over the live
+    objects in __main__ (reticulate's `py`) where the environment has it -
+    attributes after a dot, a call's parameters as `name=` inside it - else
+    Python's own REPL completer, rlcompleter: [where the word starts,
+    candidates]."""
     import re, rlcompleter
     head = line[:cursor]
+    try:
+        import jedi
+        got = jedi.Interpreter(head, [sys.modules["__main__"].__dict__]).complete()
+        if got:
+            word = re.search(r"\w*$", head).group(0)
+            out = []
+            for c in got[:300]:
+                if c.name_with_symbols not in out:
+                    out.append(c.name_with_symbols)
+            return [cursor - len(word), out]
+    except Exception:
+        pass
     m = re.search(r"[A-Za-z_][\w.]*$", head)
     word = m.group(0) if m else ""
     c = rlcompleter.Completer(sys.modules["__main__"].__dict__)
@@ -1697,12 +1711,66 @@ function __cove_complete(id, line, cursor)
     __cove_tag("COMPL", id, at, got...)
     nothing
 end
+# Plots come back as PNG files, as R's and matplotlib's do (a PLOT tag per
+# file in COVE_PLOTS). GR draws off-screen ("100" = no window). A value that
+# renders to PNG (a Plots.jl plot, a Makie figure, an image) is drawn instead
+# of printed, and display() lands here too - through our display, which is
+# kept on top of the stack because `using Plots` pushes its own.
+get!(ENV, "GKSwstype", "100")
+const __COVE_PLOTS = get(ENV, "COVE_PLOTS", tempdir())
+const __cove_nplot = Ref(0)
+__cove_drawable(x) = !(x isa AbstractString || x isa Number || x isa Symbol) &&
+    Base.invokelatest(showable, MIME"image/png"(), x)
+function __cove_png(x)
+    f = joinpath(__COVE_PLOTS, "plot-" * lpad(__cove_nplot[] + 1, 4, '0') * ".png")
+    try
+        open(io -> Base.invokelatest(show, io, MIME"image/png"(), x), f, "w")
+        __cove_nplot[] += 1
+        __cove_tag("PLOT", f)
+    catch e
+        rm(f; force = true)
+        __cove_tag("WARN", "plot not saved: " * sprint(showerror, e))
+    end
+    nothing
+end
+struct __CoveDisplay <: AbstractDisplay end
+Base.display(::__CoveDisplay, x) = __cove_drawable(x) ? __cove_png(x) : throw(MethodError(display, (x,)))
+function __cove_on_top()
+    ds = Base.Multimedia.displays
+    isempty(ds) || last(ds) isa __CoveDisplay && return
+    filter!(d -> !(d isa __CoveDisplay), ds)
+    pushdisplay(__CoveDisplay())
+end
+# Plots.jl in the IDE's colours (kernel.rs plot_env), set the moment it loads,
+# so the first plot() after `using Plots` already has them.
+function __cove_theme(pkg)
+    pkg.name == "Plots" || return
+    P = Base.loaded_modules[pkg]
+    bg, fg = get(ENV, "COVE_PLOT_BG", "white"), get(ENV, "COVE_PLOT_FG", "black")
+    pal = filter(!isempty, split(get(ENV, "COVE_PLOT_PALETTE", ""), ","))
+    try
+        Base.invokelatest(P.default; background_color = bg, foreground_color = fg)
+        isempty(pal) || Base.invokelatest(P.default; palette = Base.invokelatest(P.palette, pal))
+    catch e
+        __cove_tag("WARN", "Plots colours not set: " * sprint(showerror, e))
+    end
+end
+push!(Base.package_callbacks, __cove_theme)
 function __cove_run(code)
+    __cove_on_top()
     try
         val = include_string(Main, code, "In")
+        __cove_on_top()
         if val !== nothing && !endswith(rstrip(code), ';')
-            show(stdout, MIME"text/plain"(), val)
-            println()
+            # invokelatest: `code` may have loaded the methods that show val
+            # (`using Plots` then plot(...) - "method too new to be called
+            # from this world context", 2026-10-31).
+            if __cove_drawable(val)
+                __cove_png(val)
+            else
+                Base.invokelatest(show, stdout, MIME"text/plain"(), val)
+                println()
+            end
         end
     catch e
         e isa LoadError && (e = e.error)

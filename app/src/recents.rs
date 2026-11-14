@@ -80,17 +80,21 @@ impl Recents {
                             let place = r.project.rsplit('/').next().filter(|p| !p.is_empty()).map(|p| format!("  ·  {p}")).unwrap_or_default();
                             let text = format!("{}{place}  ·  {}", r.name, ago(r.active));
                             if r.current {
-                                ui.label(RichText::new(format!("{text}  (this one)")).size(12.0).color(theme::text())).on_hover_text(env);
+                                ui.add(egui::Label::new(RichText::new(format!("{text}  (this one)")).size(12.0).color(theme::text())).truncate()).on_hover_text(env);
                                 return;
                             }
-                            if ui.add(egui::Button::new(RichText::new(text).size(12.0)).frame(false)).on_hover_text(format!("open it · {env}")).clicked() {
-                                ctx.open_url(egui::OpenUrl::same_tab(format!("{root}/s/{}/", r.id)));
-                                ui.close();
-                            }
+                            // End keeps its place at the right; the name is cut to
+                            // what is left, so a long one never widens the menu.
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.small_button("End").on_hover_text("end its R, Python and shell; its files stay").clicked() {
                                     end = Some(r.id.clone());
                                 }
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    if ui.add(egui::Button::new(RichText::new(&text).size(12.0)).frame(false).truncate()).on_hover_text(format!("{text} · open it · {env}")).clicked() {
+                                        ctx.open_url(egui::OpenUrl::same_tab(format!("{root}/s/{}/", r.id)));
+                                        ui.close();
+                                    }
+                                });
                             });
                         });
                     }

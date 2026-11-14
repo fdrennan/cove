@@ -1,0 +1,4 @@
+Manifest.toml
+LocalPreferences.toml
+*.log
+.run/

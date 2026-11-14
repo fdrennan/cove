@@ -7,6 +7,15 @@
 #   ARCH=aarch64 ./build-linux.sh        # cross-build via zig
 #   NDEXR_CLI= ./build-linux.sh          # ship without the bundled CLI
 #   NDEXR_CLI=/path/to/ndexr ./build-linux.sh
+#   WEBVIEW=0 ./build-linux.sh           # no WebKitGTK: dist-cell/linux-<arch>/, for cells
+#
+# WEBVIEW=0 is the cell's build (user-provision.sh publishes it to
+# /opt/ndexr/cove). A cell only runs `cove serve` and has no GTK or WebKit, so
+# the desktop tarball's binary could not load there and no cell had a Cove
+# server: the desktop app could not connect (2026-11-02, "connect ECONNREFUSED
+# 0.0.0.0:8002"). Its own target dir, so it never clobbers a desktop build,
+# and its own dist-cell/, so publish.sh (every dist/*/) never offers it as a
+# download.
 #
 # Linked against glibc 2.28 with cargo-zigbuild, so one binary runs on Rocky 8+,
 # Ubuntu 20.04+, Debian 10+. The bundled CLI is the static musl ndexr. Install:
@@ -22,6 +31,8 @@ arch="${ARCH:-$(uname -m)}"
 target="$arch-unknown-linux-gnu"
 name="cove-$version-linux-$arch"
 out="$here/dist/linux-$arch"
+tdir="$here/target"
+if [[ "${WEBVIEW:-1}" == 0 ]]; then out="$here/dist-cell/linux-$arch"; tdir="$here/target-cell"; fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 stage="$work/$name"
@@ -57,15 +68,21 @@ multi="/usr/lib/$arch-linux-gnu"
 # library 'webkit2gtk-4.1'"), so that build ships without the embedded App
 # panel - it opens the site in the browser instead, as Windows does.
 features="--features webview"
-if [[ ! -e "$multi/libwebkit2gtk-4.1.so" ]]; then
+if [[ "${WEBVIEW:-1}" == 0 ]]; then
+  features=""
+  echo "▸ WEBVIEW=0 - building without the embedded webview"
+elif [[ ! -e "$multi/libwebkit2gtk-4.1.so" ]]; then
   features=""
   echo "▸ no $multi/libwebkit2gtk-4.1.so here - building without the embedded webview"
 fi
 RUSTFLAGS="${RUSTFLAGS:-} -L native=$multi -C link-arg=-Wl,--allow-shlib-undefined" \
-cargo zigbuild --release --target "$target.2.28" --manifest-path "$here/Cargo.toml" $features
+CARGO_TARGET_DIR="$tdir" cargo zigbuild --release --target "$target.2.28" --manifest-path "$here/Cargo.toml" $features
 
 mkdir -p "$stage/bin"
-cp "$here/target/$target/release/cove" "$stage/bin/"
+cp "$tdir/$target/release/cove" "$stage/bin/"
+# Cove's licence and the notices of every crate in it travel with the binary.
+install -Dm644 "$here/../LICENSE" "$stage/share/doc/cove/LICENSE"
+install -Dm644 "$here/THIRD-PARTY-NOTICES.txt" "$stage/share/doc/cove/THIRD-PARTY-NOTICES.txt"
 
 # ── bundled CLI: static musl ndexr, local build first, else repo.ndexr.io
 cli="${NDEXR_CLI-auto}"

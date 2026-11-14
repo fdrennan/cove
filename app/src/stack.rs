@@ -296,7 +296,42 @@ pub fn view() -> StackView {
     v.local = local_settings();
     v.root_by = root_by();
     v.setup_cmd = "ndexr install cvmfs --yes".into();
+    let dir = build_dir();
+    v.building = dir.join(".build/up.json").is_file();
+    v.build_dir = dir.display().to_string();
     v
+}
+
+/// Where Cove builds the stack itself: host.rs `stack_root` falls back to it
+/// once its use.sh is there, so nothing needs setting afterwards.
+pub fn build_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(crate::host::home()).join(".ndexr/stack")
+}
+
+/// Build the whole stack on this machine from upstream sources (`ndexr stack
+/// up`): no root, no ndexr servers. It detaches and returns at once, so the
+/// job is its start; the build itself runs for hours under its own
+/// supervisor (`ndexr stack status|logs --dir`).
+///
+/// Experimental, and opt-in (operator, 2026-11-13: "users should be prompted
+/// that an experimental build process can be allowed which does it for them
+/// and that the errors can be sent back to the ndexr.io servers"): with
+/// `report`, a failure is filed on complaints.ndexr.io (`--report-errors`)
+/// and the run waits for the ndexr release that fixes it, upgrades and goes
+/// again (`--follow-releases`).
+pub fn build(report: bool) -> Result<JobView, String> {
+    let v = view();
+    if !v.unsupported.is_empty() {
+        return Err(v.unsupported);
+    }
+    let cli = ndexr_cli().ok_or("the ndexr CLI is not on this machine - install it first (cvmfs.ndexr.io has the guide)")?;
+    let d = shell_quote(&v.build_dir);
+    let flags = if report { " --report-errors --follow-releases" } else { "" };
+    let cmd = format!(
+        "echo '$ ndexr stack up --dir {d}{flags}'; {} stack up --dir {d}{flags} && echo && echo 'Building in the background. Follow it: ndexr stack logs --dir {d} -f'",
+        shell_quote(&cli)
+    );
+    jobs::start("stack", "Building the ndexr stack here".into(), cmd, None)
 }
 
 /// This machine's Gentoo Prefix in the stack, or "" (cheap: no client probes).
@@ -315,6 +350,9 @@ pub fn prefix() -> String {
 
 /// Set the stack up on this machine, in the background.
 pub fn setup(c: &CvmfsSettings) -> Result<JobView, String> {
+    if crate::host::saved_settings().airgap {
+        return Err("airgap mode: CernVM-FS needs the network - point Cove at a copy of the stack on this machine instead".into());
+    }
     let v = view();
     if !v.unsupported.is_empty() {
         return Err(v.unsupported);

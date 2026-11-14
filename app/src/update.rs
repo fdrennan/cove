@@ -221,6 +221,9 @@ fn run(status: &Mutex<Status>, busy: &AtomicBool, ctx: &egui::Context) {
     };
     set(Status::Checking);
     let next = match locate() {
+        // Airgap mode: no feed to ask; a new Cove arrives the way the stack
+        // copy did (Global Options turns it off, then Check for updates).
+        _ if crate::host::saved_settings().airgap => Status::Managed("airgap mode: updates are installed by hand".into()),
         Err(why) => Status::Managed(why),
         Ok(install) => match fetch_release() {
             Err(e) => Status::Failed(e),

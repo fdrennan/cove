@@ -1,0 +1,25 @@
+at	cove_commit	scope	pass	fail	skip	failed
+2026-10-29T22:34:35Z	b61594f	full	11	2	0	cove.not-derivative,cove.notices-served
+2026-10-29T22:35:17Z	b61594f	gate	6	1	0	cove.not-derivative
+2026-10-29T22:35:36Z	b61594f	gate	7	0	0	
+2026-10-29T23:12:50Z	0620261	full	12	1	0	cove.notices-served
+2026-10-29T23:23:38Z	0620261	full	13	0	0	
+2026-10-29T23:32:18Z	f6a6e15	full	13	0	0	
+2026-10-30T06:02:34Z	9aa215c	full	12	1	0	cove.notices-served
+2026-10-30T06:43:54Z	e9c188f	full	13	0	0	
+2026-10-30T20:20:26Z	95253e4	full	10	1	2	cove.not-derivative
+2026-10-30T20:24:14Z	95253e4	full	11	0	2	
+2026-10-31T06:01:55Z	91df7e5	full	13	0	0	
+2026-11-01T06:02:01Z	f6172de	full	13	0	0	
+2026-11-02T06:02:23Z	4f38485	full	13	0	0	
+2026-11-03T06:03:03Z	4ec9095	full	13	0	0	
+2026-11-04T06:02:01Z	f093597	full	12	1	0	platform.no-marks-in-hostnames
+2026-11-05T06:02:04Z	a6eed3d	full	12	1	0	platform.no-marks-in-hostnames
+2026-11-06T06:03:03Z	408183d	full	13	0	0	
+2026-11-07T06:02:10Z	d5a125c	full	12	1	0	inlet.records-match-install
+2026-11-08T06:03:55Z	7945559	full	11	2	0	platform.no-marks-in-hostnames,inlet.records-match-install
+2026-11-09T06:08:08Z	3712278	full	13	0	0	
+2026-11-10T06:02:30Z	55cea2d	full	12	1	0	inlet.records-match-install
+2026-11-11T06:02:22Z	98ccf1f	full	13	0	0	
+2026-11-12T06:02:08Z	a480ac7	full	13	0	0	
+2026-11-13T06:02:34Z	80b4425	full	12	1	0	inlet.records-match-install

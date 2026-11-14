@@ -1,0 +1,30 @@
+# Cove's container builder (onprem/container): images of people's projects,
+# built as the platform, never in their account. Clients reach it on a Unix
+# socket and the kernel names them (SO_PEERCRED), as ndexr-vault.
+# Install: onprem/container/install.sh
+[Unit]
+Description=Cove container builder (brokered)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/cove-container/broker.py serve
+User=ubuntu
+Group=ubuntu
+RuntimeDirectory=cove-container
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+# Rootless podman needs ubuntu's runtime dir; the stack's Apptainer runs under
+# sudo -n for the packaging step (build.sh says why).
+Environment=HOME=/home/ubuntu
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -80,19 +80,46 @@ guard() {
   return 1
 }
 
+# LICENCES ARE A RELEASE CONDITION TOO (2026-10-29, operator: "make a
+# compliance plan or ability to prove that compliance"). Cove ships binaries,
+# so the notices of every crate in it must ship with them (the server embeds
+# THIRD-PARTY-NOTICES.txt, regenerated here whenever Cargo.lock moves), no
+# crate may need a copyleft licence, and no line of RStudio's or Inlet's code
+# may be in Cove. onprem/compliance.sh --gate checks all of it in ~10 s; a
+# failure holds the release exactly as a failed atlas test does. The full
+# report, with Inlet's live checks, is the daily cove-compliance.timer.
+notices() {
+  [[ "$app/THIRD-PARTY-NOTICES.txt" -nt "$app/Cargo.lock" ]] && return 0
+  "$here/onprem/compliance.sh" --notices >"$state/notices.log" 2>&1 \
+    && log "third-party notices regenerated for the new Cargo.lock" \
+    || log "third-party notices could not be regenerated - see $state/notices.log"
+}
+licence_gate() {
+  "$here/onprem/compliance.sh" --gate --out "$state/compliance" >"$state/compliance.log" 2>&1 && return 0
+  log "licence gate failed - release held, the running build stays; see $state/compliance.log"
+  grep -E '^FAIL' "$state/compliance.log" | head -6
+  return 1
+}
+
 build() {
+  notices
   log "building $(cd "$app" && git rev-parse --short HEAD 2>/dev/null || echo tree)…"
   local t0=$SECONDS
   # The stamp is when the build STARTED: an edit saved mid-build is newer than
   # it and builds again. (Stamped at the end, an edit landing during a 17 s
   # build was never compiled — the plot theme's R driver, 2026-10-13.)
   touch "$state/build-started"
-  CARGO_TARGET_DIR="$target" cargo_ build --profile onprem --manifest-path "$app/Cargo.toml" >"$state/build.log" 2>&1
+  # SIX JOBS, NOT ONE PER CORE (2026-10-29). Uncapped, LLVM ran up to 24 of
+  # the profile's 16 codegen units at once and rustc passed 2.8 GiB while the
+  # host's account cells held most of its 30 GiB; earlyoom killed the build
+  # three times running and no release shipped for half an hour. Codegen takes
+  # jobserver tokens, so the cap bounds the peak. COVE_BUILD_JOBS overrides.
+  CARGO_BUILD_JOBS="${COVE_BUILD_JOBS:-6}" CARGO_TARGET_DIR="$target" cargo_ build --profile onprem --manifest-path "$app/Cargo.toml" >"$state/build.log" 2>&1
   local rc=$?
   grep -E '^(error|warning: unused)' -A5 "$state/build.log"
   local out="$target/onprem/cove"
   # Held before it replaces anything, so nothing can publish it later.
-  if [[ $rc -eq 0 && -x "$out" ]] && ! guard; then
+  if [[ $rc -eq 0 && -x "$out" ]] && { ! guard || ! licence_gate; }; then
     log "build held after $((SECONDS - t0))s — keeping the running server"
     return 1
   fi
@@ -175,7 +202,7 @@ prune_releases() {
 # multiuser.rs adopt) - a few seconds of failed polls, nobody signed out.
 server_changed() {
   [[ ! -f "$state/server.stamp" ]] && return 0
-  [[ -n "$(find "$app/src/multiuser.rs" "$app/src/server.rs" "$app/src/host.rs" "$app/src/api.rs" "$app/src/storage.rs" "$app/src/kernel.rs" "$app/src/envs.rs" "$app/templates" "$app/Cargo.toml" "$app/Cargo.lock" -newer "$state/server.stamp" -print -quit 2>/dev/null)" ]]
+  [[ -n "$(find "$app/src/multiuser.rs" "$app/src/server.rs" "$app/src/host.rs" "$app/src/api.rs" "$app/src/storage.rs" "$app/src/kernel.rs" "$app/src/envs.rs" "$app/assets" "$app/templates" "$app/assets/route-app.sh" "$app/Cargo.toml" "$app/Cargo.lock" "$app/THIRD-PARTY-NOTICES.txt" -newer "$state/server.stamp" -print -quit 2>/dev/null)" ]]
 }
 # Claude Code for every account's Terminal (operator, 2026-10-16: "not working
 # claude" - fdrennan got "claude: command not found"; the only copy was in
@@ -229,7 +256,7 @@ publish_seeds() {
     # Lowest priority, four jobs: an unbounded seed build (24 rustc beside
     # Cove's own build and others) took the load to 86 and every console
     # replica stopped answering (ndexr.io down, 2026-10-25).
-    if ! (cd "$work" && CARGO_BUILD_JOBS=4 nice -n 19 ./build.sh) >"$state/seeds/$s.log" 2>&1; then
+    if ! (cd "$work" && CARGO_BUILD_JOBS=4 nice -n 19 .cove/build.sh) >"$state/seeds/$s.log" 2>&1; then
       log "seed $s: build failed after $((SECONDS - t0))s - see $state/seeds/$s.log"
       continue
     fi
@@ -270,8 +297,13 @@ trap '[[ -n "$pid" ]] && kill "$pid" 2>/dev/null; exit 0' INT TERM
 changed() {
   # app/templates too: host.rs include_str!s the new-site starters, and an
   # edit there never rebuilt (2026-10-25, the trimmed shiny-app template sat
-  # unreleased for an hour).
-  [[ -n "$(find "$app/src" "$app/assets" "$app/templates" "$app/Cargo.toml" "$app/Cargo.lock" -newer "$bin.stamp" -print -quit 2>/dev/null)" ]]
+  # unreleased for an hour). app/web too: build_web copies it into each
+  # release, so an edit to web/index.html alone never shipped (2026-10-29, the
+  # phone-keyboard fix sat waiting for an unrelated Rust change).
+  # THIRD-PARTY-NOTICES.txt too: the server embeds it (server.rs
+  # notices_response), and a regenerated file outside these folders sat
+  # unreleased for 7 hours (2026-10-30, licenses.ndexr.io cove.notices-served).
+  [[ -n "$(find "$app/src" "$app/assets" "$app/templates" "$app/web" "$app/Cargo.toml" "$app/Cargo.lock" "$app/THIRD-PARTY-NOTICES.txt" -newer "$bin.stamp" -print -quit 2>/dev/null)" ]]
 }
 
 touch -d '1970-01-01' "$bin.stamp" 2>/dev/null || touch "$bin.stamp"

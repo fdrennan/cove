@@ -84,6 +84,11 @@ pub struct Showcase {
     /// The atlas is immersed (atlas.rs `immersive`): the message only - no
     /// card, pictures, dots or controls - low over the stack.
     pub bare: bool,
+    /// The panel the atlas is drawn in, set by whoever shows it. Every card
+    /// and button here sits in it, not on the screen: on a phone, anchored to
+    /// the screen, "The story" lay over the bottom tabs and hid Account
+    /// (operator screenshot, 2026-11-07).
+    pub within: Option<egui::Rect>,
     /// The slide that last pointed the atlas, so it is let go only once.
     pointed: Option<usize>,
     /// Every public and signed-in domain, all owners (/view/domains.json),
@@ -120,6 +125,15 @@ pub(crate) fn base() -> String {
 }
 
 impl Showcase {
+    fn bounds(&self, ctx: &egui::Context) -> egui::Rect {
+        self.within.unwrap_or_else(|| ctx.content_rect())
+    }
+
+    /// The point `off` from the panel's `a` corner, for an area pivoted there.
+    fn corner(&self, ctx: &egui::Context, a: Align2, off: egui::Vec2) -> egui::Pos2 {
+        a.pos_in_rect(&self.bounds(ctx)) + off
+    }
+
     fn load(&mut self, ctx: &egui::Context) {
         if self.asked {
             return;
@@ -296,8 +310,10 @@ impl Showcase {
             return self.pointed.take().map(|_| Point::Release);
         }
         if self.hidden {
+            let at = self.corner(ctx, Align2::RIGHT_BOTTOM, egui::vec2(-14.0, -14.0));
             egui::Area::new(egui::Id::new("showcase-shown"))
-                .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-14.0, -14.0))
+                .pivot(Align2::RIGHT_BOTTOM)
+                .fixed_pos(at)
                 .show(ctx, |ui| {
                     if ui.add(theme::primary_button("▶  The story")).on_hover_text("show the slides again").clicked() {
                         self.hidden = false;
@@ -370,7 +386,7 @@ impl Showcase {
             self.ask_live(now, ctx);
         }
 
-        let screen = ctx.content_rect();
+        let screen = self.bounds(ctx);
         if self.bare {
             self.bare_ui(ctx, &slide, cat, now, hold);
             let next = title_of(&slides[(self.at + 1) % slides.len()]);
@@ -384,8 +400,10 @@ impl Showcase {
         // (screenshot, 2026-10-18).
         let w = if screen.width() < 640.0 { screen.width() - 24.0 - 30.0 } else { (screen.width() * 0.34).clamp(340.0, 460.0) };
         let mut step: i32 = 0;
+        let at = self.corner(ctx, Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0));
         egui::Area::new(egui::Id::new("showcase"))
-            .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0))
+            .pivot(Align2::RIGHT_BOTTOM)
+            .fixed_pos(at)
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(theme::bg().gamma_multiply(0.92))
@@ -482,11 +500,13 @@ impl Showcase {
     /// stopped, read and walked at the reader's pace. Returns the step asked.
     fn bare_controls(&mut self, ctx: &egui::Context, n: usize, next: &str, now: f64, hold: f64) -> i32 {
         let mut step = 0;
-        let screen = ctx.content_rect();
+        let screen = self.bounds(ctx);
         let touch = screen.width() < 640.0;
+        let at = self.corner(ctx, Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -14.0));
         egui::Area::new(egui::Id::new("showcase-bare-ctl"))
             .order(egui::Order::Foreground)
-            .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -14.0))
+            .pivot(Align2::RIGHT_BOTTOM)
+            .fixed_pos(at)
             .show(ctx, |ui| {
                 egui::Frame::new().fill(theme::bg().gamma_multiply(0.72)).corner_radius(99).inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -529,7 +549,7 @@ impl Showcase {
     /// themselves - what each is building, the log's last lines - not only a
     /// title. Pictures and charts are left to the full card.
     fn bare_ui(&mut self, ctx: &egui::Context, s: &Slide, cat: Option<&Catalog>, now: f64, hold: f64) {
-        let screen = ctx.content_rect();
+        let screen = self.bounds(ctx);
         let w = (screen.width() - 64.0).min(720.0);
         let item = (s.kind == "atlas").then(|| cat.and_then(|c| c.find(if s.lang.is_empty() { "Python" } else { &s.lang }, &s.focus).map(|i| (c, i)))).flatten();
         // "Tour · 3 - the compiler everything shares" → kicker and headline.
@@ -639,9 +659,11 @@ impl Showcase {
         p.add(m);
 
         let rise = 10.0 * (1.0 - a_head);
+        let at = self.corner(ctx, Align2::LEFT_BOTTOM, egui::vec2(if screen.width() < 640.0 { 20.0 } else { 56.0 }, -44.0 + rise));
         egui::Area::new(egui::Id::new("showcase-bare"))
             .order(egui::Order::Foreground)
-            .anchor(Align2::LEFT_BOTTOM, egui::vec2(if screen.width() < 640.0 { 20.0 } else { 56.0 }, -44.0 + rise))
+            .pivot(Align2::LEFT_BOTTOM)
+            .fixed_pos(at)
             .interactable(false)
             .show(ctx, |ui| {
                 ui.set_max_width(w);

@@ -764,6 +764,11 @@ fn revision(p: &Path) -> String {
         let path = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap_or_default();
         let name = std::ffi::CString::new("user.revision").unwrap_or_default();
         let mut buf = [0u8; 64];
+        // macOS's getxattr takes a position and options too; the Linux
+        // signature broke the Mac build (2026-11-02, E0061 on neo).
+        #[cfg(target_os = "macos")]
+        let n = unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), 0, 0) };
+        #[cfg(not(target_os = "macos"))]
         let n = unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
         if n > 0 {
             return String::from_utf8_lossy(&buf[..n as usize]).trim().to_owned();

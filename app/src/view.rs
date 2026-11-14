@@ -5,8 +5,10 @@
 //!
 //! cove.ndexr.io/view/ - and cove.ndexr.io/ for someone not signed in - is
 //! this: the atlas with the front page's slides over it (showcase.rs), and
-//! the Software pane's Packages, Builds (curves, branches, 3D, timeline,
-//! queue) and the machines' Logs, searchable. `?tab=packages|builds|logs`
+//! the Software pane's Packages, Builds (where every build machine is now,
+//! then curves, branches, 3D, timeline, queue) and the machines' Logs,
+//! searchable. ndexr.io's front page is this same view (its nginx.conf), and
+//! ndexr.io's agent owns it (its CLAUDE.md). `?tab=packages|builds|logs`
 //! opens on one, so a post can link straight to it. Its backend is the
 //! public view (server.rs `public_response`): the catalog, the builds and
 //! their logs, read-only. No session, no consoles, no agent, nothing that
@@ -147,10 +149,12 @@ impl eframe::App for ViewApp {
                 let cat = self.software.catalog();
                 self.ask_domains(now, ctx);
                 let domains = self.domains.lock().unwrap().clone();
-                let act = egui::CentralPanel::default()
+                // The panel's whole space, read inside it (app.rs does the same).
+                let (act, within) = egui::CentralPanel::default()
                     .frame(egui::Frame::new())
-                    .show(root, |ui| self.atlas.ui(ui, ctx, cat.clone(), domains, "", None))
+                    .show(root, |ui| (self.atlas.ui(ui, ctx, cat.clone(), domains, "", None), ui.max_rect()))
                     .inner;
+                self.showcase.within = Some(within);
                 match act {
                     Some(crate::atlas::Act::Software(i)) => {
                         self.tab = Tab::Packages;
@@ -197,6 +201,21 @@ impl eframe::App for ViewApp {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::new().fill(theme::bg().gamma_multiply(theme::win_alpha())).inner_margin(4.0))
                     .show(root, |ui| {
+                        // Builds opens on where every build is now, the same
+                        // machine cards signed-in Cove's Builds mode leads
+                        // with (operator, 2026-11-14: "builds section and also
+                        // ndexr.io is VIEWER mode of cove.ndexr.io"). They read
+                        // the public builds.json and carry no buttons: starting
+                        // and stopping machines stays signed-in Cove's. Capped
+                        // at a third of the height, scrolling past it, so the
+                        // views below keep their room on a phone.
+                        if self.tab == Tab::Builds {
+                            let cap = (ui.available_height() * 0.34).max(140.0);
+                            egui::ScrollArea::vertical().id_salt("view-builds-now").max_height(cap).auto_shrink([false, true]).show(ui, |ui| {
+                                self.software.where_builds_are(ui, ctx, &self.backend);
+                            });
+                            ui.separator();
+                        }
                         // Code for a console has nowhere to run here.
                         if self.software.ui(ui, ctx, &self.backend, group).is_some() {
                             self.toast = Some(("Running it needs a session - Sign in to build, top right.".into(), now + 5.0));

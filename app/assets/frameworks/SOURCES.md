@@ -20,7 +20,10 @@ to its project.
 | rust.png | Rust | devicon v2.16.0 `icons/rust/rust-original.svg`, black inverted to white | MIT (devicon) |
 | wasm.png | WebAssembly | devicon v2.16.0 `icons/wasm/wasm-original.svg` | MIT (devicon) |
 | julia.png | Julia | devicon v2.16.0 `icons/julia/julia-original.svg` | MIT (devicon) |
+| cplusplus.png | C++ | devicon v2.16.0 `icons/cplusplus/cplusplus-original.svg` | MIT (devicon) |
+| typescript.png | TypeScript | devicon v2.16.0 `icons/typescript/typescript-original.svg` | MIT (devicon) |
+| code.png | An IDE (the VS Code starter) | drawn for Cove with ImageMagick: a rounded frame and `</>` in DejaVu Sans Mono Bold - no product's mark | Cove's own |
 
-flask.png and rust.png are one-colour marks drawn white; Cove tints them with
+flask.png, rust.png and code.png are one-colour marks drawn white; Cove tints them with
 the theme's text colour (frameworks.rs `Mark::tint`) so they read on light and
 dark looks alike.

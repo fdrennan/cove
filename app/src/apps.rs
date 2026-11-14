@@ -39,7 +39,7 @@ pub fn read_env(text: &str) -> Vec<(String, String)> {
 /// listing can carry it (host.rs domain_at) and a project's environment and
 /// consoles follow from it (operator, 2026-10-26).
 pub fn language(dir: &Path) -> (String, String, bool) {
-    if let Ok(t) = std::fs::read_to_string(dir.join("app.env")) {
+    if let Ok(t) = std::fs::read_to_string(crate::dotcove::contract_dir(dir).join("app.env")) {
         let env = read_env(&t);
         let get = |k: &str| env.iter().find(|(x, _)| x == k).map(|(_, v)| v.clone()).unwrap_or_default();
         return (get("APP_LANGUAGE"), get("APP_KIND"), false);
@@ -47,6 +47,8 @@ pub fn language(dir: &Path) -> (String, String, bool) {
     let has_ext = |ext: &str| std::fs::read_dir(dir).into_iter().flatten().flatten().any(|e| e.path().extension().is_some_and(|x| x == ext));
     let (lang, kind) = if dir.join("module.r").is_file() {
         ("r", "module")
+    } else if has_ext("uproject") {
+        ("unreal", "port")
     } else if dir.join("Cargo.toml").is_file() {
         ("rust", "port")
     } else if has_ext("jl") {
@@ -112,16 +114,25 @@ pub fn framework(dir: &Path, language: &str) -> &'static str {
         "rust" if head(&dir.join("Cargo.toml")).contains("cdylib") => "wasm",
         "rust" => "rust",
         "julia" => "julia",
+        // Unreal's own logo is Epic's trademark: the language's mark.
+        "unreal" => "cplusplus",
         _ => "",
     }
 }
 
 /// What a project is (language()), the verbs it has, and whether it is up.
 pub fn status(dir: &Path) -> crate::api::AppStatus {
+    // A project from before .cove/ moves in the first time it is looked
+    // at, as the person (dotcove.rs adopt); one Cove cannot write stays as
+    // it is, and its root files still run it.
+    if let Err(e) = crate::dotcove::adopt(dir, &crate::host::starter_files) {
+        eprintln!("cove: {} not moved into .cove/: {e}", dir.display());
+    }
+    let cdir = crate::dotcove::contract_dir(dir);
     let mut s = crate::api::AppStatus::default();
     let (language, kind, inferred) = language(dir);
     (s.language, s.kind, s.inferred) = (language, kind, inferred);
-    if let Ok(t) = std::fs::read_to_string(dir.join("app.env")) {
+    if let Ok(t) = std::fs::read_to_string(cdir.join("app.env")) {
         for (k, v) in read_env(&t) {
             match k.as_str() {
                 "APP_PORT" => s.port = v,
@@ -130,11 +141,17 @@ pub fn status(dir: &Path) -> crate::api::AppStatus {
             }
         }
     }
-    s.verbs = VERBS.iter().filter(|v| is_executable(&dir.join(format!("{v}.sh")))).map(|v| (*v).to_owned()).collect();
+    // In .cove/ every project has all four verbs; a module app's Up and
+    // Down have nothing to do, so it shows Build alone, as before.
+    s.verbs = VERBS.iter().filter(|v| is_executable(&cdir.join(format!("{v}.sh"))) && (s.kind == "port" || **v == "build")).map(|v| (*v).to_owned()).collect();
     s.compiling = compiling(dir);
-    // Rust is the one language whose Up starts what Build made; Julia
-    // compiles on its first start, Python and R not at all.
-    s.built = s.language != "rust" || dir.join("target/release/app").is_file();
+    // Rust and Unreal Up start what Build made; Julia compiles on its first
+    // start, Python and R not at all.
+    s.built = match s.language.as_str() {
+        "rust" => dir.join("target/release/app").is_file(),
+        "unreal" => dir.join("Saved/Packaged/Linux").is_dir(),
+        _ => true,
+    };
     #[cfg(unix)]
     {
         s.quota = crate::limits::mine();
@@ -169,7 +186,7 @@ pub fn compiling(dir: &Path) -> Option<u64> {
         let argv: Vec<String> = cmd.split(|b| *b == 0).map(|a| String::from_utf8_lossy(a).into_owned()).collect();
         let building = argv.iter().take(2).any(|a| {
             let base = a.rsplit('/').next().unwrap_or(a);
-            matches!(base, "build.sh" | "build-web.sh" | "cargo" | "rustc" | "wasm-bindgen")
+            matches!(base, "build.sh" | "build-web.sh" | "cargo" | "rustc" | "wasm-bindgen" | "RunUAT.sh")
         });
         if !building {
             continue;
@@ -227,11 +244,20 @@ pub fn action(host: &str, dir: &Path, verb: &str) -> Result<crate::api::JobView,
     if !VERBS.contains(&verb) {
         return Err(format!("{verb}: not build, up or down"));
     }
-    let script = dir.join(format!("{verb}.sh"));
+    let cdir = crate::dotcove::contract_dir(dir);
+    let script = cdir.join(format!("{verb}.sh"));
     if !is_executable(&script) {
         return Err(format!("{host} has no {verb}.sh - its app.env and verbs come with the starter (APP-CONTRACT.md)"));
     }
-    let cmd = format!("cd {} && ./{verb}.sh", crate::api::shell_quote(&dir.display().to_string()));
+    // From the project's root, by its path from there: .cove/up.sh, or
+    // ./up.sh in a project not moved into .cove/.
+    let rel = script.strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| format!("{verb}.sh"));
+    let vars_rel = cdir.join(crate::settings_tab::VARS).strip_prefix(dir).map(|p| p.display().to_string()).unwrap_or_else(|_| crate::settings_tab::VARS.to_owned());
+    // Up starts the app with the project's variables (Settings › Variables,
+    // settings_tab.rs) exported, so up.sh's run.sh inherits them; a project's
+    // own up.sh needs no change for it.
+    let vars = if verb == "up" && dir.join(&vars_rel).is_file() { format!("set -a && . ./{vars_rel} && set +a && ") } else { String::new() };
+    let cmd = format!("cd {} && {vars}./{rel}", crate::api::shell_quote(&dir.display().to_string()));
     crate::stack::jobs::start(slot(host), format!("{verb} {host}"), cmd, None)
 }
 
@@ -284,12 +310,18 @@ mod tests {
             std::fs::write(d.join("up.sh"), "#!/bin/sh\necho up: ok\n").unwrap();
             std::fs::set_permissions(d.join("up.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // Looked at once, the old layout moves into .cove/ (dotcove.rs) with
+        // all the verbs; its own up.sh gives way to .cove/up.sh.
         let s = status(&d);
         assert!(!s.inferred && s.language == "python" && s.port == "1" && !s.running);
+        assert!(d.join(".cove/app.env").is_file() && !d.join("app.env").exists() && !d.join("up.sh").exists());
         #[cfg(unix)]
-        assert_eq!(s.verbs, ["up"]);
+        assert_eq!(s.verbs, ["build", "up", "down"]);
         assert!(action("x.ndexr.io", &d, "deploy").is_err());
-        assert!(action("x.ndexr.io", &d, "build").is_err(), "no build.sh");
+        // A module app shows Build alone: the platform serves it.
+        std::fs::write(d.join(".cove/app.env"), "APP_LANGUAGE=r\nAPP_KIND=module\n").unwrap();
+        #[cfg(unix)]
+        assert_eq!(status(&d).verbs, ["build"]);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -176,6 +176,33 @@ fn header(name: &str, value: &str) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_bytes()).unwrap()
 }
 
+/// This machine is the platform (its checkout and .env are here). A cell's
+/// server is not.
+fn has_platform() -> bool {
+    crate::host::platform_root().join(".env").is_file()
+}
+
+/// The person's ndx_token, as the cell's gate let it through.
+fn ndx_token(req: &Request) -> Option<String> {
+    req.headers().iter().filter(|h| h.field.equiv("Cookie")).find_map(|h| {
+        h.value.as_str().split(';').find_map(|c| c.trim().strip_prefix("ndx_token=").map(str::to_owned)).filter(|t| !t.is_empty())
+    })
+}
+
+/// The same request, answered by the person's session on the platform.
+fn from_platform(req: &Request, make: impl Fn(&str) -> ehttp::Request) -> Response<std::io::Cursor<Vec<u8>>> {
+    let Some(token) = ndx_token(req) else {
+        return text(401, "this needs ndexr's platform, and the request carried no ndexr sign-in - sign in again");
+    };
+    match crate::account::platform_request(&token, make) {
+        Ok(r) => {
+            let ct = r.content_type().unwrap_or("application/json").to_owned();
+            Response::from_data(r.bytes).with_status_code(r.status).with_header(header("Content-Type", &ct)).with_header(header("Cache-Control", "no-store"))
+        }
+        Err(e) => text(502, &e),
+    }
+}
+
 fn json<T: serde::Serialize>(status: u16, v: &T) -> Response<std::io::Cursor<Vec<u8>>> {
     Response::from_data(serde_json::to_vec(v).unwrap_or_default())
         .with_status_code(status)
@@ -350,6 +377,17 @@ fn handle(ctx: &Ctx, mut req: Request) {
         let _ = req.respond(resp);
         return;
     }
+    // A cell has no build database: the build views come from the platform,
+    // as the person who asked (their ndx_token, through the cell's gate).
+    if method == Method::Get && (path == "/builds.json" || path == "/buildlog.json") && !has_platform() {
+        let resp = from_platform(&req, |base| {
+            let mut r = ehttp::Request::get(format!("{base}{url}"));
+            r.headers.insert("Accept", "application/json");
+            r
+        });
+        let _ = req.respond(resp);
+        return;
+    }
     if method == Method::Get && path == "/builds.json" {
         let _ = req.respond(builds_response());
         return;
@@ -363,6 +401,14 @@ fn handle(ctx: &Ctx, mut req: Request) {
     let _ = req.as_reader().take(40 << 20).read_to_end(&mut body);
     let resp = match (method, path.as_str()) {
         (Method::Post, "/api/q") => match serde_json::from_slice::<Query>(&body) {
+            // What only the platform answers, from a cell: asked there as the
+            // person, so a desktop app from before 0.1.9 works on a cell too
+            // (request #187: Messages said "no build database here").
+            Ok(q) if q.platform_only() && !has_platform() => from_platform(&req, |base| {
+                let mut r = ehttp::Request::post(format!("{base}/api/q"), body.clone());
+                r.headers.insert("Content-Type", "application/json");
+                r
+            }),
             Ok(q) => match crate::host::answer(&q) {
                 Ok(v) => json(200, &v),
                 Err(e) => text(500, &e),
@@ -391,6 +437,14 @@ pub fn showcase_dir() -> PathBuf {
 /// session or names a person; anything else under /view/ is 404. The json and
 /// the pictures are CORS-open, so a session's front page - on another origin
 /// in a cell - can show the same slides.
+// Cove's licence and the notices of every crate it is built from. Public at
+// /view/third-party-notices: whoever has a copy of Cove may read what it owes,
+// signed in or not (onprem/compliance.py checks it is served).
+fn notices_response() -> Response<std::io::Cursor<Vec<u8>>> {
+    const NOTICES: &str = include_str!("../THIRD-PARTY-NOTICES.txt");
+    text(200, NOTICES).with_header(header("Content-Type", "text/plain; charset=utf-8"))
+}
+
 pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
     let path = url.split('?').next().unwrap_or("/");
     if path == "/view" {
@@ -402,6 +456,7 @@ pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<
     }
     let open = |r: Response<std::io::Cursor<Vec<u8>>>| r.with_header(header("Access-Control-Allow-Origin", "*"));
     Some(match tail {
+        "third-party-notices" => open(notices_response()),
         "software.json" => open(software_response(req)),
         "builds.json" => open(builds_response()),
         "kernels.json" => open(kernels_response()),
@@ -526,7 +581,14 @@ pub fn software_response(req: &Request) -> Response<std::io::Cursor<Vec<u8>>> {
             }
             r
         }
-        Err(e) => text(404, &format!("no software catalog on this machine ({}: {e}) - `ndexr aggregate --only software` writes it", file.display())),
+        // Not the ndexr host (a cell, a desktop's own server): the public
+        // catalog, cached, as a desktop on its own computer reads it
+        // (host.rs software_catalog). A cell answered 404 here and its
+        // Software tab stayed empty (2026-11-02).
+        Err(_) => match crate::host::software_catalog() {
+            Ok(bytes) => Response::from_data(bytes).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-cache")),
+            Err(e) => text(503, &e),
+        },
     }
 }
 

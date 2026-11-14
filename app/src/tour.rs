@@ -248,7 +248,7 @@ pub static STEPS: &[Step] = &[
         id: "ws-run",
         targets: |_| t(&["app-strip", "tab:App"]),
         title: "Run controls",
-        body: |_| "Build, Up and Down run the project's own build.sh, up.sh and down.sh - the same scripts an agent or a terminal would.".into(),
+        body: |_| "Build, Up and Down run the project's .cove/build.sh, up.sh and down.sh - the same scripts an agent or a terminal would.".into(),
         done: None,
         skip: never,
         find: "The run controls show above the windows when a project has its own server.",
@@ -257,9 +257,9 @@ pub static STEPS: &[Step] = &[
     // 2-4 · a new project
     Step {
         id: "new",
-        targets: |_| t(&["new-project-item", "project-button"]),
+        targets: |_| t(&["project-button"]),
         title: "Create your first project",
-        body: |_| "Every application begins with a project. Click the project button, then + New project….".into(),
+        body: |_| "Every application begins with a project. Click the project button and type a name for it.".into(),
         done: Some(|s, _| s.naming || s.choosing.is_some()),
         skip: never,
         find: "On a phone the project button is in the Cove ▾ menu.",
@@ -909,7 +909,7 @@ impl Walk {
             Page::Documentation => {
                 ui.add(egui::Label::new(RichText::new("Every project carries its own documents; they open in the editor.").size(13.0).color(theme::text())).wrap());
                 ui.add_space(6.0);
-                for (name, what) in [("CONTEXT.md", "what the project is, its files and decisions - the agent reads it too"), ("APP-CONTRACT.md", "how build.sh, up.sh and down.sh run your app (port apps)"), ("README.md", "how to use it, where the starter has one")] {
+                for (name, what) in [("CONTEXT.md", "what the project is, its files and decisions - the agent reads it too"), ("APP-CONTRACT.md", "how .cove/build.sh, up.sh and down.sh run your app (port apps)"), ("README.md", "how to use it, where the starter has one")] {
                     ui.horizontal_wrapped(|ui| {
                         if ui.button(name).clicked() {
                             said.act = Some(Act::Open(name.to_owned()));

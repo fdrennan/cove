@@ -34,15 +34,11 @@ const ORG_EXCLUDED: &str = "'gmail.com', 'googlemail.com', 'outlook.com', 'hotma
      'ymail.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'pm.me', 'gmx.com', 'gmx.net', \
      'mail.com', 'yandex.com', 'zoho.com', 'fastmail.com', 'hey.com', 'tutanota.com', 'qq.com', '163.com', 'example.com'";
 
-/// SQL: may the person in user_presence row `p` be found by `me` (an email
-/// expression)? Their own choice decides (user_presence.findable): anyone,
-/// or people with their email's domain when that domain is an organization's.
-fn reach(p: &str, me: &str) -> String {
-    format!(
-        "({p}.findable = 'public' or ({p}.findable = 'org' and split_part({p}.email, '@', 2) = split_part({me}, '@', 2) \
-           and split_part({p}.email, '@', 2) not in ({ORG_EXCLUDED})))"
-    )
-}
+// Everyone on ndexr can find everyone, by username, and write to them or
+// share with them (operator, 2026-11-02: "all users publicly searchable to
+// all users"). user_presence.findable is still stored for clients that set it,
+// and no longer decides anything. What a person controls is what they accept:
+// a share to them is an offer until they take it.
 
 const NAME_OF: &str = "coalesce((select nu.username from ndexr_users nu where lower(nu.email) = lower(EMAIL) and nu.username <> '' limit 1), \
        case when (select admin from me) then EMAIL else 'someone' end)";
@@ -64,7 +60,6 @@ pub fn inbox(owner: &str, all: bool, chat: &str, find: &str) -> Result<InboxView
     // An admin's message is the team's, even on a request they sent themselves,
     // so an admin asking themselves sees the answer arrive as anyone would.
     let staff = "exists (select 1 from admin_users a where lower(a.email) = lower(m.author_email) and a.is_admin)";
-    let found_by_me = reach("p", "(select email from me)");
     let sql = format!(
         "with {ME}, \
          stamp as (insert into user_presence (email, username, last_seen) select email, username, now() from me \
@@ -81,7 +76,7 @@ pub fn inbox(owner: &str, all: bool, chat: &str, find: &str) -> Result<InboxView
                   from connections c where (select email from me) in (c.from_email, c.to_email) and c.status <> 'declined'), \
          folk as (select p.email, p.username, p.public, p.last_seen > now() - interval '2 minutes' as live from user_presence p \
                   where p.email <> (select email from me) and p.username <> '' \
-                    and (({found_by_me} and p.last_seen > now() - interval '2 minutes') or p.email in (select email from talked) \
+                    and (p.last_seen > now() - interval '2 minutes' or p.email in (select email from talked) \
                          or p.email in (select other from conn where status = 'accepted'))), \
          mine_g as (select g.*, m.status as my from people_groups g \
                     join people_group_members m on m.group_id = g.id and m.email = (select email from me)), \
@@ -154,10 +149,12 @@ pub fn inbox(owner: &str, all: bool, chat: &str, find: &str) -> Result<InboxView
            'found', coalesce((select json_agg(json_build_object('username', f.username, 'live', f.live, 'public', true, 'unread', 0, \
                'admin', exists (select 1 from admin_users a where lower(a.email) = f.email and a.is_admin)) \
                order by f.exact desc, f.live desc, f.username) \
-             from (select p.email, p.username, p.last_seen > now() - interval '2 minutes' as live, lower(p.username) = lower(:'find') as exact \
-                   from user_presence p where {found_by_me} and p.username <> '' and p.email <> (select email from me) \
-                     and :'find' <> '' and position(lower(:'find') in lower(p.username)) > 0 \
-                   order by lower(p.username) = lower(:'find') desc, p.last_seen desc limit 12) f), '[]'::json), \
+             from (select lower(u.email) as email, u.username, coalesce(p.last_seen > now() - interval '2 minutes', false) as live, \
+                          lower(u.username) = lower(:'find') as exact \
+                   from ndexr_users u left join user_presence p on p.email = lower(u.email) \
+                   where u.username <> '' and lower(u.email) <> (select email from me) \
+                     and :'find' <> '' and position(lower(:'find') in lower(u.username)) > 0 \
+                   order by lower(u.username) = lower(:'find') desc, p.last_seen desc nulls last, u.username limit 20) f), '[]'::json), \
            'chat', coalesce((select json_agg(x order by x.id) from (select d.id, \
                lower(d.from_email) = (select email from me) as mine, d.body, d.kind, coalesce(d.size, 0) as size, \
                d.read_at is not null as read, {sender} as who, \
@@ -176,6 +173,29 @@ pub fn inbox(owner: &str, all: bool, chat: &str, find: &str) -> Result<InboxView
     );
     let v = json(&sql, &[("owner", owner), ("all", if all { "1" } else { "0" }), ("chat", chat.trim()), ("find", find.trim())])?;
     serde_json::from_value(v).map_err(|e| format!("messages: {e}"))
+}
+
+/// The project search's view (Query::ProjectNames): shares offered to `owner`
+/// and not taken, and which of `names` are another account's (domain_registry,
+/// the platform's record of who holds a name). A platform-held name (no
+/// owner) is taken too.
+pub fn project_names(owner: &str, names: &[String]) -> Result<crate::api::ProjectNames, String> {
+    let list: Vec<String> = names.iter().map(|n| n.trim().to_ascii_lowercase()).filter(|n| host_ok(n)).take(20).collect();
+    let sql = format!(
+        "with {ME} \
+         select json_build_object( \
+           'offered', coalesce((select json_agg(json_build_object('id', s.id, 'domain', s.domain, 'role', s.role, 'owner', {owner_name}) order by s.created_at desc) \
+             from shares s where s.to_email = (select email from me) and s.status = 'offered'), '[]'::json), \
+           'taken', coalesce((select json_agg(json_build_object('host', r.domain, 'owner', \
+               case when coalesce(r.owner_email, '') = '' then 'ndexr' else {reg_owner} end)) \
+             from domain_registry r where r.domain = any(string_to_array(:'names', ',')) \
+               and lower(coalesce(r.owner_email, '')) <> coalesce((select email from me), '') \
+               and not exists (select 1 from shares s where s.domain = r.domain and s.to_email = (select email from me) and s.status = 'accepted')), '[]'::json))",
+        owner_name = name_of("s.owner_email"),
+        reg_owner = name_of("r.owner_email"),
+    );
+    let v = json(&sql, &[("owner", owner), ("names", &list.join(","))])?;
+    serde_json::from_value(v).map_err(|e| format!("project names: {e}"))
 }
 
 /// The platform's update_complaint, as an admin: the reply on the thread
@@ -316,19 +336,11 @@ pub fn act(owner: &str, act: &InboxAct) -> Result<Value, String> {
                 }
                 (String::new(), g)
             } else {
-                // To someone public, connected with me, or who has written to
-                // me: a private person is reached only by those they let in.
-                // An admin reaches anyone.
+                // To anyone with an account (everyone can find everyone).
                 let v = json(
-                    &format!("with them as (select lower(u.email) as email from ndexr_users u where lower(u.username) = lower(:'to') limit 1) \
-                     select json_build_object('to', coalesce((select email from them), ''), \
-                       'ok', :'admin' = '1' \
-                          or exists (select 1 from user_presence p, them where p.email = them.email and {reach}) \
-                          or exists (select 1 from direct_messages d, them where lower(d.from_email) = them.email and lower(d.to_email) = :'email') \
-                          or exists (select 1 from connections c, them where c.status = 'accepted' \
-                                     and least(c.from_email, c.to_email) = least(them.email, :'email') \
-                                     and greatest(c.from_email, c.to_email) = greatest(them.email, :'email')))", reach = reach("p", ":'email'")),
-                    &[("to", to.trim()), ("email", &email), ("admin", if admin { "1" } else { "0" })],
+                    "with them as (select lower(u.email) as email from ndexr_users u where lower(u.username) = lower(:'to') limit 1) \
+                     select json_build_object('to', coalesce((select email from them), ''))",
+                    &[("to", to.trim())],
                 )?;
                 let target = v["to"].as_str().unwrap_or_default().to_owned();
                 if target.is_empty() {
@@ -336,9 +348,6 @@ pub fn act(owner: &str, act: &InboxAct) -> Result<Value, String> {
                 }
                 if target == email {
                     return Err("that is you".into());
-                }
-                if !v["ok"].as_bool().unwrap_or(false) {
-                    return Err(format!("{to} is private - ask to connect, and they can accept"));
                 }
                 (target, String::new())
             };
@@ -412,16 +421,13 @@ pub fn act(owner: &str, act: &InboxAct) -> Result<Value, String> {
         }
         InboxAct::GroupInvite { id, who } => {
             let other = email_of(who)?;
-            // Into a group I am in, someone I am connected with.
+            // Into a group I am in, anyone: they accept or decline the invite.
             checked(
                 "select case \
                    when not exists (select 1 from people_group_members where group_id = :'g'::bigint and email = :'email' and status = 'member') \
                      then json_build_object('error', 'you are not in that group') \
-                   when :'admin' <> '1' and not exists (select 1 from connections where status = 'accepted' \
-                          and least(from_email, to_email) = least(:'other', :'email') and greatest(from_email, to_email) = greatest(:'other', :'email')) \
-                     then json_build_object('error', 'connect with them first - then you can invite them') \
                    else json_build_object('ok', true) end",
-                &[("g", &id.to_string()), ("email", &email), ("other", &other), ("admin", if admin { "1" } else { "0" })],
+                &[("g", &id.to_string()), ("email", &email)],
             )?;
             json(
                 "insert into people_group_members (group_id, email, status, invited_by) values (:'g'::bigint, :'other', 'invited', :'email') \
@@ -444,53 +450,91 @@ pub fn act(owner: &str, act: &InboxAct) -> Result<Value, String> {
              select '{\"ok\":true}'",
             &[("g", &id.to_string()), ("email", &email)],
         ),
-        InboxAct::Share { domain, to, group } => {
+        InboxAct::Share { domain, to, group, role } => {
             let d = domain.trim().to_ascii_lowercase();
             if !host_ok(&d) {
                 return Err(format!("{d}: not a domain name"));
             }
+            let role = match role.trim() {
+                "" | "use" => "use",
+                r @ ("read" | "edit" | "manage") => r,
+                r => return Err(format!("{r}: not a level (use, read, edit or manage)")),
+            };
             let other = if *group == 0 { email_of(to)? } else { String::new() };
             // Mine to share (the registry's owner or a seat, as auth_svc
-            // reads it), to someone connected with me or a group I am in. A
-            // person accepts it; a group's members accepted the group.
-            checked(
-                "select case \
-                   when :'admin' <> '1' and not exists (select 1 from domain_registry where domain = :'d' and lower(owner_email) = :'email') \
-                        and not exists (select 1 from user_domains where domain = :'d' and lower(email) = :'email') \
+            // reads it), or shared with me to manage (people_sharing.sql
+            // share_access), to anyone or a group I am in. Only the owner
+            // makes a manager, so no one raises themselves to the owner's
+            // level. A person accepts it; a group's members accepted the group.
+            let ok = checked(
+                "with mine as (select :'admin' = '1' \
+                                   or exists (select 1 from domain_registry where domain = :'d' and lower(owner_email) = :'email') \
+                                   or exists (select 1 from user_domains where domain = :'d' and lower(email) = :'email') as yes), \
+                      manager as (select exists (select 1 from share_access where domain = :'d' and email = :'email' and role = 'manage') as yes) \
+                 select case \
+                   when not (select yes from mine) and not (select yes from manager) \
                      then json_build_object('error', :'d' || ' is not yours to share') \
+                   when not (select yes from mine) and :'role' = 'manage' \
+                     then json_build_object('error', 'only its owner can let someone manage ' || :'d') \
                    when :'g' = '0' and :'other' = :'email' then json_build_object('error', 'that is you') \
-                   when :'g' = '0' and :'admin' <> '1' and not exists (select 1 from connections where status = 'accepted' \
-                          and least(from_email, to_email) = least(:'other', :'email') and greatest(from_email, to_email) = greatest(:'other', :'email')) \
-                     then json_build_object('error', 'connect with them first - then you can share with them') \
                    when :'g' <> '0' and not exists (select 1 from people_group_members where group_id = :'g'::bigint and email = :'email' and status = 'member') \
                      then json_build_object('error', 'you are not in that group') \
-                   else json_build_object('ok', true) end",
-                &[("d", &d), ("email", &email), ("other", &other), ("g", &group.to_string()), ("admin", if admin { "1" } else { "0" })],
+                   else json_build_object('ok', true, 'mine', (select yes from mine)) end",
+                &[("d", &d), ("email", &email), ("other", &other), ("g", &group.to_string()), ("admin", if admin { "1" } else { "0" }), ("role", role)],
             )?;
-            // Shared again after they turned it down: offered again.
-            json(
+            let mine = if checked_mine(&ok) { "1" } else { "0" };
+            // Shared again after they turned it down: offered again. Shared
+            // again with another role: that role (a person keeps an accepted
+            // share - they agreed to the domain, the owner sets how far).
+            // `tell`: someone should hear of it - a new share, another role,
+            // or one offered again after it was turned down; never a repeat
+            // click (share_mail.r, below).
+            let v = json(
                 if *group == 0 {
-                    "insert into shares (owner_email, domain, to_email) values (:'email', :'d', :'other') \
+                    "with prev as (select role, status from shares where domain = :'d' and to_email = :'other'), \
+                     up as (insert into shares (owner_email, domain, to_email, role) values (coalesce((select lower(owner_email) from domain_registry where domain = :'d' and owner_email <> ''), :'email'), :'d', :'other', :'role') \
                        on conflict (domain, to_email) where to_email is not null \
-                       do update set status = case when shares.status = 'declined' then 'offered' else shares.status end, owner_email = excluded.owner_email; \
-                     select '{\"ok\":true}'"
+                       do update set status = case when shares.status = 'declined' then 'offered' else shares.status end, \
+                         owner_email = excluded.owner_email, role = excluded.role \
+                       where shares.role <> 'manage' or :'mine' = '1' returning id, role) \
+                     select json_build_object('ok', true, 'id', (select id from up), \
+                       'tell', exists (select 1 from up) and (not exists (select 1 from prev) \
+                         or (select role from prev) <> (select role from up) or (select status from prev) = 'declined'))"
                 } else {
-                    "insert into shares (owner_email, domain, to_group, status, decided_at) values (:'email', :'d', :'g'::bigint, 'accepted', now()) \
-                       on conflict (domain, to_group) where to_group is not null do nothing; select '{\"ok\":true}'"
+                    "with prev as (select role from shares where domain = :'d' and to_group = :'g'::bigint), \
+                     up as (insert into shares (owner_email, domain, to_group, status, decided_at, role) values (coalesce((select lower(owner_email) from domain_registry where domain = :'d' and owner_email <> ''), :'email'), :'d', :'g'::bigint, 'accepted', now(), :'role') \
+                       on conflict (domain, to_group) where to_group is not null do update set role = excluded.role \
+                       where shares.role <> 'manage' or :'mine' = '1' returning id, role) \
+                     select json_build_object('ok', true, 'id', (select id from up), \
+                       'tell', exists (select 1 from up) and (not exists (select 1 from prev) or (select role from prev) <> (select role from up)))"
                 },
-                &[("d", &d), ("email", &email), ("other", &other), ("g", &group.to_string())],
-            )
+                &[("d", &d), ("email", &email), ("other", &other), ("g", &group.to_string()), ("role", role), ("mine", mine)],
+            )?;
+            if let (true, Some(id)) = (v["tell"].as_bool().unwrap_or(false), v["id"].as_i64()) {
+                tell_share(owner, id, &email);
+            }
+            Ok(serde_json::json!({ "ok": true }))
         }
         InboxAct::ShareDecide { id, accept } => json(
             "update shares set status = case when :'yes' = '1' then 'accepted' else 'declined' end, decided_at = now() \
                where id = :'id'::bigint and to_email = :'email' and status = 'offered'; select '{\"ok\":true}'",
             &[("id", &id.to_string()), ("email", &email), ("yes", if *accept { "1" } else { "0" })],
         ),
+        // Its owner (or an admin) takes any share back; a manager, those below
+        // manage.
         InboxAct::ShareRevoke { id } => json(
-            "delete from shares where id = :'id'::bigint and (owner_email = :'email' or :'admin' = '1'); select '{\"ok\":true}'",
+            "delete from shares s where s.id = :'id'::bigint and (s.owner_email = :'email' or :'admin' = '1' \
+               or (s.role <> 'manage' and exists (select 1 from share_access a where a.domain = s.domain and a.email = :'email' and a.role = 'manage'))); \
+             select '{\"ok\":true}'",
             &[("id", &id.to_string()), ("email", &email), ("admin", if admin { "1" } else { "0" })],
         ),
     }
+}
+
+/// Whether the share check found the domain the sharer's own (not only
+/// shared with them to manage).
+fn checked_mine(v: &Value) -> bool {
+    v["mine"].as_bool().unwrap_or(false)
 }
 
 /// A site's address as Messages takes one: letters, digits, dots, hyphens.
@@ -556,6 +600,26 @@ pub fn dm_file(owner: &str, id: i64) -> Result<crate::api::Attachment, String> {
     Ok(crate::api::Attachment { name, data: crate::api::b64_encode(&bytes) })
 }
 
+/// The share's emails (src/r/sharing/share_mail.r): to whoever was given it
+/// and to `by`, who gave it (operator, 2026-11-03). In the background, so a
+/// share never waits on mail; a failure is logged, the share stands.
+fn tell_share(owner: &str, id: i64, by: &str) {
+    let (owner, by) = (owner.to_owned(), by.to_owned());
+    std::thread::spawn(move || {
+        if let Err(e) = crate::host::platform_r_as(&owner, "share-mail.R", SHARE_MAIL_R, &[&id.to_string(), &by], 90) {
+            eprintln!("share {id}: the emails were not sent: {e}");
+        }
+    });
+}
+
+const SHARE_MAIL_R: &str = r#"
+args <- commandArgs(TRUE)
+options(box.path = Sys.getenv("NDEXR_SRC"))
+box::use(m = r/sharing/share_mail)
+r <- tryCatch(list(sent = m$share_notice(args[[1]], by = args[[2]])), error = function(e) list(error = conditionMessage(e)))
+cat(jsonlite::toJSON(r, auto_unbox = TRUE))
+"#;
+
 fn update_as(owner: &str, id: i64, status: &str, reply: &str, by: &str) -> Result<Value, String> {
     let v = crate::host::platform_r_with_file(owner, "inbox-update.R", UPDATE_R, &id.to_string(), status, reply, by)?;
     match v["error"].as_str() {
@@ -590,7 +654,7 @@ mod tests {
         assert!(super::act(person, &crate::api::InboxAct::Status { id: 1, status: "resolved".into() }).is_err(), "not theirs");
         assert!(super::act(person, &crate::api::InboxAct::Dm { to: person.into(), body: "hi".into(), kind: String::new(), file: None }).is_err(), "not to themselves");
         // Refused before anything is written: not theirs to share, not a group they are in.
-        let e = super::act(person, &crate::api::InboxAct::Share { domain: "cove.ndexr.io".into(), to: op.into(), group: 0 }).unwrap_err();
+        let e = super::act(person, &crate::api::InboxAct::Share { domain: "cove.ndexr.io".into(), to: op.into(), group: 0, role: String::new() }).unwrap_err();
         eprintln!("share refused: {e}");
         assert!(super::act(person, &crate::api::InboxAct::Dm { to: "#999999".into(), body: "hi".into(), kind: String::new(), file: None }).is_err(), "not their group");
         // Who can find me: a gmail.com address has no organization; a choice
@@ -647,7 +711,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
-        super::act(a, &A::Share { domain: d.clone(), to: b.into(), group: 0 }).expect("share");
+        super::act(a, &A::Share { domain: d.clone(), to: b.into(), group: 0, role: String::new() }).expect("share");
         assert!(!gate(&d), "offered is not in yet");
         let sh = super::inbox(b, false, "", "").unwrap().shares.into_iter().find(|s| s.domain == d && !s.mine).expect("b sees the offer");
         super::act(b, &A::ShareDecide { id: sh.id, accept: true }).expect("take it");
@@ -655,7 +719,7 @@ mod tests {
         super::act(a, &A::ShareRevoke { id: sh.id }).expect("take back");
         assert!(!gate(&d), "taken back is out");
         // A group share is in for its members at once.
-        super::act(a, &A::Share { domain: d.clone(), to: String::new(), group: g }).expect("share with the group");
+        super::act(a, &A::Share { domain: d.clone(), to: String::new(), group: g, role: String::new() }).expect("share with the group");
         assert!(gate(&d), "a member of the group is in");
         // (Not-mine-to-share is not tried here: both accounts are admins, and
         // an admin may share any domain.)

@@ -1,0 +1,7 @@
+target/
+# build-web.sh output: the game compiled to WebAssembly.
+dist/
+# The score board: runtime state written by the server, not source.
+data/
+# up.sh's pid and log.
+.run/

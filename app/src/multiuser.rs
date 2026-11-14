@@ -245,7 +245,7 @@ struct Account {
 
 /// A login name as useradd allows it; nothing else reaches PAM or getpwnam.
 pub fn valid_user(u: &str) -> bool {
-    !u.is_empty() && u.len() <= 32 && u.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c == '_') && u.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.".contains(c))
+    !u.is_empty() && u.len() <= 32 && u.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() && !c.is_ascii_uppercase() || c == '_') && u.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.".contains(c))
 }
 
 fn account(name: &str) -> Option<Account> {
@@ -735,6 +735,36 @@ fn person_domains(user: &str, a: &Account) -> Vec<(String, String)> {
     out
 }
 
+/// The domains a person may work on: their own and those shared with them to
+/// work on (shares.rs - its folder at ~/shared/<host>, its agent, its thread).
+/// Archive, access, deploy, versions and images stay `person_domains`: the
+/// owner's alone.
+fn workable_domains(user: &str, a: &Account) -> Vec<(String, String)> {
+    let mut out = person_domains(user, a);
+    for (h, p, _) in crate::shares::granted(Path::new(&a.home)) {
+        if !out.iter().any(|(x, _)| *x == h) {
+            out.push((h, p));
+        }
+    }
+    out
+}
+
+/// Wakes the shares loop (`run`) now rather than in up to 20 s.
+static SHARES_KICK: std::sync::OnceLock<std::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
+
+/// shares.rs reconcile, as root, with what it changed in the audit log.
+fn shares_reconcile(ctx: &Ctx) {
+    let acct = |u: &str| account(u).filter(|a| a.uid >= 1000).map(|a| (PathBuf::from(a.home), a.uid, a.gid));
+    match crate::shares::reconcile(acct) {
+        Ok(said) => {
+            for l in said {
+                audit(ctx, "server", "share", &l);
+            }
+        }
+        Err(e) => eprintln!("multiuser: shares: {e}"),
+    }
+}
+
 /// app/assets/deploy-app.sh, compiled in (see Query::DeployApp). Inside app/
 /// on purpose: the CLI packs only app/ as the source every box builds `ml cove`
 /// from, and an include from ../../onprem broke that build on every box
@@ -922,7 +952,7 @@ fn run_is_theirs(ctx: &Ctx, owner: &str, account: &Account, run: &str) -> bool {
     }
     let ok = is_admin(ctx, owner)
         || crate::host::run_in_thread_as(owner, "exec.ndexr.io", run)
-        || person_domains(owner, account).iter().any(|(h, _)| crate::host::run_in_thread_as(owner, h, run));
+        || workable_domains(owner, account).iter().any(|(h, _)| crate::host::run_in_thread_as(owner, h, run));
     if ok {
         started_runs().lock().unwrap().insert(run.to_owned(), owner.to_owned());
     }
@@ -981,7 +1011,17 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         // says - account.r keys every read and the revoke by their email.
         // Messages: the platform's database, which only this server reads.
         Query::Inbox { all, chat, find } => crate::messages::inbox(owner, *all, chat, find).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
-        Query::InboxAct { act } => crate::messages::act(owner, act),
+        Query::ProjectNames { names } => crate::messages::project_names(owner, names).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        Query::InboxAct { act } => {
+            let r = crate::messages::act(owner, act);
+            // A share, or a place in a group, may change who works on what.
+            if r.is_ok() && matches!(act, crate::api::InboxAct::Share { .. } | crate::api::InboxAct::ShareDecide { .. } | crate::api::InboxAct::ShareRevoke { .. } | crate::api::InboxAct::GroupJoin { .. } | crate::api::InboxAct::GroupLeave { .. }) {
+                if let Some(kick) = SHARES_KICK.get() {
+                    let _ = kick.send(());
+                }
+            }
+            r
+        }
         // Packages: the kit is under /home/ubuntu (0750) and the sessions are
         // this server's, so it answers - anyone signed in, the stack being
         // public; how many sessions load each module, an admin only.
@@ -1009,6 +1049,9 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                 Err("the recap is for ndexr admins".into())
             }
         }
+        // Speak: the platform's OpenAI key, which no person's process holds.
+        Query::Spoken { asked, reply } => crate::brief::spoken(asked, reply).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+        Query::ReadAloud { text } => crate::brief::read_aloud(text).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
         Query::RecapBrief { minutes, fresh } => {
             if ndexr_admin_cached(owner) {
                 serde_json::to_value(crate::brief::brief(*minutes, *fresh)).map_err(|e| e.to_string())
@@ -1104,7 +1147,7 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         }
         // Versions: read and restored as the platform account, which owns the
         // repositories the autosave service keeps; only the person's own.
-        Query::Versions { host } | Query::VersionRestore { host, .. } => {
+        Query::Versions { host } | Query::VersionRestore { host, .. } | Query::GitChanges { host, .. } | Query::GitDiff { host, .. } => {
             let h = host.trim().to_ascii_lowercase();
             match person_domains(owner, &account).into_iter().find(|(x, _)| *x == h) {
                 None => Err(format!("{h} is not one of your domains")),
@@ -1116,8 +1159,26 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                         audit(ctx, owner, "version-restore", &format!("{h} {sha} {}", if r.is_ok() { "done" } else { "refused" }));
                         r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
                     }
+                    (Query::GitChanges { sha, .. }, path) => crate::host::git_changes_at(Path::new(&path), sha).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+                    (Query::GitDiff { sha, path: file, old, .. }, path) => crate::host::git_diff_at(Path::new(&path), sha, file, old).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                     (_, path) => crate::host::versions_at(Path::new(&path)).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                 },
+            }
+        }
+        // The project's container image (docs/container-images.md): ndexr
+        // builds, publishes and hands out pull logins as the platform account,
+        // for the person's own domains only - the same check as Versions.
+        Query::Image { host, verb } => {
+            let h = host.trim().to_ascii_lowercase();
+            match person_domains(owner, &account).into_iter().find(|(x, _)| *x == h) {
+                None => Err(format!("{h} is not one of your domains")),
+                Some((_, path)) => {
+                    let r = crate::host::image_at(owner, Path::new(&crate::host::platform_paths(owner, &path)), &h, verb);
+                    if verb == "build" || verb == "pull" {
+                        audit(ctx, owner, &format!("image-{verb}"), &format!("{h} {}", if r.is_ok() { "done" } else { "refused" }));
+                    }
+                    r
+                }
             }
         }
         // Archive, for a person whose account cannot read the platform's
@@ -1156,13 +1217,15 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                 }
             }
         }
-        // Who may open a domain: only its owner (or an admin) reads or sets
-        // it; "admin" only an admin may choose.
+        // Who may open a domain: its owner, someone it is shared with to
+        // manage (shares.rs role_of), or an admin reads or sets it; "admin"
+        // only an admin may choose.
         Query::AppAccess { host, level } => {
             let h = host.trim().to_ascii_lowercase();
             let admin = ndexr_admin_cached(owner);
             let lvl = level.trim();
-            if !admin && !person_domains(owner, &account).iter().any(|(x, _)| *x == h) {
+            let manages = crate::shares::role_of(Path::new(&account.home), &h).as_deref() == Some("manage");
+            if !admin && !manages && !person_domains(owner, &account).iter().any(|(x, _)| *x == h) {
                 Err(format!("{h} is not one of your domains"))
             } else if !lvl.is_empty() && !["public", "login", "owner"].contains(&lvl) && !(admin && lvl == "admin") {
                 Err(format!("{lvl}: not a level you can choose"))
@@ -1186,7 +1249,19 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         // Publishing runs the platform's provisioner as the platform account:
         // the person's own session cannot reach the registry, DNS or nginx.
         Query::PublishDomain { host } => {
-            let r = crate::host::publish_as(owner, host);
+            // The level the project asks for (.cove/app.env APP_ACCESS, or
+            // app.env at an old-layout root): an Inlet starter says owner.
+            let h = host.trim().to_ascii_lowercase();
+            let access = person_domains(owner, &account)
+                .into_iter()
+                .find(|(x, _)| *x == h)
+                .and_then(|(_, p)| {
+                    [".cove/app.env", "app.env"].iter().find_map(|f| std::fs::read_to_string(Path::new(&p).join(f)).ok())
+                })
+                .and_then(|env| env.lines().find_map(|l| l.trim().strip_prefix("APP_ACCESS=").map(|v| v.trim().trim_matches('"').to_owned())))
+                .filter(|a| ["public", "login", "owner"].contains(&a.as_str()))
+                .unwrap_or_else(|| "login".to_owned());
+            let r = crate::host::publish_with(owner, host, &access);
             audit(ctx, owner, "publish", &format!("{host} {}", if r.is_ok() { "started" } else { "refused" }));
             r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
         }
@@ -1196,7 +1271,7 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         // and runs started for them or listed in their history.
         Query::AgentHistory { domain } => {
             let d = domain.trim().to_ascii_lowercase();
-            let theirs = d == "exec.ndexr.io" || is_admin(ctx, owner) || person_domains(owner, &account).iter().any(|(h, _)| *h == d);
+            let theirs = d == "exec.ndexr.io" || is_admin(ctx, owner) || workable_domains(owner, &account).iter().any(|(h, _)| *h == d);
             if !theirs {
                 Err(format!("{d} is not one of your domains"))
             } else {
@@ -1425,6 +1500,25 @@ fn update_session(ctx: &Ctx, user: &str, id: &str) -> Result<String, String> {
     r
 }
 
+/// Every app port in use on the machine, for the sessions' free_app_port
+/// (host.rs): this process is root and sees every project and vhost, a
+/// session sees only its own person's. Written whole, then renamed.
+fn publish_taken_ports() {
+    let mut ports: Vec<u16> = crate::host::taken_ports().into_iter().collect();
+    ports.sort_unstable();
+    let body: String = ports.iter().map(|p| format!("{p}\n")).collect();
+    let to = crate::host::ports_file();
+    let tmp = to.with_extension("new");
+    if std::fs::write(&tmp, body).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644));
+        }
+        let _ = std::fs::rename(&tmp, &to);
+    }
+}
+
 fn reaper(ctx: Arc<Ctx>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(30));
@@ -1433,6 +1527,7 @@ fn reaper(ctx: Arc<Ctx>) {
             stop(&ctx, &id, "server", &format!("idle over {} min, or ended", ctx.conf.idle.as_secs() / 60));
         }
         ctx.cookies.lock().unwrap().retain(|_, c| c.expires > Instant::now());
+        publish_taken_ports();
     });
 }
 
@@ -1511,15 +1606,15 @@ fn sign_in_url(req: &Request, url: &str) -> String {
     format!("https://console.ndexr.io/?next={enc}")
 }
 
-/// The editor a bare request means: Inlet on an inlet.* host (and on
-/// rstudio.*, its host until 2026-10-28, kept so old links work), Positron on
-/// a positron.* host, else the ide.
+/// The editor a bare request means: Inlet on an inlet.* host, Positron on a
+/// positron.* host, else the ide. rstudio.ndexr.io was retired 2026-10-29
+/// with no redirect (Posit's marks stay out of hostnames), so it is not here.
 fn host_kind(req: &Request) -> Kind {
     kind_of_host(get_header(req, "X-Forwarded-Host").or_else(|| get_header(req, "Host")).unwrap_or(""))
 }
 
 fn kind_of_host(host: &str) -> Kind {
-    if host.starts_with("inlet.") || host.starts_with("rstudio.") {
+    if host.starts_with("inlet.") {
         Kind::RStudio
     } else if host.starts_with("positron.") {
         Kind::Positron
@@ -1724,7 +1819,7 @@ fn home_page_for(ctx: &Ctx, user: &str, note: &str, prefer: Kind) -> Resp {
     }
     let m = modules(ctx);
     let last = mine.first().map(|s| s.4.clone()).unwrap_or_else(|| default_module(ctx));
-    let doms = account_for(ctx, user).map(|a| person_domains(user, &a)).unwrap_or_default();
+    let doms = account_for(ctx, user).map(|a| workable_domains(user, &a)).unwrap_or_default();
     let places = if doms.is_empty() {
         "<option value=''>home - you have no domains yet</option>".to_owned()
     } else {
@@ -1996,6 +2091,38 @@ fn own_domain(ctx: &Ctx, user: &str) -> Option<String> {
     doms.iter().find(|(h, _)| *h == own).or(doms.first()).map(|(_, p)| p.clone())
 }
 
+/// Cove's ⌂ ndexr project is ~/ndexr, and no provisioning step made it: a person
+/// who opened it got "500 /home/claude/ndexr: No such file or directory"
+/// (2026-10-30). Built at login by its one writer, in the background: it is
+/// idempotent, and they are on their own site meanwhile.
+fn ensure_own_ndexr(ctx: &Ctx, user: &str) {
+    let Ok(a) = account_for(ctx, user) else { return };
+    if Path::new(&a.home).join("ndexr").exists() {
+        return;
+    }
+    let script = crate::host::platform_root().join("scripts/cells/tenant-ndexr.sh");
+    let user = user.to_owned();
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("runuser").args(["-u", "ubuntu", "--", "bash"]).arg(script).arg(user).current_dir("/").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    });
+}
+
+/// This person's Cove session `id` runs an older build than the current one.
+fn session_is_stale(ctx: &Ctx, user: &str, id: &str) -> bool {
+    let (now, ..) = current_release(ctx);
+    let running = ctx.sessions.lock().unwrap().get(id).filter(|s| s.owner == user && s.kind == Kind::Ide).map(|s| s.release.clone());
+    !now.is_empty() && running.is_some_and(|r| r != now)
+}
+
+/// Their own site still says "Your site" and its thread is empty: nobody has
+/// told it what it is (ide.rs `own_site_first` asks the same of the client).
+fn own_site_waiting(ctx: &Ctx, user: &str) -> bool {
+    let Some(dir) = own_domain(ctx, user) else { return false };
+    let host = Path::new(&dir).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let named = std::fs::read_to_string(Path::new(&dir).join("CONTEXT.md")).is_ok_and(|t| t.lines().next() == Some(format!("# {} · {host}", crate::agent::SITE_TITLE).as_str()));
+    named && crate::host::agent_history_as(user, &host).is_ok_and(|t| t.is_empty())
+}
+
 /// Holds the person on the URL they came in on and reloads it until the
 /// account is ready, then `/` takes them in as usual. After a couple of
 /// minutes it says where to go if nothing is coming (no username picked).
@@ -2230,10 +2357,20 @@ fn handle(ctx: &Ctx, mut req: Request) {
                 // Someone's first Cove opens on their own site, the domain
                 // console made for them at sign-up, not on a bare home folder.
                 Kind::Ide => match latest_or_new(ctx, &user) {
-                    Ok(id) => match own_domain(ctx, &user).filter(|_| fresh) {
-                        Some(dir) => redirect(&format!("/s/{id}/?folder={}", encode(&dir))),
-                        None => redirect(&format!("/s/{id}/")),
-                    },
+                    Ok(id) => {
+                        // A site waiting for its first answer needs the build
+                        // that asks: this login moves their session onto it
+                        // (operator, 2026-10-30: "each person on next log in").
+                        ensure_own_ndexr(ctx, &user);
+                        let waiting = own_site_waiting(ctx, &user);
+                        if waiting && session_is_stale(ctx, &user, &id) {
+                            let _ = update_session(ctx, &user, &id);
+                        }
+                        match own_domain(ctx, &user).filter(|_| fresh || waiting) {
+                            Some(dir) => redirect(&format!("/s/{id}/?folder={}", encode(&dir))),
+                            None => redirect(&format!("/s/{id}/")),
+                        }
+                    }
                     Err(e) => home_page(ctx, &user, &e),
                 },
                 Kind::RStudio => home_page_for(ctx, &user, "", Kind::RStudio),
@@ -2251,7 +2388,7 @@ fn handle(ctx: &Ctx, mut req: Request) {
             let kind = host_kind(&req);
             // Only one of the person's domains (home only for someone with none):
             // the form offers nothing else, and a hand-made post gets no further.
-            let doms = account_for(ctx, &user).map(|a| person_domains(&user, &a)).unwrap_or_default();
+            let doms = account_for(ctx, &user).map(|a| workable_domains(&user, &a)).unwrap_or_default();
             let place_ok = if doms.is_empty() { g("project").is_empty() } else { doms.iter().any(|(_, p)| *p == g("project")) };
             if !place_ok {
                 home_page_for(ctx, &user, "start in one of your domains", kind)
@@ -2310,6 +2447,14 @@ fn handle(ctx: &Ctx, mut req: Request) {
                 Some(r) => r,
                 None => html(404, page("not found", format!("<main><p>That {} session has ended. <a href=/>Back</a> - or open the project again from its lens.</p></main>", kind.label()))),
             }
+        }
+        // A refresh counts as coming back: a person whose site is waiting for
+        // its first answer gets the current build here as they do at `/`.
+        (Method::Get, p, Some(user)) if session_route(p).is_some_and(|(id, tail)| tail.is_empty() && session_is_stale(ctx, &user, id) && own_site_waiting(ctx, &user)) => {
+            if let Some((id, _)) = session_route(p) {
+                let _ = update_session(ctx, &user, id);
+            }
+            redirect(&url)
         }
         (_, p, Some(user)) => match session_route(p) {
             Some((id, tail)) => {
@@ -2514,6 +2659,19 @@ pub fn main(args: &[String]) -> i32 {
     let ctx = Arc::new(Ctx { conf, web, exe, sessions: Default::default(), cookies: Default::default(), failures: Default::default(), modules: Default::default(), audit: Default::default(), people });
     reaper(ctx.clone());
     {
+        // Domains shared to work on: the units match the database within 20 s
+        // of any change, wherever it was made (a platform session writes
+        // shares itself), and again after a reboot.
+        let ctx = ctx.clone();
+        let (kick, woken) = std::sync::mpsc::channel();
+        let _ = SHARES_KICK.set(kick);
+        std::thread::spawn(move || loop {
+            shares_reconcile(&ctx);
+            let _ = woken.recv_timeout(Duration::from_secs(20));
+            while woken.try_recv().is_ok() {}
+        });
+    }
+    {
         // Everyone with a Cove session, measured against their plan
         // (storage.rs). RStudio and Positron sessions have no Cove to show it.
         let ctx = ctx.clone();
@@ -2651,7 +2809,7 @@ mod tests {
         assert_eq!(Kind::parse("RStudio"), Kind::RStudio);
         // Inlet's host, and its old one so links people kept still open it.
         assert_eq!(super::kind_of_host("inlet.ndexr.io"), Kind::RStudio);
-        assert_eq!(super::kind_of_host("rstudio.ndexr.io"), Kind::RStudio);
+        assert_eq!(super::kind_of_host("rstudio.ndexr.io"), Kind::Ide, "retired 2026-10-29");
         assert_eq!(super::kind_of_host("positron.ndexr.io"), Kind::Positron);
         assert_eq!(super::kind_of_host("cove.ndexr.io"), Kind::Ide);
         assert_eq!(Kind::RStudio.label(), "Inlet");

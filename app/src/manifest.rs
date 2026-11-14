@@ -65,6 +65,9 @@ pub struct Record {
     pub skip: String,
     pub arch: String,
     pub import: String,
+    /// `SiteLibrary: yes`: synced back into a box's site library with what it
+    /// needs; otherwise it lives in S3 only (repo.ndexr.io/env) - the default.
+    pub site_library: bool,
 }
 
 /// The languages a set can hold: R and Python, since 2026-10-18 Rust
@@ -212,9 +215,52 @@ pub fn records(text: &str) -> Vec<Record> {
                 skip: take("Skip"),
                 arch: take("Arch"),
                 import: take("Import"),
+                site_library: matches!(take("SiteLibrary").trim().to_ascii_lowercase().as_str(), "yes" | "true" | "1"),
             })
         })
         .collect()
+}
+
+/// Records back as a manifest.dcf, in the fields and order `records` reads
+/// them (Url and Ref as the kit writes them; SiteLibrary only when yes): a
+/// draft of a manifest is written with this, so what is proposed is what
+/// the CLI will read.
+pub fn to_dcf(recs: &[Record]) -> String {
+    let mut out = String::new();
+    for r in recs {
+        let fields = [
+            ("Package", r.package.as_str()),
+            ("Language", r.language.as_str()),
+            ("Source", r.source.as_str()),
+            ("Version", r.version.as_str()),
+            ("Group", r.group.as_str()),
+            ("Description", r.description.as_str()),
+            ("Url", r.url.as_str()),
+            ("Ref", r.reference.as_str()),
+            ("Note", r.note.as_str()),
+            ("Report", r.report.as_str()),
+            ("Skip", r.skip.as_str()),
+            ("Arch", r.arch.as_str()),
+            ("Import", r.import.as_str()),
+        ];
+        for (k, v) in fields.iter().filter(|(_, v)| !v.trim().is_empty()) {
+            // DCF joins continuation lines with a space; a line break is a
+            // lone "." (parse_dcf), so each one is written as one.
+            let mut lines = v.split('\n');
+            out.push_str(&format!("{k}: {}\n", lines.next().unwrap_or("").trim()));
+            for l in lines {
+                out.push_str("  .\n");
+                if !l.trim().is_empty() {
+                    out.push_str(&format!("  {}\n", l.trim()));
+                }
+            }
+        }
+        if r.site_library {
+            out.push_str("SiteLibrary: yes\n");
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// Records per language.
@@ -1071,6 +1117,17 @@ pub mod host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A draft is written with to_dcf and read back with records: every
+    /// field, a value over lines, and SiteLibrary come through as they were.
+    #[test]
+    fn a_manifest_written_reads_back_the_same() {
+        let mut recs = records(DCF);
+        recs[0].site_library = true;
+        recs[1].note = "first line\n\nafter a blank".into();
+        let again = records(&to_dcf(&recs));
+        assert_eq!(again, recs);
+    }
 
     const DCF: &str = "# svbt manifest\nPackage: ggplot2\nLanguage: R\nSource: CRAN\nVersion: 3.5.1\nGroup: plotting\nDescription: Create Elegant Data\n  Visualisations Using the Grammar of Graphics\n\nPackage: Biostrings\nLanguage: R\nSource: Bioconductor\nVersion: 2.74.0\nGroup: bioc\nArch: x86_64\n\n\nPackage: scikit_learn\nLanguage: Python\nSource: PyPI\nVersion: 1.5.2\nImport: sklearn\nSkip: aarch64\n\nLanguage: R\nNote: a record without a Package is none\n";
 

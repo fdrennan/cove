@@ -1,0 +1,172 @@
+{
+  "at": "2026-11-13T06:02:34Z",
+  "cove_commit": "80b4425",
+  "counts": {
+    "pass": 12,
+    "fail": 1,
+    "skip": 0
+  },
+  "checks": [
+    {
+      "id": "cove.licence",
+      "tool": "Cove",
+      "duty": "Cove is MIT, and says so where people see it",
+      "gate": true,
+      "status": "pass",
+      "evidence": "LICENSE starts 'MIT License'; About states MIT: yes",
+      "check": "cove.licence",
+      "product": "cove",
+      "summary": "LICENSE starts 'MIT License'; About states MIT: yes",
+      "details": {}
+    },
+    {
+      "id": "cove.dependency-licences",
+      "tool": "Cove",
+      "duty": "Every crate linked into Cove is usable under a permissive licence (nothing copyleft reaches Cove's code)",
+      "gate": true,
+      "status": "pass",
+      "evidence": "469 of 469 crates resolve to an allowed licence",
+      "check": "cove.dependency-licences",
+      "product": "cove",
+      "summary": "469 of 469 crates resolve to an allowed licence",
+      "details": {}
+    },
+    {
+      "id": "cove.notices-current",
+      "tool": "Cove",
+      "duty": "THIRD-PARTY-NOTICES.txt matches the Cargo.lock being built",
+      "gate": true,
+      "status": "pass",
+      "evidence": "dependencies sha256 9e2f1007cc847a95; file current; 410 crates from their own notice files, 59 from canonical texts",
+      "check": "cove.notices-current",
+      "product": "cove",
+      "summary": "dependencies sha256 9e2f1007cc847a95; file current; 410 crates from their own notice files, 59 from canonical texts",
+      "details": {}
+    },
+    {
+      "id": "cove.notices-packaged",
+      "tool": "Cove",
+      "duty": "Every package Cove ships carries LICENSE and the notices",
+      "gate": true,
+      "status": "pass",
+      "evidence": "deb, dmg, linux and windows builds copy LICENSE + THIRD-PARTY-NOTICES.txt",
+      "check": "cove.notices-packaged",
+      "product": "cove",
+      "summary": "deb, dmg, linux and windows builds copy LICENSE + THIRD-PARTY-NOTICES.txt",
+      "details": {}
+    },
+    {
+      "id": "cove.not-derivative",
+      "tool": "Cove",
+      "duty": "No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only)",
+      "gate": true,
+      "status": "pass",
+      "evidence": "64648 Cove lines (>= 20 chars) against 408838 distinct RStudio + Inlet lines; 24 allow-listed generic lines; no other match",
+      "check": "cove.not-derivative",
+      "product": "cove",
+      "summary": "64648 Cove lines (>= 20 chars) against 408838 distinct RStudio + Inlet lines; 24 allow-listed generic lines; no other match",
+      "details": {
+        "cove_lines": 64648,
+        "reference_lines": 408838,
+        "allow_listed": 24,
+        "matches": []
+      }
+    },
+    {
+      "id": "platform.no-marks-in-hostnames",
+      "tool": "Cove + Inlet",
+      "duty": "No Posit mark (RStudio, Posit, Positron, Shiny) in any served ndexr hostname",
+      "gate": true,
+      "status": "pass",
+      "evidence": "599 vhosts, none names a Posit mark",
+      "check": "platform.no-marks-in-hostnames",
+      "product": "platform",
+      "summary": "599 vhosts, none names a Posit mark",
+      "details": {}
+    },
+    {
+      "id": "positron.not-hosted",
+      "tool": "Positron",
+      "duty": "Positron (Elastic License 2.0) is not offered to others: no enabled vhost routes its sessions",
+      "gate": true,
+      "status": "pass",
+      "evidence": "no enabled vhost includes positron_sessions.conf",
+      "check": "positron.not-hosted",
+      "product": "positron",
+      "summary": "no enabled vhost includes positron_sessions.conf",
+      "details": {}
+    },
+    {
+      "id": "inlet.licence-text",
+      "tool": "Inlet",
+      "duty": "The installed Inlet carries the AGPLv3 text and RStudio's NOTICE",
+      "gate": false,
+      "status": "pass",
+      "evidence": "COPYING is AGPLv3: yes; NOTICE 865416 bytes",
+      "check": "inlet.licence-text",
+      "product": "inlet",
+      "summary": "COPYING is AGPLv3: yes; NOTICE 865416 bytes",
+      "details": {}
+    },
+    {
+      "id": "inlet.source-offer",
+      "tool": "Inlet",
+      "duty": "AGPL \u00a713: every session links to the corresponding source of the running version, and the link answers",
+      "gate": false,
+      "status": "pass",
+      "evidence": "https://ndexr-stack-public.s3.us-east-2.amazonaws.com/stack/records/Inlet/2026.04.0%2B526-foss-2024a-R-4.6.1/index.html -> HTTP 200; installed build 20261030.002319 listed: yes",
+      "check": "inlet.source-offer",
+      "product": "inlet",
+      "summary": "https://ndexr-stack-public.s3.us-east-2.amazonaws.com/stack/records/Inlet/2026.04.0%2B526-foss-2024a-R-4.6.1/index.html -> HTTP 200; installed build 20261030.002319 listed: yes",
+      "details": {}
+    },
+    {
+      "id": "inlet.records-match-install",
+      "tool": "Inlet",
+      "duty": "The published patches and recipe are byte-for-byte the ones the running Inlet was built with",
+      "gate": false,
+      "status": "fail",
+      "evidence": "check raised URLError: <urlopen error [Errno 104] Connection reset by peer>",
+      "check": "inlet.records-match-install",
+      "product": "inlet",
+      "summary": "check raised URLError: <urlopen error [Errno 104] Connection reset by peer>",
+      "details": {}
+    },
+    {
+      "id": "inlet.upstream-source",
+      "tool": "Inlet",
+      "duty": "RStudio's release tarball is public, and its sha256 is the one the recipe pins",
+      "gate": false,
+      "status": "pass",
+      "evidence": "public tarball HTTP 200, sha256 912df414d1ac94e5 vs recipe 912df414d1ac94e5",
+      "check": "inlet.upstream-source",
+      "product": "inlet",
+      "summary": "public tarball HTTP 200, sha256 912df414d1ac94e5 vs recipe 912df414d1ac94e5",
+      "details": {}
+    },
+    {
+      "id": "inlet.no-posit-marks-as-name",
+      "tool": "Inlet",
+      "duty": "The running Inlet does not present itself with RStudio's name (patches 0014-0018)",
+      "gate": false,
+      "status": "pass",
+      "evidence": "the compiled UI names itself Inlet (no 'About/Quit/Restart RStudio')",
+      "check": "inlet.no-posit-marks-as-name",
+      "product": "inlet",
+      "summary": "the compiled UI names itself Inlet (no 'About/Quit/Restart RStudio')",
+      "details": {}
+    },
+    {
+      "id": "cove.notices-served",
+      "tool": "Cove",
+      "duty": "The running Cove serves its third-party notices publicly (/view/third-party-notices)",
+      "gate": false,
+      "status": "pass",
+      "evidence": "HTTP 200; carries this Cargo.lock's notices: yes",
+      "check": "cove.notices-served",
+      "product": "cove",
+      "summary": "HTTP 200; carries this Cargo.lock's notices: yes",
+      "details": {}
+    }
+  ]
+}

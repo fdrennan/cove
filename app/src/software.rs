@@ -52,6 +52,7 @@ use crate::theme;
 mod branches;
 mod brush;
 mod builds;
+mod draft;
 mod install;
 mod logs;
 mod manifests;
@@ -977,7 +978,6 @@ pub enum View {
     Tree,
     Manifests,
     Curves,
-    Depth,
     Timeline,
     Queue,
     Logs,
@@ -986,7 +986,16 @@ pub enum View {
 
 impl View {
     fn builds(self) -> bool {
-        matches!(self, View::Curves | View::Depth | View::Timeline | View::Queue | View::Logs)
+        matches!(self, View::Curves | View::Timeline | View::Queue | View::Logs)
+    }
+
+    /// The Builds mode's group: 0 Packages, 1 Environments, 2 Builds.
+    fn tab_whole(self) -> usize {
+        match self {
+            View::Find | View::Tree => 0,
+            View::Manifests => 1,
+            _ => 2,
+        }
     }
 
     /// Which toolbar tab a view sits under: Packages, Builds, Install.
@@ -1082,6 +1091,10 @@ pub struct SoftwarePane {
     slot: Loaded,
     asked: bool,
     pub view: View,
+    /// The view each of the Builds mode's three groups was last on, so
+    /// coming back to a group comes back to it.
+    pkg_view: View,
+    build_view: View,
     query: String,
     chips: u8,
     sort: Sort,
@@ -1126,6 +1139,10 @@ pub struct SoftwarePane {
     overlay: Option<builds::Measure>,
     pinned: Option<f64>,
     cwin: Option<(f64, f64)>,
+    /// Curves across the calendar; off (the default), across building time -
+    /// every stretch no machine was building cut out (operator, 2026-10-28:
+    /// "the hours built over time matter more than the time between builds").
+    calendar: bool,
     /// The curves' vertical window, for the measure it was drawn in.
     cywin: Option<(builds::Measure, f64, f64)>,
     /// Rows a vertical drag on the gantt picked; None shows every match.
@@ -1154,6 +1171,8 @@ impl Default for SoftwarePane {
             slot: Default::default(),
             asked: false,
             view: View::Find,
+            pkg_view: View::Find,
+            build_view: View::Curves,
             query: String::new(),
             chips: 0,
             sort: Sort::Best,
@@ -1189,6 +1208,7 @@ impl Default for SoftwarePane {
             overlay: Some(builds::Measure::Spend),
             pinned: None,
             cwin: None,
+            calendar: false,
             cywin: None,
             gantt_rows: None,
             logs: Default::default(),
@@ -1385,21 +1405,50 @@ impl SoftwarePane {
             const FIND: (View, &str, &str) = (View::Find, "Find", "search everything the stack builds");
             const TREE: (View, &str, &str) = (View::Tree, "Tree", "the matches as a tree: paradigm, arch, the stack bottom up, the site libraries top down, the day built");
             const MANIFESTS: (View, &str, &str) = (View::Manifests, "Manifests", "every env manifest: what it loads, its R and Python records, what is built; compare two");
+            // The Builds mode, around three questions (operator, 2026-11-01):
+            // what software there is, which environments hold it, how it was
+            // built. One group at a time, then that group's own views - not
+            // eight views side by side.
+            if whole {
+                match self.view {
+                    View::Find | View::Tree => self.pkg_view = self.view,
+                    v if v.builds() => self.build_view = v,
+                    _ => {}
+                }
+                let groups = [
+                    (self.pkg_view, "Packages", "every package the stack builds: search it, see where each one is and how it was built"),
+                    (View::Manifests, "Environments", "every environment's manifest: what it holds, two compared, and a draft of changes to propose"),
+                    (self.build_view, "Builds", "how it got built: the curves, the timeline, the queue and the logs"),
+                ];
+                for (v, name, tip) in groups {
+                    if sized_segment(ui, name, tip, self.view.tab_whole() == v.tab_whole(), 13.5).clicked() {
+                        self.view = v;
+                    }
+                }
+                let own: &[(View, &str, &str)] = match self.view.tab_whole() {
+                    0 => &[(View::Find, "List", "the matches, best first"), (View::Tree, "Tree", "the matches as a tree: paradigm, arch, the stack bottom up, the site libraries top down, the day built")],
+                    2 => &[
+                        (View::Curves, "Curves", "packages built, build time and what they cost, over time"),
+                        (View::Timeline, "Timeline", "the gantt: a row per software, a line per machine"),
+                        (View::Queue, "Queue", "what each machine is building now and what it has left"),
+                        (View::Logs, "Logs", "each build machine's log, live as it builds"),
+                    ],
+                    _ => &[],
+                };
+                if !own.is_empty() {
+                    theme::tool_sep(ui);
+                    for &(v, name, tip) in own {
+                        if sized_segment(ui, name, tip, self.view == v, 11.5).clicked() {
+                            self.view = v;
+                        }
+                    }
+                }
+            }
             let views: &[(View, &str, &str)] = if whole {
-                &[
-                    FIND,
-                    TREE,
-                    MANIFESTS,
-                    (View::Curves, "Curves", "packages built, build time and what they cost, over time"),
-                    (View::Depth, "3D", "the cumulative curves in perspective, a lane per machine"),
-                    (View::Timeline, "Timeline", "the gantt: a row per software, a line per machine"),
-                    (View::Queue, "Queue", "what each machine is building now and what it has left"),
-                    (View::Logs, "Logs", "each build machine's log, live as it builds"),
-                ]
+                &[]
             } else if self.view.builds() {
                 &[
                     (View::Curves, "Curves", "packages built, build time and what they cost, over time - a line per machine, arch, paradigm, manifest or language: click a moment to see what finished"),
-                    (View::Depth, "3D", "the cumulative curves in perspective: a lane per machine (or arch, paradigm…), each stacked by the colours of another; drag to turn"),
                     (View::Timeline, "Timeline", "the gantt for the matches: a row per software, a line per machine; drag across for a stretch of time, down for a set of rows, Shift+drag to pan, Ctrl+wheel to zoom"),
                     (View::Queue, "Queue", "what each machine is building now and what it has left, by how long"),
                     (View::Logs, "Logs", "each build machine's log, live as it builds"),
@@ -1410,10 +1459,6 @@ impl SoftwarePane {
             for &(v, name, tip) in views {
                 if self.public && v == View::Manifests {
                     continue;
-                }
-                // The whole stack's switch: what it has, then how it got built.
-                if whole && v == View::Curves {
-                    theme::tool_sep(ui);
                 }
                 if segment(ui, name, tip, self.view == v).clicked() {
                     self.view = v;
@@ -1575,7 +1620,6 @@ impl SoftwarePane {
                 self.live_tick(backend, ctx);
                 self.queue_view(ui, &cat)
             }
-            View::Depth => self.depth_view(ui, &cat),
             View::Logs => self.logs_view(ui, backend, ctx),
             // Drawn before the catalog is needed (above).
             View::Manifests | View::Install => {}
@@ -2366,7 +2410,13 @@ fn region<R>(ui: &mut egui::Ui, rect: Rect, add: impl FnOnce(&mut egui::Ui) -> R
 /// One button of the toolbar's segmented switches: Packages | Builds and the
 /// views under each look alike.
 pub fn segment(ui: &mut egui::Ui, name: &str, tip: &str, on: bool) -> egui::Response {
-    let t = RichText::new(name).size(12.0).color(if on { theme::text_strong() } else { theme::muted() });
+    sized_segment(ui, name, tip, on, 12.0)
+}
+
+/// `segment` at a size: the Builds mode's three groups larger than the views
+/// under each, so which question is being answered reads first.
+fn sized_segment(ui: &mut egui::Ui, name: &str, tip: &str, on: bool, size: f32) -> egui::Response {
+    let t = RichText::new(name).size(size).color(if on { theme::text_strong() } else { theme::muted() });
     let b = egui::Button::new(t)
         .fill(if on { theme::surface_hi() } else { Color32::TRANSPARENT })
         .stroke(Stroke::new(1.0, if on { theme::pane_brd() } else { Color32::TRANSPARENT }))

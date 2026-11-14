@@ -258,15 +258,16 @@ impl Backend {
         let mut req = match self {
             #[cfg(not(target_arch = "wasm32"))]
             Backend::Local => {
-                std::thread::spawn(move || done(crate::host::build_log(key.as_deref(), from)));
+                let path = format!("/buildlog.json{q}");
+                std::thread::spawn(move || done(local_or_platform(crate::host::build_log(key.as_deref(), from), &path)));
                 return;
             }
             Backend::Http { base } => ehttp::Request::get(format!("{base}/buildlog.json{q}")),
             #[cfg(not(target_arch = "wasm32"))]
-            Backend::Cell { base, session } => {
-                let mut r = ehttp::Request::get(format!("{base}/buildlog.json{q}"));
-                r.headers.insert("Cookie", format!("ndx_token={}", session.lock().unwrap()));
-                r
+            Backend::Cell { session, .. } => {
+                let session = session.clone();
+                std::thread::spawn(move || done(platform_file(&session, &format!("/buildlog.json{q}"))));
+                return;
             }
         };
         #[cfg(target_arch = "wasm32")]
@@ -295,15 +296,15 @@ impl Backend {
         let mut req = match self {
             #[cfg(not(target_arch = "wasm32"))]
             Backend::Local => {
-                std::thread::spawn(move || done(crate::host::builds_live()));
+                std::thread::spawn(move || done(local_or_platform(crate::host::builds_live(), "/builds.json")));
                 return;
             }
             Backend::Http { base } => ehttp::Request::get(format!("{base}/builds.json")),
             #[cfg(not(target_arch = "wasm32"))]
-            Backend::Cell { base, session } => {
-                let mut r = ehttp::Request::get(format!("{base}/builds.json"));
-                r.headers.insert("Cookie", format!("ndx_token={}", session.lock().unwrap()));
-                r
+            Backend::Cell { session, .. } => {
+                let session = session.clone();
+                std::thread::spawn(move || done(platform_file(&session, "/builds.json")));
+                return;
             }
         };
         #[cfg(target_arch = "wasm32")]
@@ -334,7 +335,17 @@ impl Backend {
             #[cfg(not(target_arch = "wasm32"))]
             Backend::Local => {
                 std::thread::spawn(move || {
-                    cb(crate::host::answer(&q).and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string())));
+                    // Asked here; what only the platform has goes there, as
+                    // the signed-in person. The laptop's own files stay its
+                    // own: only a refusal goes, never a query that works here.
+                    let r = match crate::host::answer(&q) {
+                        Err(e) if needs_platform(e.as_bytes()) => match crate::account::key_session() {
+                            Some(s) => on_platform(&s, serde_json::to_vec(&q).unwrap_or_default()),
+                            None => Err(format!("{e} - sign in to ndexr (account menu) and it is answered there")),
+                        },
+                        r => r.and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string())),
+                    };
+                    cb(r);
                     ctx.request_repaint();
                 });
             }
@@ -347,14 +358,97 @@ impl Backend {
             }
             #[cfg(not(target_arch = "wasm32"))]
             Backend::Cell { base, session } => {
-                let mut req = post(format!("{base}/api/q"), serde_json::to_vec(&q).unwrap_or_default());
+                let body = serde_json::to_vec(&q).unwrap_or_default();
+                if q.platform_only() {
+                    let session = session.clone();
+                    std::thread::spawn(move || {
+                        cb(on_platform(&session, body));
+                        ctx.request_repaint();
+                    });
+                    return;
+                }
+                let mut req = post(format!("{base}/api/q"), body.clone());
                 req.headers.insert("Cookie", format!("ndx_token={}", session.lock().unwrap()));
-                fetch(req, move |r| {
+                let session = session.clone();
+                ehttp::fetch(req, move |res| {
+                    // What the cell cannot do, the platform does for the same
+                    // person (account.rs platform_session).
+                    let r = match res {
+                        Ok(r) if !r.ok && needs_platform(&r.bytes) => on_platform(&session, body),
+                        other => decode(other),
+                    };
                     cb(r);
                     ctx.request_repaint();
                 });
             }
         }
+    }
+}
+
+/// A cell's Cove server has no platform checkout: Messages, agent runs and the
+/// build views answer 500 with one of these (host.rs). Operator screenshot,
+/// 2026-11-03: "500 no platform checkout on this machine" for an agent's `ls`,
+/// "500 no build database here" in Messages.
+/// Measured again 2026-11-02, every read-only query from the laptop, on its
+/// own and through its cell: the account and the admin views refuse the
+/// same way, worded differently.
+#[cfg(not(target_arch = "wasm32"))]
+const PLATFORM_ONLY: [&str; 6] = [
+    "no platform checkout on this machine",
+    "no build database here",
+    "no build logs on this machine",
+    "needs the platform checked out on this machine",
+    "for ndexr admins",
+    "managed by admins signed in at cove.ndexr.io",
+];
+
+/// A build view's file asked here first; refused (no build database on a
+/// laptop), the platform's, as the signed-in person.
+#[cfg(not(target_arch = "wasm32"))]
+fn local_or_platform(here: Result<Vec<u8>, String>, path: &str) -> Result<Vec<u8>, String> {
+    match here {
+        Err(e) if needs_platform(e.as_bytes()) => match crate::account::key_session() {
+            Some(s) => platform_file(&s, path),
+            None => Err(format!("{e} - sign in to ndexr (account menu) and it is answered there")),
+        },
+        r => r,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn needs_platform(body: &[u8]) -> bool {
+    let t = String::from_utf8_lossy(body);
+    PLATFORM_ONLY.iter().any(|m| t.contains(m))
+}
+
+/// A request to this person's session on the platform's Cove.
+#[cfg(not(target_arch = "wasm32"))]
+fn on_platform_raw(session: &crate::account::Session, make: impl Fn(&str) -> ehttp::Request) -> Result<ehttp::Response, String> {
+    let token = session.lock().unwrap().clone();
+    crate::account::platform_request(&token, make)
+}
+
+/// The question again, at this person's session on the platform's Cove.
+#[cfg(not(target_arch = "wasm32"))]
+fn on_platform<T: DeserializeOwned>(session: &crate::account::Session, body: Vec<u8>) -> Result<T, String> {
+    decode(on_platform_raw(session, |base| post(format!("{base}/api/q"), body.clone())))
+}
+
+/// One of the build views' files, from the platform: a cell has no build
+/// database, so they are never asked of it.
+#[cfg(not(target_arch = "wasm32"))]
+fn platform_file(session: &crate::account::Session, path: &str) -> Result<Vec<u8>, String> {
+    let r = on_platform_raw(session, |base| {
+        let mut r = ehttp::Request::get(format!("{base}{path}"));
+        r.headers.insert("Accept", "application/json");
+        r
+    })?;
+    if r.ok && !r.bytes.trim_ascii_start().starts_with(b"<") {
+        Ok(r.bytes)
+    } else if r.ok {
+        Err("signed out - sign in again".into())
+    } else {
+        Err(http_err(r.status, &r.bytes))
     }
 }
 
@@ -374,8 +468,13 @@ fn post(url: String, body: Vec<u8>) -> ehttp::Request {
 /// One request, its JSON body decoded. The session cookie rides along (same
 /// origin, see `post`), so the gate applies to the UI's every call.
 fn fetch<T: DeserializeOwned + 'static>(req: ehttp::Request, cb: impl FnOnce(Result<T, String>) + Send + 'static) {
-    ehttp::fetch(req, move |res| {
-        cb(match res {
+    ehttp::fetch(req, move |res| cb(decode(res)));
+}
+
+/// A reply as the answer it carries, or the words for what went wrong.
+fn decode<T: DeserializeOwned>(res: Result<ehttp::Response, String>) -> Result<T, String> {
+    {
+        match res {
             // A gate redirect lands on the login page: HTML, not an answer.
             Ok(r) if r.ok && r.bytes.trim_ascii_start().starts_with(b"<") => Err("signed out - reload the page to sign in".into()),
             Ok(r) if r.ok => serde_json::from_slice(&r.bytes).map_err(|e| format!("bad reply: {e}")),
@@ -389,8 +488,8 @@ fn fetch<T: DeserializeOwned + 'static>(req: ehttp::Request, cb: impl FnOnce(Res
             }
             Ok(r) => Err(http_err(r.status, &r.bytes)),
             Err(e) => Err(e),
-        })
-    });
+        }
+    }
 }
 
 /// Set once a request finds this page's session gone (app.rs reopens).

@@ -259,6 +259,10 @@ pub fn find_local_claude() -> Vec<FoundClaude> {
 
 /// At start: is a key here, and whose is it.
 pub fn check(acct: Shared, ctx: eframe::egui::Context) {
+    // Airgap mode: api.ndexr.io is not asked who anyone is.
+    if crate::host::saved_settings().airgap {
+        return;
+    }
     std::thread::spawn(move || {
         let Some(key) = find_key() else { return };
         let mut a = acct.lock().unwrap();
@@ -345,6 +349,52 @@ fn session_token(key: &str) -> Result<(String, u64), String> {
     Ok((token, v["expires_in"].as_u64().unwrap_or(900)))
 }
 
+/// The platform's Cove (`NDEXR_COVE_URL`; https://cove.ndexr.io).
+pub fn cove_base() -> String {
+    std::env::var("NDEXR_COVE_URL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "https://cove.ndexr.io".into()).trim_end_matches('/').to_owned()
+}
+
+/// This person's session on the platform's Cove, as a base URL: a signed-in
+/// GET / there redirects to /s/<id>/ (multiuser.rs), the session a browser
+/// gets. What a cell cannot answer (Messages, agent runs, the build
+/// database - it has no platform checkout) is asked there instead; both work
+/// on the same files, since the cell mounts the account's domains folder.
+pub fn platform_session(token: &str) -> Result<String, String> {
+    let mut req = ehttp::Request::get(format!("{}/", cove_base()));
+    req.headers.insert("Cookie", format!("ndx_token={token}"));
+    let r = ehttp::fetch_blocking(&req).map_err(|e| format!("ndexr's Cove could not be reached: {e}"))?;
+    let id = r.url.split_once("/s/").map(|(_, rest)| rest.split(['/', '?']).next().unwrap_or("").to_owned()).unwrap_or_default();
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("ndexr's Cove opened no session for you (it answered {} at {})", r.status, r.url));
+    }
+    Ok(format!("{}/s/{id}", cove_base()))
+}
+
+/// A request to `token`'s own session on the platform's Cove: `make` builds it
+/// from the session's base URL, and the token goes as the ndx_token cookie.
+/// The address is found once and kept; when the platform's server restarted
+/// (every release does) and the session is gone, it is found again.
+pub fn platform_request(token: &str, make: impl Fn(&str) -> ehttp::Request) -> Result<ehttp::Response, String> {
+    static BASE: Mutex<Option<(String, String)>> = Mutex::new(None);
+    let ask = |base: &str| {
+        let mut req = make(base);
+        req.headers.insert("Cookie", format!("ndx_token={token}"));
+        ehttp::fetch_blocking(&req)
+    };
+    // Kept per person: a token's email is its first part (auth_svc.rs).
+    let who = token.split('.').next().unwrap_or("").to_owned();
+    let known = BASE.lock().unwrap().clone().filter(|(w, _)| *w == who).map(|(_, b)| b);
+    if let Some(b) = known {
+        match ask(&b) {
+            Ok(r) if r.status == 404 => {}
+            r => return r,
+        }
+    }
+    let b = platform_session(token)?;
+    *BASE.lock().unwrap() = Some((who, b.clone()));
+    ask(&b)
+}
+
 /// Connect to the person's cell, at launch: (the server's base URL, the
 /// session the backend sends). Asks who the key is, takes a session token,
 /// checks the cell's ide server answers, and keeps the token fresh on a
@@ -390,29 +440,53 @@ pub fn connect_cell() -> Result<(String, Session), String> {
             // account on this domain - e.g. its personal domain missing from
             // domain_registry (fdrennan.ndexr.io, 2026-10-13).
             Ok(r) if r.status == 403 => return Err(format!("{cell} refused this account (403) - its personal domain or editor is not registered on ndexr yet; ask the operator")),
+            // Awake, but nothing on :8002: code-server's proxy says so with a
+            // 500. Not a sleeping cell, so no wake and no browser trip to the
+            // cell's page (2026-11-02: every cell lacked /opt/ndexr/cove, and
+            // "connect" sent the person to code-server instead).
+            Ok(r) if r.text().is_some_and(|t| t.contains("ECONNREFUSED")) => return Err("your cell is running, but its Cove server is not (nothing on :8002) - restarting the cell starts it; ask the operator if it persists".into()),
             Ok(r) => return Err(format!("your cell's ide server answered {}", r.status)),
             Err(e) => return Err(format!("your cell could not be reached: {e}")),
         }
     }
     let session: Session = Arc::new(Mutex::new(token));
-    {
-        let session = session.clone();
-        std::thread::spawn(move || {
-            // Renew five minutes before expiry; on a failure, retry in a minute.
-            let mut wait = ttl.saturating_sub(300).max(60);
-            loop {
-                std::thread::sleep(Duration::from_secs(wait));
-                wait = match find_key().map(|k| session_token(&k)) {
-                    Some(Ok((t, ttl))) => {
-                        *session.lock().unwrap() = t;
-                        ttl.saturating_sub(300).max(60)
-                    }
-                    _ => 60,
-                };
-            }
-        });
-    }
+    keep_fresh(session.clone(), ttl);
     Ok((base, session))
+}
+
+/// Renew `session` five minutes before it expires, for as long as the app
+/// runs; on a failure, retry in a minute.
+fn keep_fresh(session: Session, ttl: u64) {
+    std::thread::spawn(move || {
+        let mut wait = ttl.saturating_sub(300).max(60);
+        loop {
+            std::thread::sleep(Duration::from_secs(wait));
+            wait = match find_key().map(|k| session_token(&k)) {
+                Some(Ok((t, ttl))) => {
+                    *session.lock().unwrap() = t;
+                    ttl.saturating_sub(300).max(60)
+                }
+                _ => 60,
+            };
+        }
+    });
+}
+
+/// The desktop on its own computer, signed in: a session from its key, for
+/// what only the platform answers (backend.rs needs_platform) - Messages,
+/// the account, the build views. Made once, kept fresh. None when not signed
+/// in, or ndexr cannot be reached.
+pub fn key_session() -> Option<Session> {
+    static KEPT: Mutex<Option<Session>> = Mutex::new(None);
+    let mut kept = KEPT.lock().unwrap();
+    if let Some(s) = kept.as_ref() {
+        return Some(s.clone());
+    }
+    let (token, ttl) = session_token(&find_key()?).ok()?;
+    let s: Session = Arc::new(Mutex::new(token));
+    keep_fresh(s.clone(), ttl);
+    *kept = Some(s.clone());
+    Some(s)
 }
 
 /// How long a launch waits for a sleeping cell to come up.

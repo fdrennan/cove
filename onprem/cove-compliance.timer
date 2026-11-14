@@ -1,0 +1,10 @@
+# Runs cove-compliance.service daily; Persistent catches a missed day after a reboot.
+[Unit]
+Description=Daily licence compliance report for Cove and Inlet
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

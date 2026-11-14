@@ -1,4 +1,4 @@
-//! The Builds tab's dimensions, its focus and its depth (operator,
+//! The Builds tab's dimensions and its focus (operator,
 //! 2026-10-15: "color by paradigm and ideally have a 3d perspective - paradigm
 //! and manifest and language are colors or groups ... so we can see other than
 //! just arch stats ... creating branches in the builds section which look tree
@@ -8,12 +8,12 @@
 //!             machine, arch, paradigm, manifest, language - so a split, a
 //!             colour or a filter is a lookup, never a string compare.
 //!   Branch    a path down those dimensions (arm › R › r4.6 rel): the focus.
-//!             Curves and 3D show only the builds under it. (The Branches tree
+//!             Curves show only the builds under it; a line's name under
+//!             the curves focuses it. (The Branches tree
 //!             view was removed, 2026-10-18: "Branches tab under builds can be
-//!             completely removed".)
-//!   3D        the cumulative curves in perspective: one lane per value of one
-//!             dimension, each lane stacked by the colours of another. Drag
-//!             turns it, hover reads it, a click focuses a lane.
+//!             completely removed".) The 3D view went 2026-11-01 (operator:
+//!             "remove 3D entirely. It adds another navigation model without
+//!             making package locations or build dependencies clearer").
 //!
 //! The steps are the catalog's (ndexr.ndexr.io aggregate/software.rs). The
 //! manifest is the box's own record (unibuild_steps.env_set) where it sent one,
@@ -23,9 +23,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, RichText, Sense, Shape, Stroke};
+use eframe::egui::{self, Color32, RichText};
 
-use super::{box_color, fmt_date, short_arch, short_box, short_set, thousands, Catalog, Kind, SoftwarePane};
+use super::{box_color, short_arch, short_box, short_set, Catalog, Kind};
 use crate::theme;
 
 // ── the dimensions ─────────────────────────────────────────────────────────
@@ -192,11 +192,6 @@ pub struct State {
     pub split: Dim,
     /// The focus: a path down the dimensions.
     pub branch: Vec<(Dim, u16)>,
-    lanes: Dim,
-    color: Dim,
-    hours: bool,
-    yaw: f32,
-    pitch: f32,
 }
 
 impl Default for State {
@@ -205,22 +200,9 @@ impl Default for State {
             dims: None,
             split: Dim::Machine,
             branch: Vec::new(),
-            lanes: Dim::Machine,
-            color: Dim::Paradigm,
-            hours: false,
-            yaw: YAW,
-            pitch: PITCH,
         }
     }
 }
-
-/// A quarter-turn from the first angle (operator, 2026-10-16: "3d view needs
-/// to rotate 90 degrees ... with the most done towards the back"): time runs
-/// away from the viewer, so each lane's cumulative curve rises toward the back
-/// and the tall, late part never hides the early part in front of it.
-const YAW: f32 = -0.55 + std::f32::consts::FRAC_PI_2;
-const PITCH: f32 = 0.42;
-const BINS: usize = 96;
 
 impl State {
     pub fn dims_for(&mut self, cat: &Catalog) -> Arc<Dims> {
@@ -242,23 +224,6 @@ impl State {
     pub fn sig(&self) -> String {
         format!("{:?}{:?}", self.split, self.branch)
     }
-}
-
-/// A dimension picker: the five as a small segmented switch.
-fn dim_pick(ui: &mut egui::Ui, now: &mut Dim, skip: &[Dim]) -> bool {
-    let mut changed = false;
-    for (d, name, tip) in Dim::ALL {
-        if skip.contains(&d) {
-            continue;
-        }
-        let on = *now == d;
-        let t = RichText::new(name).size(11.5).color(if on { theme::text_strong() } else { theme::muted() });
-        if ui.add(egui::Button::new(t).fill(if on { theme::surface_hi() } else { Color32::TRANSPARENT }).corner_radius(4)).on_hover_text(tip).clicked() && !on {
-            *now = d;
-            changed = true;
-        }
-    }
-    changed
 }
 
 /// The focus as breadcrumbs: every crumb steps back up to it, ✕ clears.
@@ -285,223 +250,9 @@ pub fn branch_strip(ui: &mut egui::Ui, dims: &Dims, branch: &mut Vec<(Dim, u16)>
             branch.truncate(n);
         }
         if branch.is_empty() {
-            ui.label(RichText::new("· focus a branch from 3D").size(10.5).color(theme::hush()));
+            ui.label(RichText::new("· tap a line's name under the curves to show only it").size(11.0).color(theme::text()));
         }
     });
-}
-
-impl SoftwarePane {
-    // ── 3D ─────────────────────────────────────────────────────────────────
-
-    pub(super) fn depth_view(&mut self, ui: &mut egui::Ui, cat: &Catalog) {
-        let dims = self.br.dims_for(cat);
-        branch_strip(ui, &dims, &mut self.br.branch);
-        theme::strip(ui, 22.0, theme::bg(), |ui| {
-            ui.add_space(6.0);
-            ui.spacing_mut().item_spacing.x = 3.0;
-            ui.label(RichText::new("lanes").size(11.0).color(theme::hush()));
-            let mut lanes = self.br.lanes;
-            dim_pick(ui, &mut lanes, &[]);
-            theme::tool_sep(ui);
-            ui.label(RichText::new("colour").size(11.0).color(theme::hush()));
-            let mut color = self.br.color;
-            dim_pick(ui, &mut color, &[lanes]);
-            if lanes == color {
-                color = Dim::ALL.iter().map(|d| d.0).find(|d| *d != lanes).unwrap_or(Dim::Paradigm);
-            }
-            (self.br.lanes, self.br.color) = (lanes, color);
-            theme::tool_sep(ui);
-            for (on, name, tip) in [(false, "built", "packages built so far"), (true, "build time", "hours of building so far")] {
-                let t = RichText::new(name).size(11.5).color(if self.br.hours == on { theme::text_strong() } else { theme::muted() });
-                if ui.add(egui::Button::new(t).fill(if self.br.hours == on { theme::surface_hi() } else { Color32::TRANSPARENT }).corner_radius(4)).on_hover_text(tip).clicked() {
-                    self.br.hours = on;
-                }
-            }
-            theme::tool_sep(ui);
-            for (name, yaw, pitch) in [("Angled", YAW, PITCH), ("Front", std::f32::consts::FRAC_PI_2, 0.08), ("Above", -0.2 + std::f32::consts::FRAC_PI_2, 1.25)] {
-                if theme::tool(ui, name, "turn the view to this; drag on the chart to turn it yourself").clicked() {
-                    (self.br.yaw, self.br.pitch) = (yaw, pitch);
-                }
-            }
-        });
-
-        // The lanes' stacked curves, binned over the focus's span.
-        let (lanes_d, color_d, hours) = (self.br.lanes, self.br.color, self.br.hours);
-        let (nl, nc) = (dims.values(lanes_d), dims.values(color_d));
-        let (mut lo, mut hi) = (i64::MAX, i64::MIN);
-        let picked: Vec<usize> = dims.unique.iter().map(|&k| k as usize).filter(|&k| cat.st_s[k] == b'd' && dims.under(&self.br.branch, k)).collect();
-        for &k in &picked {
-            lo = lo.min(cat.st_t[k] + cat.st_d[k]);
-            hi = hi.max(cat.st_t[k] + cat.st_d[k]);
-        }
-        if picked.is_empty() {
-            ui.add_space(14.0);
-            ui.vertical_centered(|ui| ui.label(RichText::new("Nothing finished under this focus.").color(theme::hush())));
-            return;
-        }
-        let hi = hi.max(lo + 60);
-        let bin = |t: i64| ((((t - lo) as f64) / (hi - lo) as f64) * (BINS - 1) as f64).round() as usize;
-        // grid[lane][colour][bin], cumulative.
-        let mut grid = vec![vec![vec![0f64; BINS]; nc]; nl];
-        for &k in &picked {
-            let v = if hours { cat.st_d[k] as f64 / 3600.0 } else { 1.0 };
-            grid[dims.code(lanes_d, k) as usize][dims.code(color_d, k) as usize][bin(cat.st_t[k] + cat.st_d[k]).min(BINS - 1)] += v;
-        }
-        for lane in &mut grid {
-            for c in lane.iter_mut() {
-                for b in 1..BINS {
-                    c[b] += c[b - 1];
-                }
-            }
-        }
-        let mut lanes: Vec<usize> = (0..nl).filter(|&l| grid[l].iter().any(|c| c[BINS - 1] > 0.0)).collect();
-        // Front to back: the machines in the operator's order - "start with
-        // gpu, then the old amd and then arm and intel ... with the most done
-        // towards the back" (2026-10-16), which is least built to most; any
-        // other split, least built first. Tall lanes stand behind short ones.
-        let total = |l: usize| grid[l].iter().map(|c| c[BINS - 1]).sum::<f64>();
-        let rank = |l: usize| -> usize {
-            if lanes_d != Dim::Machine {
-                return 0;
-            }
-            let n = dims.name(lanes_d, l as u16).to_ascii_lowercase();
-            ["gpu", "amd", "arm", "intel"].iter().position(|m| n.contains(m)).unwrap_or(4)
-        };
-        lanes.sort_by(|&a, &b| rank(a).cmp(&rank(b)).then(total(a).total_cmp(&total(b))));
-        let colors: Vec<usize> = (0..nc).filter(|&c| lanes.iter().any(|&l| grid[l][c][BINS - 1] > 0.0)).collect();
-        let ymax = lanes.iter().map(|&l| colors.iter().map(|&c| grid[l][c][BINS - 1]).sum::<f64>()).fold(0.0, f64::max).max(1e-9);
-        let fmt = |v: f64| if hours { format!("{v:.0} h") } else { thousands(v.round() as usize) };
-
-        // The legend.
-        theme::strip(ui, 20.0, theme::bg(), |ui| {
-            ui.add_space(8.0);
-            ui.spacing_mut().item_spacing.x = 4.0;
-            for &c in &colors {
-                ui.label(RichText::new("■").size(11.0).color(dims.color(color_d, c as u16)));
-                ui.label(RichText::new(dims.name(color_d, c as u16)).size(10.5).color(theme::muted()));
-            }
-            ui.label(RichText::new(format!("· drag to turn · click a lane to focus its {}", lanes_d.label())).size(10.5).color(theme::hush()));
-        });
-
-        let avail = ui.available_rect_before_wrap();
-        let (rect, resp) = ui.allocate_exact_size(avail.size().max(egui::vec2(200.0, 200.0)), Sense::click_and_drag());
-        if resp.dragged() {
-            let d = resp.drag_delta();
-            self.br.yaw += d.x * 0.008;
-            self.br.pitch = (self.br.pitch + d.y * 0.006).clamp(0.02, 1.4);
-        }
-        if resp.double_clicked() {
-            (self.br.yaw, self.br.pitch) = (YAW, PITCH);
-        }
-        let (yaw, pitch) = (self.br.yaw, self.br.pitch);
-        let (cy, sy, cp, sp) = (yaw.cos(), yaw.sin(), pitch.cos(), pitch.sin());
-        let scale = rect.width().min(rect.height() * 1.6) * 0.62;
-        let center = rect.center() + egui::vec2(0.0, rect.height() * 0.08);
-        // World: x time 0..1, y value 0..1, z lane 0..1 (front to back).
-        let proj = |x: f32, y: f32, z: f32| -> (Pos2, f32) {
-            let (x, y, z) = (x - 0.5, y * 0.55 - 0.2, (z - 0.5) * 0.9);
-            let (x1, z1) = (x * cy - z * sy, x * sy + z * cy);
-            // Tilted to look DOWN on the floor: a lane further back sits
-            // higher on screen. With the signs the other way round the
-            // camera looked up from under it and the curves hung upside down
-            // (operator, 2026-10-16: "the diagram for cove in 3d is upside down").
-            let (y2, z2) = (y * cp + z1 * sp, z1 * cp - y * sp);
-            let s = 2.4 / (2.4 + z2);
-            (center + egui::vec2(x1 * s * scale, -y2 * s * scale), z2)
-        };
-        let lane_z = |n: usize| if lanes.len() > 1 { n as f32 / (lanes.len() - 1) as f32 } else { 0.5 };
-        let p = ui.painter_at(rect);
-        p.rect_filled(rect, 0.0, theme::bg());
-        // The floor: the time axis at both ends, a line along each lane.
-        let floor = Stroke::new(1.0, theme::pane_brd().gamma_multiply(0.7));
-        for z in [0.0, 1.0] {
-            p.line_segment([proj(0.0, 0.0, z).0, proj(1.0, 0.0, z).0], floor);
-        }
-        for x in [0.0, 1.0] {
-            p.line_segment([proj(x, 0.0, 0.0).0, proj(x, 0.0, 1.0).0], floor);
-        }
-        let step = super::tick_step((hi - lo) as f64 / 6.0);
-        let mut t = ((lo + cat.t0) as f64 / step).ceil() * step - cat.t0 as f64;
-        while t <= hi as f64 {
-            let x = ((t - lo as f64) / (hi - lo) as f64) as f32;
-            let (a, b) = (proj(x, 0.0, 0.0).0, proj(x, 0.0, 1.0).0);
-            p.line_segment([a, b], Stroke::new(1.0, theme::pane_brd().gamma_multiply(0.35)));
-            let abs = t as i64 + cat.t0;
-            p.text(a + egui::vec2(0.0, 4.0), Align2::CENTER_TOP, if step >= 86400.0 { super::fmt_day(abs) } else { fmt_date(abs) }, FontId::proportional(9.5), theme::hush());
-            t += step;
-        }
-        // The value axis at the back left.
-        for q in 1..=4 {
-            let y = q as f32 / 4.0;
-            let (a, b) = (proj(0.0, y, 1.0).0, proj(1.0, y, 1.0).0);
-            p.line_segment([a, b], Stroke::new(1.0, theme::pane_brd().gamma_multiply(0.25)));
-            p.text(a - egui::vec2(4.0, 0.0), Align2::RIGHT_CENTER, fmt(ymax * q as f64 / 4.0), FontId::proportional(9.5), theme::hush());
-        }
-        // Lanes back to front, each a stack of curtains.
-        let mut order: Vec<(usize, f32)> = lanes.iter().enumerate().map(|(n, _)| (n, proj(0.5, 0.0, lane_z(n)).1)).collect();
-        order.sort_by(|a, b| b.1.total_cmp(&a.1));
-        let hover = resp.hover_pos();
-        let mut near: Option<(f32, usize, usize)> = None;
-        for &(n, _) in &order {
-            let l = lanes[n];
-            let z = lane_z(n);
-            let mut base = vec![0f64; BINS];
-            let mut mesh = egui::Mesh::default();
-            let mut tops: Vec<(Vec<Pos2>, Color32)> = Vec::new();
-            for &c in &colors {
-                let col = dims.color(color_d, c as u16);
-                let fill = col.gamma_multiply(0.78);
-                let top: Vec<f64> = (0..BINS).map(|b| base[b] + grid[l][c][b]).collect();
-                if top.iter().zip(&base).all(|(t, b)| t <= b) {
-                    continue;
-                }
-                let lo_pts: Vec<Pos2> = (0..BINS).map(|b| proj(b as f32 / (BINS - 1) as f32, (base[b] / ymax) as f32, z).0).collect();
-                let hi_pts: Vec<Pos2> = (0..BINS).map(|b| proj(b as f32 / (BINS - 1) as f32, (top[b] / ymax) as f32, z).0).collect();
-                for b in 0..BINS - 1 {
-                    let i = mesh.vertices.len() as u32;
-                    for q in [lo_pts[b], lo_pts[b + 1], hi_pts[b + 1], hi_pts[b]] {
-                        mesh.colored_vertex(q, fill);
-                    }
-                    mesh.add_triangle(i, i + 1, i + 2);
-                    mesh.add_triangle(i, i + 2, i + 3);
-                }
-                tops.push((hi_pts, col));
-                base = top;
-            }
-            p.add(Shape::mesh(mesh));
-            for (pts, col) in tops {
-                p.add(Shape::line(pts, Stroke::new(1.2, col)));
-            }
-            // The lane's name at its far end, and the nearest point to the pointer.
-            let end = proj(1.0, (base[BINS - 1] / ymax) as f32, z).0;
-            p.text(end + egui::vec2(6.0, 0.0), Align2::LEFT_CENTER, format!("{} {}", dims.name(lanes_d, l as u16), fmt(base[BINS - 1])), FontId::proportional(10.5), dims.color(lanes_d, l as u16));
-            if let Some(h) = hover {
-                for b in 0..BINS {
-                    let q = proj(b as f32 / (BINS - 1) as f32, (base[b] / ymax) as f32, z).0;
-                    let d = q.distance(h);
-                    if d < 24.0 && near.is_none_or(|x| d < x.0) {
-                        near = Some((d, l, b));
-                    }
-                }
-            }
-        }
-        if let Some((_, l, b)) = near {
-            let t = lo + ((hi - lo) as f64 * b as f64 / (BINS - 1) as f64) as i64;
-            egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new("d3-tip"), egui::PopupAnchor::Pointer).show(|ui| {
-                ui.label(RichText::new(format!("{} {} · {} UTC", lanes_d.label(), dims.name(lanes_d, l as u16), fmt_date(t + cat.t0))).strong());
-                for &c in colors.iter().rev() {
-                    let v = grid[l][c][b];
-                    if v > 0.0 {
-                        ui.label(RichText::new(format!("■ {}  {}", dims.name(color_d, c as u16), fmt(v))).color(dims.color(color_d, c as u16)));
-                    }
-                }
-                ui.label(RichText::new(format!("click to focus this {}", lanes_d.label())).size(10.5).color(theme::hush()));
-            });
-            if resp.clicked() && !self.br.branch.iter().any(|(d, _)| *d == lanes_d) {
-                self.br.branch.push((lanes_d, l as u16));
-            }
-        }
-    }
 }
 
 #[cfg(test)]

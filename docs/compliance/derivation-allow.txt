@@ -1,0 +1,36 @@
+# Lines Cove shares with RStudio or Inlet that are not RStudio's expression.
+# Reviewed 2026-10-29 (cove.not-derivative): every entry is a call into R's or a
+# language's own API, a language idiom, or HTML boilerplate - written the same
+# way by any program that does the same thing (merger, scenes a faire). A new
+# match fails the release gate until someone reviews it and either rewrites the
+# line or adds it here with its reason. Never add a line because it is in the way.
+#
+# R's own API, called the only way it can be called
+}, error = function(e) "")
+args <- commandArgs(TRUE)
+if (!requireNamespace("reticulate", quietly = TRUE))
+try(silent = TRUE, {
+utils:::.assignLinebuffer(line)
+utils:::.guessTokenFromLine()
+utils:::.completeToken()
+invokeRestart("muffleWarning")
+message = function(m) {
+invokeRestart("muffleMessage")
+stringsAsFactors = FALSE
+for (i in seq_len(n)) {
+# Python and JavaScript idioms
+except Exception as e:
+from pathlib import Path
+# Python's own entry-point guard, the only way to say "run when executed, not when imported" (python-blank-dash, 2026-11-07).
+if __name__ == "__main__":
+return new Promise((resolve, reject) => {
+(function (root, factory) {
+clearTimeout(timer);
+setTimeout(function () {
+# HTML boilerplate
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<div class="toolbar">
+<div class="dialog">
+# R that swallows an error and answers FALSE: any tryCatch that does this ends the same way (host.rs share_editors check, 2026-11-02).
+}, error = function(e) FALSE)

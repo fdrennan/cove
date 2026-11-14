@@ -50,6 +50,12 @@ const fn ready(lang: &'static str, framework: &'static str, app: &'static str, s
     Way { lang, framework, app, starter: Some(starter) }
 }
 
+/// A way that waits on the stack: what it needs is not built on the n-boxes
+/// yet (`app` says what, and the referral that asks for it).
+const fn waiting(lang: &'static str, framework: &'static str, app: &'static str) -> Way {
+    Way { lang, framework, app, starter: None }
+}
+
 
 /// The template ids create_domain knows. The first three are compiled in by
 /// hand (host.rs); every other id is a folder, templates/starters/<id>/,
@@ -59,7 +65,19 @@ const fn ready(lang: &'static str, framework: &'static str, app: &'static str, s
 pub const SHINY_CHAOS: &str = "shiny-chaos";
 pub const SHINY_BLANK: &str = "shiny-blank";
 pub const RUST_APP: &str = "rust";
+/// What a person's own site starts as (operator, 2026-10-30): Cove's first
+/// decision is what to build, and it is made watching this page change.
+pub const NODE_SITE: &str = "node-site";
 pub const FOLDER_STARTERS: &[&str] = &[
+    NODE_SITE,
+    "node-blank",
+    "node-blank-react",
+    "python-blank-fastapi",
+    "python-blank-flask",
+    "python-blank-streamlit",
+    "julia-blank",
+    "rust-blank",
+    "rust-blank-wasm",
     "shiny-epidemic",
     "shiny-trial",
     "shiny-genomics",
@@ -96,6 +114,23 @@ pub const FOLDER_STARTERS: &[&str] = &[
     "rust-particles",
     "rust-netwatch",
     "rust-jellyfish",
+    "rust-lastsignal",
+    "unreal-pixelstream",
+    "node-game",
+    "python-blank-dash",
+    "python-blank-bokeh",
+    "python-blank-panel",
+    "python-blank-mcp",
+    "python-blank-jupyter",
+    "python-blank-quarto",
+    "r-blank-plumber",
+    "r-blank-vetiver",
+    "r-blank-rmarkdown",
+    "r-blank-interactive",
+    "r-blank-quarto",
+    "r-inlet-ide",
+    "ide-vscode",
+    "r-inlet-source",
 ];
 
 pub const CATEGORIES: &[Category] = &[
@@ -210,6 +245,57 @@ pub const CATEGORIES: &[Category] = &[
         ],
     },
     Category {
+        title: "Website",
+        world: World::Create,
+        what: "A site of your own, live from the first second: say what it should be and watch it change.",
+        ways: &[
+            ready("React", "React and Node", "Your site: a React page with moving dunes, nothing to compile, every save on screen at once", NODE_SITE),
+        ],
+    },
+    // Every framework Cove marks, from nothing (operator, 2026-10-30: "a blank slate
+    // project for all languages and frameworks ... fast loading and iteration"): one
+    // page, a health check, and a save that shows without pressing anything.
+    Category {
+        title: "Blank",
+        world: World::Create,
+        what: "Nothing but a running page, in the language you want. Every save shows at once.",
+        ways: &[
+            ready("React", "React and Node", "A React page, nothing to compile", "node-blank-react"),
+            ready("Node", "Node.js", "A page and a table of routes, no npm", "node-blank"),
+            ready("Python", "FastAPI", "A page and a route, reloads on save, /docs included", "python-blank-fastapi"),
+            ready("Python", "Flask", "A page and a route, reloads on save", "python-blank-flask"),
+            ready("Python", "Streamlit", "One script, reruns on save", "python-blank-streamlit"),
+            ready("R", "Shiny", "One heading and the site's shell, live on save", SHINY_BLANK),
+            ready("Julia", "HTTP.jl", "A page and a handler, restarts on save", "julia-blank"),
+            ready("Rust", "tiny_http", "A page and a handler; pages show on save, code after .cove/build.sh", "rust-blank"),
+            ready("Rust", "WebAssembly, no bindgen", "Rust in the browser, called from a page", "rust-blank-wasm"),
+            // Every framework Posit Connect publishes is a Cove starter, once
+            // its packages are built for every box (operator, 2026-11-07).
+            ready("Python", "Dash", "A page with a slider and a Plotly chart, reloads on save", "python-blank-dash"),
+            ready("Python", "Bokeh", "A Bokeh server app: a slider and a plot, reloads on save", "python-blank-bokeh"),
+            ready("Python", "Panel", "A Panel app: a slider bound to a function, reloads on save", "python-blank-panel"),
+            ready("R", "Plumber", "An API from annotated R functions, docs at /__docs__/, restarts on save", "r-blank-plumber"),
+            ready("R", "vetiver and Plumber", "A fitted model served as an API: /predict, /metadata, /ping and docs", "r-blank-vetiver"),
+            ready("Python", "MCP over FastAPI", "An MCP server: tools an AI agent calls at /mcp, reloads on save", "python-blank-mcp"),
+            waiting("Python", "Shiny for Python", "Waits on the stack: the shiny package is not in its Python sets yet (#755 to ndexr.ndexr.io)"),
+            waiting("Python", "Gradio", "Waits on the stack: gradio is not in its Python sets yet (#755 to ndexr.ndexr.io)"),
+            waiting("Python", "vetiver for Python", "Waits on the stack: vetiver and pins are not in its Python sets yet (#755 to ndexr.ndexr.io)"),
+        ],
+    },
+    Category {
+        title: "Reports & Notebooks",
+        world: World::Create,
+        what: "Documents that run their code - R Markdown, Quarto and Jupyter - published as pages. Every save renders again.",
+        ways: &[
+            ready("R", "R Markdown", "A report with parameters from the address (?points=1000&seed=7)", "r-blank-rmarkdown"),
+            ready("R", "R Markdown, runtime: shiny", "An interactive document: prose and code with live inputs", "r-blank-interactive"),
+            ready("R", "Quarto", "A Quarto document with R, rendered again on every save", "r-blank-quarto"),
+            ready("Python", "Quarto", "A Quarto document with Python, rendered again on every save", "python-blank-quarto"),
+            ready("Python", "Jupyter notebook", "A notebook published as a page; every save runs it again", "python-blank-jupyter"),
+            waiting("Python", "Voilà", "Waits on the stack: its Python install lacks Jupyter's page templates (#753 to ndexr.ndexr.io)"),
+        ],
+    },
+    Category {
         title: "Design & Color",
         world: World::Create,
         what: "Colour as science: perceptual spaces, palettes, contrast and how others see them.",
@@ -229,10 +315,26 @@ pub const CATEGORIES: &[Category] = &[
     Category {
         title: "Games & Play",
         world: World::Create,
-        what: "Arcade games for a phone or a keyboard, each with a score board the site's players share.",
+        what: "Games for a phone or a keyboard, each with a score board the site's players share.",
         ways: &[
-            ready("React", "React and Node", "Dolphin Jump: leap out of the waves for stars, dodge jellyfish, build combos", "node-dolphin"),
+            ready("TypeScript", "PixiJS, React for menus", "Swarm: a template for fast 2D browser games - thousands of drones in a fixed-step simulation, drawn by PixiJS between steps, React only for menus and the HUD", "node-game"),
+            ready("Rust", "WebAssembly, no bindgen", "Last Signal: survivors against the machines - salvage by day, hold the Haven by night, push back the Grid, hack their machines and burn out the AI Cores; every rule in Rust", "rust-lastsignal"),
+            ready("React", "React and Node", "Dolphin Jump:leap out of the waves for stars, dodge jellyfish, build combos", "node-dolphin"),
             ready("Rust", "WebAssembly, no bindgen", "Jellyfish Drift: pulse through coral gaps for pearls - the physics in Rust, compiled to WebAssembly", "rust-jellyfish"),
+            ready("C++", "Unreal Engine 5, Pixel Streaming", "Unreal Sandbox: a C++ Unreal Engine 5 scene played in the browser, rendered on this machine's GPU - needs Unreal installed and an NVIDIA GPU", "unreal-pixelstream"),
+        ],
+    },
+    // Your own IDE (operator, 2026-11-07: "take inlet and modify it to their
+    // wishes like a custom ide starter"): Inlet from the stack, run as the
+    // person's site, with its look and behaviour as files in the project.
+    Category {
+        title: "Your Own IDE",
+        world: World::Engineer,
+        what: "An IDE that is yours to reshape: its themes, keys, snippets and defaults are files in the project, and its patches a command away.",
+        ways: &[
+            ready("R", "Inlet, the RStudio fork", "My Inlet: ndexr's RStudio fork as your own site - themes, keybindings, snippets and preferences in config/; recipe.sh and rebuild.sh patch and rebuild Inlet alone with EasyBuild, every dependency from the stack; owner-only", "r-inlet-ide"),
+            ready("R", "Inlet from source", "Inlet from source: RStudio's open-source code as a git repository - upstream, Inlet's patches as commits, and your branch; edit RStudio itself, then rebuild.sh makes your commits into patches and builds it with the stack's EasyBuild; owner-only", "r-inlet-source"),
+            ready("VS Code", "code-server", "My VS Code: VS Code in the browser as your own site, with the stack's R, Python and Quarto extensions - settings, keybindings and snippets in config/; recipe.sh and rebuild.sh patch and rebuild it alone with EasyBuild; owner-only", "ide-vscode"),
         ],
     },
     Category {
@@ -264,13 +366,21 @@ pub const CATEGORIES: &[Category] = &[
             ready("Julia", "HTTP.jl", "Scientific API: statistics, distributions, fits and ODEs", "julia-api"),
         ],
     },
-    Category {
-        title: "Blank",
-        world: World::Create,
-        what: "An empty page with the platform's shell around it, to start from nothing.",
-        ways: &[ready("R", "Shiny", "One heading and the site's shell", SHINY_BLANK)],
-    },
 ];
+
+/// What a project needs from the ndexr stack, from its app.env's APP_NEEDS:
+/// `(kind, name)` for each `python:<PyPI name>`, `r:<package>`,
+/// `julia:<package>` or `module:<EasyBuild name>` (operator, 2026-11-07: "if
+/// a project is going to be supported we need to make sure its packages and
+/// supporting software are in cvmfs and deployed through the n boxes and
+/// ndexr.ndexr and easybuild"). The language sets' manifests
+/// (ndexr.ndexr.io, stack-kit/manifest/manifests) and the EasyBuild suite are
+/// where each must be; host.rs tests hold every starter to it, and each
+/// language's env.sh refuses to start without them.
+pub fn needs(app_env: &str) -> Vec<(&str, &str)> {
+    let line = app_env.lines().find_map(|l| l.trim().strip_prefix("APP_NEEDS=")).unwrap_or("");
+    line.trim_matches(|c| c == '"' || c == '\'').split_whitespace().filter_map(|w| w.split_once(':')).collect()
+}
 
 /// How many ways of a category can be created today.
 pub fn ready_count(c: &Category) -> usize {
@@ -313,6 +423,14 @@ mod tests {
         for (w, name, _) in WORLDS {
             assert!(CATEGORIES.iter().any(|c| c.world == *w && ready_count(c) > 0), "world {name} is empty");
         }
+    }
+
+    #[test]
+    fn needs_read_from_app_env() {
+        let env = "APP_LANGUAGE=r\n# What it needs\nAPP_NEEDS=\"r:plumber module:Pandoc python:scikit-learn\"\n";
+        assert_eq!(needs(env), [("r", "plumber"), ("module", "Pandoc"), ("python", "scikit-learn")]);
+        assert!(needs("APP_LANGUAGE=r\nAPP_NEEDS=\"\"\n").is_empty());
+        assert!(needs("APP_LANGUAGE=r\n").is_empty());
     }
 
     #[test]

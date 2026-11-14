@@ -36,6 +36,132 @@ const RECENT_MAX: usize = 8;
 /// then - so the list is never empty on a new browser - the rest of the
 /// person's domains by when their files last changed (operator, 2026-10-26:
 /// "it gives no known domain we can go to"). At most RECENT_MAX.
+/// Every project in the order ← and → step through them in the project
+/// menu: the opened ones in the order opened, then the rest, newest
+/// changed first - recent_projects without its limit.
+fn project_ring(opened: &[String], all: &[DomainInfo]) -> Vec<DomainInfo> {
+    let mut out: Vec<DomainInfo> = opened.iter().filter_map(|h| all.iter().find(|d| d.host == *h).cloned()).collect();
+    out.dedup_by(|a, b| a.host == b.host);
+    let mut rest: Vec<&DomainInfo> = all.iter().filter(|d| !out.iter().any(|o| o.host == d.host)).collect();
+    rest.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.host.cmp(&b.host)));
+    out.extend(rest.into_iter().cloned());
+    out
+}
+
+/// One project in the project menu: its framework's mark in a fixed column,
+/// the host, then its title in the quieter colour, cut to the menu's width
+/// (the full name is the hover). Every row the same height and width, so the
+/// list reads as a column rather than a ragged run of buttons.
+fn project_row(ui: &mut egui::Ui, d: &DomainInfo, on: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
+    let p = ui.painter().clone();
+    if on {
+        p.rect_filled(rect, 6.0, theme::primary().gamma_multiply(0.16));
+    } else if resp.hovered() {
+        p.rect_filled(rect, 6.0, theme::surface_hi());
+    }
+    let mark = egui::Rect::from_center_size(egui::pos2(rect.left() + 16.0, rect.center().y), egui::vec2(20.0, 20.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(mark), |ui| {
+        if crate::frameworks::icon(ui, &d.framework, 20.0).is_none() {
+            ui.label(RichText::new("⌂").size(14.0));
+        }
+    });
+    let x = rect.left() + 34.0;
+    let mut job = egui::text::LayoutJob::default();
+    job.append(&d.host, 0.0, egui::TextFormat { font_id: egui::FontId::monospace(12.5), color: theme::text_strong(), ..Default::default() });
+    if !d.title.is_empty() {
+        job.append(&format!("  {}", d.title), 0.0, egui::TextFormat { font_id: egui::FontId::proportional(12.5), color: theme::text(), ..Default::default() });
+    }
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - x - 8.0).max(40.0));
+    let galley = p.layout_job(job);
+    p.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, theme::text());
+    let full = if d.title.is_empty() { d.host.clone() } else { format!("{} · {}", d.host, d.title) };
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if on { format!("{full} - open now") } else { full })
+}
+
+/// What a click in the tab strip asks for (Ide::tab_act).
+enum TabAct {
+    Switch(String),
+    New,
+    Reopen,
+    Reload,
+    Outside(String),
+    Copy(String),
+    Pin(String),
+    Live(String),
+    Move(String, bool),
+    Close(Vec<String>),
+}
+
+struct TabResp {
+    resp: egui::Response,
+    close: bool,
+}
+
+/// One project tab: its framework's mark, its short name (only the mark when
+/// pinned), ⏸ when its live reload is paused, and × to close (on the tab in
+/// front, or under the pointer).
+#[allow(clippy::too_many_arguments)]
+fn project_tab(ui: &mut egui::Ui, host: &str, info: Option<&DomainInfo>, on: bool, pinned: bool, paused: bool, w: f32, small: bool) -> TabResp {
+    let h = if small { 30.0 } else { 26.0 };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click());
+    let hovered = resp.hovered();
+    let fill = if on { theme::surface() } else if hovered { theme::surface().gamma_multiply(0.6) } else { egui::Color32::TRANSPARENT };
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, egui::CornerRadius { nw: 7, ne: 7, sw: 0, se: 0 }, fill);
+    if on {
+        p.hline(rect.x_range(), rect.top() + 1.0, egui::Stroke::new(2.0, theme::primary()));
+    }
+    let mut x = rect.left() + 8.0;
+    let mark = info.map_or("", |d| d.framework.as_str());
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(x + 8.0, rect.center().y), egui::vec2(16.0, 16.0));
+    let marked = crate::frameworks::mark(mark).is_some() && {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(icon_rect));
+        crate::frameworks::icon(&mut child, mark, 16.0).is_some()
+    };
+    if !marked {
+        let first = crate::tabs::Tabs::short(host).chars().next().unwrap_or('?').to_ascii_uppercase();
+        p.text(icon_rect.center(), egui::Align2::CENTER_CENTER, first, egui::FontId::proportional(12.0), theme::muted());
+    }
+    x += 22.0;
+    let show_x = !pinned && (on || hovered);
+    let x_rect = egui::Rect::from_center_size(egui::pos2(rect.right() - 13.0, rect.center().y), egui::vec2(18.0, 18.0));
+    if !pinned {
+        let right = if show_x { x_rect.left() - 4.0 } else { rect.right() - 6.0 };
+        let name = format!("{}{}", if paused { "⏸ " } else { "" }, crate::tabs::Tabs::short(host));
+        let mut job = egui::text::LayoutJob::single_section(name, egui::TextFormat { font_id: egui::FontId::proportional(12.5), color: if on { theme::text_strong() } else { theme::text() }, ..Default::default() });
+        job.wrap = egui::text::TextWrapping::truncate_at_width((right - x).max(10.0));
+        let galley = p.layout_job(job);
+        p.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, theme::text());
+    }
+    let mut close = false;
+    if show_x {
+        let xr = ui.interact(x_rect, resp.id.with("close"), egui::Sense::click());
+        if xr.hovered() {
+            p.rect_filled(x_rect, 4.0, theme::surface_hi());
+        }
+        p.text(x_rect.center(), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(14.0), if xr.hovered() { theme::text_strong() } else { theme::muted() });
+        close = xr.on_hover_text("close tab").clicked();
+    }
+    TabResp { resp, close }
+}
+
+/// What the project menu's field finds for `q`: the name itself first, then
+/// names that start with it, then names and titles that hold it, each in ring
+/// order. Typed whole, the project is the first row and Enter opens it: a
+/// typed "ndexr.io" was told "already yours - open it below" over a list that
+/// did not show it (operator's screenshot, 2026-11-14).
+fn find_projects(q: &str, ring: &[DomainInfo]) -> Vec<DomainInfo> {
+    let q = q.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let mut starts: Vec<&DomainInfo> = ring.iter().filter(|d| d.host.to_lowercase().starts_with(&q)).collect();
+    starts.sort_by_key(|d| d.host.to_lowercase() != q);
+    let holds = ring.iter().filter(|d| !d.host.to_lowercase().starts_with(&q) && (d.host.to_lowercase().contains(&q) || d.title.to_lowercase().contains(&q)));
+    starts.into_iter().chain(holds).take(12).cloned().collect()
+}
+
 fn recent_projects(opened: &[String], all: &[DomainInfo]) -> Vec<DomainInfo> {
     let mut out: Vec<DomainInfo> = opened.iter().filter_map(|h| all.iter().find(|d| d.host == *h).cloned()).take(RECENT_MAX).collect();
     let mut rest: Vec<&DomainInfo> = all.iter().filter(|d| !out.iter().any(|o| o.host == d.host)).collect();
@@ -50,6 +176,10 @@ fn recent_projects(opened: &[String], all: &[DomainInfo]) -> Vec<DomainInfo> {
 /// the user needs to be held"): a window over the IDE from the moment it is
 /// created until its address answers.
 struct Launch {
+    /// The person's first site (Ide `first_site`): no window, because they
+    /// are saying what to build. App shows it coming up; a failure still opens
+    /// the window, which says why.
+    quiet: bool,
     host: String,
     rust: bool,
     started: f64,
@@ -197,6 +327,36 @@ const JL_CONSTANTS: &[&str] = &["true", "false", "nothing", "missing", "Inf", "N
 const EDITOR_FONT: f32 = 13.0;
 
 /// The source pane colours code by tokens; anything it does not know stays plain.
+/// A file the consoles do not run, by its name or first line (syntax.rs):
+/// coloured, completed and typed into by its kind.
+fn file_kind(doc: &Doc) -> Option<crate::syntax::Kind> {
+    if doc.lang.is_some() || doc.document {
+        return None;
+    }
+    crate::syntax::of_path(&doc.path).or_else(|| crate::syntax::of_text(&doc.text))
+}
+
+/// The colours of a file syntax.rs knows.
+pub fn highlight_kind(src: &str, kind: crate::syntax::Kind) -> LayoutJob {
+    use crate::syntax::Tok;
+    let mut job = LayoutJob::default();
+    let font = FontId::monospace(EDITOR_FONT);
+    for (a, b, t) in crate::syntax::tokens(src, kind) {
+        let (color, italics) = match t {
+            Tok::Text => (ace::text(), false),
+            Tok::Keyword | Tok::Tag | Tok::Heading => (ace::keyword(), false),
+            Tok::Constant | Tok::Variable => (ace::language(), false),
+            Tok::Number => (ace::number(), false),
+            Tok::String => (ace::string(), false),
+            Tok::Comment => (ace::comment(), true),
+            Tok::Function | Tok::Attr | Tok::Property => (ace::function(), false),
+            Tok::Operator => (ace::operator(), false),
+        };
+        job.append(&src[a..b], 0.0, TextFormat { font_id: font.clone(), color, italics, ..Default::default() });
+    }
+    job
+}
+
 pub fn highlight(src: &str, lang: Option<Lang>) -> LayoutJob {
     let mut job = LayoutJob::default();
     highlight_into(&mut job, src, lang);
@@ -496,6 +656,39 @@ fn ix(l: Lang) -> usize {
     }
 }
 
+/// Listen's list in words: each piece heard and what became of it, then
+/// what it is doing now (ide.rs listen_status).
+struct ListenStatus {
+    heard: Vec<(String, String)>,
+    doing: Option<String>,
+}
+
+fn draw_listen(ui: &mut egui::Ui, s: &ListenStatus, salt: &str) {
+    egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt(("listen-heard", salt)).max_height(140.0).stick_to_bottom(true).show(ui, |ui| {
+            for (t, fate) in &s.heard {
+                ui.label(RichText::new(t).size(12.5).color(theme::text()));
+                let c = if fate.starts_with("sent") { theme::ok() } else { theme::text() };
+                ui.label(RichText::new(format!("↳ {fate}")).size(12.0).color(c));
+                ui.add_space(4.0);
+            }
+            if let Some(d) = &s.doing {
+                ui.label(RichText::new(d).size(12.0).color(theme::primary()));
+            }
+        });
+    });
+}
+
+/// Where Listen's "act as I talk" sends what it hears.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ListenTo {
+    /// The site's agent or Exec, whichever is chosen: the Agents tab, Go and
+    /// the console share them.
+    Agent,
+    /// The Files agent, about the open file or the tree's folder.
+    File,
+}
+
 pub struct Doc {
     pub path: String,
     pub text: String,
@@ -509,6 +702,9 @@ pub struct Doc {
     pub preview: bool,
     filter: String,
     id: egui::Id,
+    /// The file as it is on disk now, when it changed there while this tab
+    /// had edits not saved: the strip over the editor asks which to keep.
+    disk: Option<String>,
 }
 
 impl Doc {
@@ -916,6 +1112,10 @@ pub struct Ide {
     swiped_at: f64,
     pub lower: Lower,
     files_path: String,
+    /// How many files the agents' running turns had changed when Files last
+    /// listed, and whether any was running: a change lists the folder again,
+    /// so what the agent writes shows as it lands (request #165).
+    agent_marks: (usize, bool),
     /// Each ListDir asked is numbered; only the newest's answer is shown.
     list_seq: Arc<std::sync::atomic::AtomicU64>,
     listing: Slot<Result<Listing, String>>,
@@ -934,6 +1134,13 @@ pub struct Ide {
     software: crate::software::SoftwarePane,
     /// The Account tab, asked the first time it shows.
     account: crate::account_tab::AccountPane,
+    /// The open project's app settings (settings_tab.rs), in the tab that was
+    /// Account's.
+    settings: crate::settings_tab::SettingsPane,
+    /// Files' Copy glimpse (request #164): the folder asked for, and its
+    /// `ndexr glimpse` when it comes back - copied as it arrives.
+    glimpse: Arc<Mutex<Option<(String, Result<String, String>)>>>,
+    glimpse_said: Option<(f64, String)>,
     /// The last render, polled while it runs.
     render: Arc<Mutex<JobView>>,
     /// The Viewer: what it shows and has shown.
@@ -950,6 +1157,22 @@ pub struct Ide {
     debug_seen: Option<(String, usize)>,
     /// The person's own domain has been opened for a first visit (once).
     own_opened: bool,
+    /// A first visit in a browser (app.rs): when the person's own site opens
+    /// and still holds the page signup laid, it becomes a React site.
+    pub first_site: bool,
+    /// Whether the person's own site is still waiting to be told what it is:
+    /// its CONTEXT.md says "Your site" and its thread is empty. It goes first,
+    /// before the project they were in last, once a session. Measured, not a
+    /// flag, so a site reset for someone asks them too (operator, 2026-10-30:
+    /// "each person on next log in should go through the first time set up").
+    own_new_asked: bool,
+    /// Their site went first: its folder, for app.rs to put the rest of the
+    /// window back to its default, whatever this browser had saved.
+    pub start_fresh: Option<String>,
+    own_new_done: bool,
+    own_new: Slot<Option<DomainInfo>>,
+    /// The host that swap was asked for, until create_domain answers.
+    first_site_for: Option<String>,
     find: FindBar,
     grep: FindInFiles,
     launch: Option<Launch>,
@@ -961,6 +1184,11 @@ pub struct Ide {
     /// what it is and whether it runs, asked every 10 s and after each job;
     /// the job in its domain's slot; and whether its log is open.
     app_status: Arc<Mutex<Option<Result<crate::api::AppStatus, String>>>>,
+    /// The Logs tab: the project folder it was asked for, the answer, when.
+    run_log: Arc<Mutex<Option<(String, Result<FileText, String>)>>>,
+    run_log_asked: f64,
+    /// Logs shows Build's output (.cove/run/build.log) instead of the app's.
+    run_log_build: bool,
     app_status_at: f64,
     app_host: String,
     app_job: Arc<Mutex<Option<Result<JobView, String>>>>,
@@ -970,8 +1198,18 @@ pub struct Ide {
     /// state, the version waiting on "restore?", and the last restore's word.
     versions: Arc<Mutex<Option<Result<Vec<crate::api::Version>, String>>>>,
     versions_open: bool,
-    version_confirm: Option<String>,
     version_said: Arc<Mutex<Option<Result<String, String>>>>,
+    /// The Git window's panes (gitview.rs): the picked version, its files and
+    /// the picked file's diff.
+    git: crate::gitview::GitView,
+    /// Completion in the editor (edcomplete.rs): the list at the cursor.
+    edc: crate::edcomplete::EdComplete,
+    /// On a phone, Files shows the tree or the open file, not both: whether
+    /// the tree is the one showing.
+    phone_tree: bool,
+    /// A snippet being filled in (an Emmet expansion): its file's editor id
+    /// and placeholders, which Tab and Shift+Tab walk (editkeys.rs).
+    snippet: Option<(egui::Id, crate::editkeys::Snippet)>,
     /// The verb last run, whether its Up has been routed, and the route's word.
     app_verb: String,
     app_routed: bool,
@@ -1020,6 +1258,27 @@ pub struct Ide {
     /// menu offers them (operator, 2026-10-26: "the hamburger menu needs to show
     /// recent projects or a selector to create a new one"). Kept by app.rs Saved.
     pub recent_hosts: Vec<String>,
+    /// The open projects as a browser's tabs (tabs.rs; tab_strip draws them).
+    /// Kept by app.rs Saved.
+    pub tabs: crate::tabs::Tabs,
+    /// The sites whose App does not reload itself when their files change
+    /// (the ● at the strip's right; operator, 2026-11-05). Live is the default.
+    pub live_off: std::collections::BTreeSet<String>,
+    /// The Projects dialog (project_dialog): which hit Enter opens, whether
+    /// it was open last frame (its field is focused the moment it opens,
+    /// request #168), and the frame domain_bar last drew it in, so the IDE's
+    /// own call does not draw it twice.
+    project_pick: usize,
+    project_dialog_open: bool,
+    bar_frame: u64,
+    /// What ndexr says about the names in the search (Query::ProjectNames):
+    /// shares waiting for me, and names someone else holds. With the names
+    /// last asked about, so a frame does not ask again.
+    names: Arc<Mutex<Option<api::ProjectNames>>>,
+    names_asked: Option<String>,
+    /// A share just accepted: opened as soon as its folder is mounted
+    /// (shares.rs reconcile), asking for the projects again until then.
+    pending_open: Option<(String, f64, f64)>,
     /// The tabs of domains stepped out of, kept whole: stepping back shows
     /// them at once and reads each again behind the scenes (`reread`), so a
     /// swap costs no wait for the files and loses no scroll or cursor.
@@ -1034,6 +1293,9 @@ pub struct Ide {
     /// A folder the Domain menu asked to open as the project (app.rs takes
     /// it: project dir, Files, the agent of all sites).
     pub want_folder: Option<String>,
+    /// The project menu's Inlet: its recipe and patches as a project of the
+    /// person's own (app.rs opens it the way the atlas opens a star's source).
+    pub want_inlet: bool,
     /// Project › Access was chosen for this domain (app.rs opens access.rs).
     pub want_access: Option<String>,
     /// The project open is the person's own ndexr (a folder, not a domain).
@@ -1127,11 +1389,19 @@ pub struct Ide {
     /// Help › Send a request is open: pastes and drops go to it, not to the
     /// agent or the Files folder (app.rs request_dialog).
     pub hold_shots: bool,
-    /// Go's Listen: the open mic, whether what it hears goes to the agent as
-    /// it comes, and what it has heard so far this time.
+    /// Listen: the open mic, whether what it hears goes to an agent as it
+    /// comes, and what it has heard so far this time - one for the whole IDE
+    /// (listen_frame), whichever composer started it.
     listen: crate::voice::Listen,
     listen_act: bool,
-    heard: Vec<String>,
+    /// Seconds between Listen's pieces (voice.rs PIECES), kept across
+    /// restarts (app.rs Saved), picked beside any agent's mode.
+    pub listen_secs: u32,
+    /// The agent "act as I talk" sends to: the composer whose Listen was
+    /// clicked last.
+    listen_to: ListenTo,
+    /// Each piece heard, and what became of it ("sent to the agent", ...).
+    heard: Vec<(String, String)>,
     /// The desktop app's decoded images, by path (the browser shows them in a frame).
     #[cfg(not(target_arch = "wasm32"))]
     images: std::collections::HashMap<String, Arc<Mutex<Option<Result<egui::ColorImage, String>>>>>,
@@ -1175,8 +1445,13 @@ pub enum Tab {
     Plots,
     Viewer,
     Data,
-    /// The person's own account: cell, domains, API keys, Claude (account_tab.rs).
+    /// The open project's app settings - info, access, visibility, variables
+    /// (settings_tab.rs). Named Account until 2026-10-28, when the account
+    /// moved to the Files panel; the variant keeps saved layouts loading.
     Account,
+    /// The app's own output: run.sh's stdout and stderr as up.sh logs them
+    /// (.cove/run/app.log), followed live, after App (operator, 2026-11-08).
+    Logs,
 }
 
 impl Tab {
@@ -1190,7 +1465,7 @@ impl Tab {
     /// "the users then can focus in their tab exclusively on their site or
     /// environment"): the stack's catalog is Builds' Find, Tree and
     /// Manifests. Install stays - it is the person's own environment.
-    pub const ALL: [Tab; 9] = [Tab::Agents, Tab::Console, Tab::Files, Tab::App, Tab::Environment, Tab::Install, Tab::Plots, Tab::Viewer, Tab::Account];
+    pub const ALL: [Tab; 10] = [Tab::Agents, Tab::Console, Tab::Files, Tab::App, Tab::Logs, Tab::Environment, Tab::Install, Tab::Plots, Tab::Viewer, Tab::Account];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -1209,7 +1484,8 @@ impl Tab {
             Tab::Plots => "Plots",
             Tab::Viewer => "Viewer",
             Tab::Data => "Data",
-            Tab::Account => "Account",
+            Tab::Account => "Settings",
+            Tab::Logs => "Logs",
         }
     }
 
@@ -1229,6 +1505,35 @@ impl Tab {
             Lower::Data => Tab::Data,
         }
     }
+}
+
+/// What the + menu makes: a script in a language, or a document (Quarto
+/// when true, else R Markdown).
+#[derive(Clone, Copy)]
+enum NewFile {
+    Script(Lang),
+    Document(bool),
+}
+
+/// The + menu of new files, shared by the editor's tabs and a phone's tree.
+fn new_file_menu(ui: &mut egui::Ui, label: RichText) -> Option<NewFile> {
+    let mut made = None;
+    ui.menu_button(label, |ui| {
+        for (word, n) in [("R Script", NewFile::Script(Lang::R)), ("Python Script", NewFile::Script(Lang::Python)), ("Shell Script", NewFile::Script(Lang::Shell))] {
+            if ui.button(word).clicked() {
+                made = Some(n);
+            }
+        }
+        ui.separator();
+        for (word, n) in [("Quarto Document", NewFile::Document(true)), ("R Markdown", NewFile::Document(false))] {
+            if ui.button(word).clicked() {
+                made = Some(n);
+            }
+        }
+    })
+    .response
+    .on_hover_text("new file");
+    made
 }
 
 /// A .py file runs in the R session's own Python (reticulate): `r.x` is R's x,
@@ -1269,6 +1574,7 @@ impl Ide {
             swiped_at: f64::NEG_INFINITY,
             lower: Lower::App,
             files_path: String::new(),
+            agent_marks: (0, false),
             list_seq: Default::default(),
             listing: Default::default(),
             opened: Default::default(),
@@ -1283,6 +1589,9 @@ impl Ide {
             pkg_asked: [false; 4],
             software: Default::default(),
             account: Default::default(),
+            settings: Default::default(),
+            glimpse: Default::default(),
+            glimpse_said: None,
             render: Default::default(),
             view: Default::default(),
             printed_urls: Default::default(),
@@ -1290,12 +1599,21 @@ impl Ide {
             debug_mark: None,
             debug_seen: None,
             own_opened: false,
+            first_site: false,
+            own_new_asked: false,
+            start_fresh: None,
+            own_new_done: false,
+            own_new: Default::default(),
+            first_site_for: None,
             find: FindBar::default(),
             grep: FindInFiles::default(),
             launch: None,
             choosing: None,
             naming: None,
             app_status: Default::default(),
+            run_log: Default::default(),
+            run_log_asked: 0.0,
+            run_log_build: false,
             app_status_at: f64::NEG_INFINITY,
             app_host: String::new(),
             app_job: Default::default(),
@@ -1303,8 +1621,11 @@ impl Ide {
             app_log: false,
             versions: Default::default(),
             versions_open: false,
-            version_confirm: None,
             version_said: Default::default(),
+            git: Default::default(),
+            edc: Default::default(),
+            phone_tree: false,
+            snippet: None,
             app_verb: String::new(),
             app_routed: false,
             app_ups: 0,
@@ -1327,7 +1648,14 @@ impl Ide {
             domains_unfolded: Default::default(),
             domain: None,
             open_by_domain: HashMap::new(),
+            tabs: Default::default(),
             recent_hosts: Vec::new(),
+            project_pick: 0,
+            project_dialog_open: false,
+            bar_frame: 0,
+            names: Arc::new(Mutex::new(None)),
+            names_asked: None,
+            pending_open: None,
             env_module: None,
             env_langs: vec![Lang::R, Lang::Python, Lang::Shell, Lang::Julia],
             parked: HashMap::new(),
@@ -1335,6 +1663,7 @@ impl Ide {
             folder_domain: None,
             home: String::new(),
             want_folder: None,
+            want_inlet: false,
             want_access: None,
             ndexr_open: false,
             push: Default::default(),
@@ -1377,11 +1706,14 @@ impl Ide {
             site_stamp_inflight: Default::default(),
             site_stamp_asked: f64::NEG_INFINITY,
             site_saved_at: f64::NEG_INFINITY,
+            live_off: Default::default(),
             preview_seq: Default::default(),
             refresh_every: 3.0,
             hold_shots: false,
             listen: Default::default(),
             listen_act: false,
+            listen_secs: 60,
+            listen_to: ListenTo::Agent,
             heard: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             images: Default::default(),
@@ -1414,14 +1746,20 @@ impl Ide {
             preview: false,
             filter: String::new(),
             id: egui::Id::new(("doc", self.serial)),
+            disk: None,
         });
         self.cur = self.docs.len() - 1;
     }
 
     /// The session the Environment and Plots panes show: R's, which holds
-    /// reticulate's Python too.
+    /// reticulate's Python too; in an environment without R (env/Julia,
+    /// env/Python), its own language's - an env/Julia project's plots were
+    /// drawn and never shown (2026-10-31).
     fn data_lang(&self) -> Lang {
-        Lang::R
+        if self.env_langs.contains(&Lang::R) {
+            return Lang::R;
+        }
+        self.env_langs.iter().copied().find(|l| matches!(l, Lang::Julia | Lang::Python)).unwrap_or(Lang::R)
     }
 
     /// Errors for the app's toast.
@@ -1629,6 +1967,9 @@ impl Ide {
                 if input.trim() == typed.trim() || input.trim().is_empty() {
                     *input = a.code.clone();
                     self.chan = Channel::Code(lang);
+                    // The code is in: Agent turns itself off, so Enter runs it
+                    // instead of asking again (operator, 2026-10-31).
+                    self.assist_on = false;
                     set_cursor(ctx, input_id, input.chars().count());
                     ctx.memory_mut(|m| m.request_focus(input_id));
                 }
@@ -1675,6 +2016,7 @@ impl Ide {
     /// every 1.5 s otherwise.
     pub fn poll(&mut self, ctx: &egui::Context) {
         self.follow_debugger(ctx);
+        self.listen_frame(ctx);
         if ctx.input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::F))) {
             self.grep.open = true;
             self.grep.focus = true;
@@ -1713,11 +2055,25 @@ impl Ide {
             // watches it go live (launch_window).
             let rust = self.creating_rust.remove(&d.host);
             self.site_fresh = Some((d.host.clone(), ctx.input(|i| i.time), 0));
+            let quiet = self.first_site_for.take().is_some_and(|h| h == d.host);
+            if quiet {
+                // Already open as the page it replaced: its tab goes, and what
+                // the project now is reads afresh.
+                let gone = format!("{}/module.r", d.path);
+                self.docs.retain(|x| x.path != gone);
+                self.cur = self.cur.min(self.docs.len().saturating_sub(1));
+                self.domain = Some(d.clone());
+                self.app_status_at = f64::NEG_INFINITY;
+                self.open(format!("{}/static/app.js", d.path), ctx);
+            }
             self.launch = Some(Launch {
+                quiet,
                 host: d.host.clone(),
                 rust,
                 started: ctx.input(|i| i.time),
-                publish: Default::default(),
+                // Signup registered it and chose who may open it; publishing
+                // again would set that back to login-only.
+                publish: Arc::new(Mutex::new(quiet.then(|| Ok(d.host.clone())))),
                 deploy: Default::default(),
                 deploy_sent: false,
                 deploy_asked: f64::NEG_INFINITY,
@@ -1732,20 +2088,34 @@ impl Ide {
                 gate: Default::default(),
                 gate_asked: f64::NEG_INFINITY,
             });
-            self.publish_domain(d.host.clone(), ctx);
+            if !quiet {
+                self.publish_domain(d.host.clone(), ctx);
+            }
             self.open_domain(d, ctx);
         }
+        if self.first_site {
+            if let Some(d) = self.domain.clone() {
+                self.first_site = false;
+                if own_domain(std::slice::from_ref(&d)).is_some() && d.framework == "shiny" {
+                    // The server decides: anything but a new, untouched signup
+                    // page is refused, and the site stays as it is.
+                    self.first_site_for = Some(d.host.clone());
+                    self.create_domain(d.host, crate::starters::NODE_SITE, Some(Default::default()), ctx);
+                }
+            }
+        }
         self.launch_window(ctx);
-        self.new_project_dialog(ctx);
+        self.project_dialog(ctx, None::<fn(&mut egui::Ui)>);
         self.kind_chooser(ctx);
         self.remove_dialog(ctx);
+        self.own_site_first(ctx);
         // Opened on a folder (?folder=, a site's "open in Cove" link): the
         // domain that folder is in, rather than the one this session was in
         // last (operator, 2026-10-23: recipes.ndexr.io's Cove button opened
         // its folder while the project, the agent and App stayed on
         // domains.ndexr.io). The deepest domain containing it wins; a folder
         // in no domain leaves the session as it was.
-        if let Some(f) = self.folder_domain.clone() {
+        if let Some(f) = self.folder_domain.clone().filter(|_| self.own_new_done) {
             self.ask_domains(ctx);
             let found = match self.domains.lock().unwrap().as_ref() {
                 None => None,
@@ -1766,7 +2136,7 @@ impl Ide {
         // Nothing to go back to (a first visit): the person's own domain,
         // <username>.ndexr.io, open at once (operator, 2026-10-19: "their
         // domain should open up immediately").
-        if self.restore.is_none() && self.domain.is_none() && !self.own_opened {
+        if self.own_new_done && self.restore.is_none() && self.domain.is_none() && !self.own_opened {
             self.ask_domains(ctx);
             let own = match self.domains.lock().unwrap().as_ref() {
                 Some(Ok(v)) => Some(own_domain(v)),
@@ -1782,7 +2152,7 @@ impl Ide {
         }
         // At start: back into the domain this person was in last time, with
         // the files they had open there.
-        if let Some(host) = self.restore.clone() {
+        if let Some(host) = self.restore.clone().filter(|_| self.own_new_done) {
             self.ask_domains(ctx);
             let found = match self.domains.lock().unwrap().as_ref() {
                 None => None,
@@ -1944,14 +2314,31 @@ impl Ide {
         }
         self.watch_files(ctx, now);
         let reread: Vec<FileText> = std::mem::take(&mut *self.reread.lock().unwrap());
+        // What changed on disk: shown at once where nothing here is unsaved;
+        // where something is, kept aside for the strip to ask about - the
+        // agent or a terminal wrote the file while it was being edited, and
+        // the next save would have overwritten that without a word.
         for f in reread {
-            if let Some(d) = self.docs.iter_mut().find(|d| d.path == f.path && !d.dirty() && d.text != f.text) {
+            let Some(d) = self.docs.iter_mut().find(|d| d.path == f.path) else { continue };
+            if f.text == d.saved {
+                continue;
+            }
+            if !d.dirty() {
                 d.text = f.text.clone();
                 d.saved = f.text;
+            } else if f.text == d.text {
+                d.saved = f.text;
+                d.disk = None;
+            } else {
+                d.disk = Some(f.text);
             }
         }
         // Files read for the editor become tabs.
         let opened: Vec<FileText> = std::mem::take(&mut *self.opened.lock().unwrap());
+        // A file opened on a phone is shown, not the tree it was picked in.
+        if !opened.is_empty() {
+            self.phone_tree = false;
+        }
         for f in opened {
             match self.docs.iter().position(|d| d.path == f.path) {
                 Some(i) => self.cur = i,
@@ -2384,7 +2771,10 @@ impl Ide {
 
     /// The Source pane, file tabs included. Returns true when its zoom
     /// control was clicked.
-    pub fn source(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, zoomed: bool) -> bool {
+    /// `back`: a phone's files tab, where the tree and the file take turns -
+    /// a "‹" at the start of the tab row goes back to the tree (it had a row
+    /// of its own, "← files": operator screenshot, 2026-11-07).
+    pub fn source(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, zoomed: bool, back: bool) -> bool {
         let (mut zoom, mut pick, mut close, mut new, mut new_doc) = (false, None, None, None, None);
         // The open files scroll sideways when they outrun the strip, the one
         // in front kept in view; + and zoom stay pinned at the right. A
@@ -2395,6 +2785,9 @@ impl Ide {
         let follow = self.tab_follow != Some(cur);
         self.tab_follow = Some(cur);
         theme::strip(ui, theme::TAB_H, theme::pane_hdr(), |ui| {
+            if back && ui.add(egui::Button::new(RichText::new("‹").size(18.0)).min_size(egui::vec2(32.0, 0.0))).on_hover_text("the files").clicked() {
+                self.phone_tree = true;
+            }
             let room = (ui.available_width() - 56.0).max(40.0);
             egui::ScrollArea::horizontal().id_salt("file-tabs").max_width(room).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
@@ -2418,26 +2811,12 @@ impl Ide {
                 });
             });
             ui.add_space(4.0);
-            ui.menu_button(RichText::new("+").size(14.0).color(theme::muted()), |ui| {
-                if ui.button("R Script").clicked() {
-                    new = Some(Lang::R);
+            if let Some(n) = new_file_menu(ui, RichText::new("+").size(14.0).color(theme::muted())) {
+                match n {
+                    NewFile::Script(l) => new = Some(l),
+                    NewFile::Document(quarto) => new_doc = Some(quarto),
                 }
-                if ui.button("Python Script").clicked() {
-                    new = Some(Lang::Python);
-                }
-                if ui.button("Shell Script").clicked() {
-                    new = Some(Lang::Shell);
-                }
-                ui.separator();
-                if ui.button("Quarto Document").clicked() {
-                    new_doc = Some(true);
-                }
-                if ui.button("R Markdown").clicked() {
-                    new_doc = Some(false);
-                }
-            })
-            .response
-            .on_hover_text("new file");
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| zoom = theme::zoom_button(ui, zoomed));
         });
         if let Some(i) = pick {
@@ -2466,12 +2845,8 @@ impl Ide {
             self.table_view(ui, ctx);
             return zoom;
         }
-        // Under any real file - text, image, PDF - the bar to ask its agent
-        // for a change, like a chat window at the foot of the file (operator,
-        // 2026-10-14). Reserved first, so the file fills what is left.
-        if !self.docs[self.cur].untitled() {
-            self.ask_bar(ui, ctx);
-        }
+        // The agent is Files' third section, under the tree and the file
+        // (files_tab, request #166), no longer a bar inside the editor.
         if self.docs[self.cur].preview {
             self.preview_view(ui, ctx);
             return zoom;
@@ -2496,7 +2871,11 @@ impl Ide {
                 self.scroll_line = Some(line);
             }
         }
+        let mut ask_complete = false;
         if ui.memory(|m| m.has_focus(id)) {
+            // The completion list's keys first: Enter takes a choice there.
+            ask_complete = self.edc.keys(ui, id);
+            self.smart_keys(ui, ctx, id);
             run_all = take_key(ui, Key::Enter, |m| m.command && m.shift);
             run_line = !run_all && take_key(ui, Key::Enter, |m| m.command);
             save = take_key(ui, Key::S, |m| m.command);
@@ -2536,11 +2915,16 @@ impl Ide {
                     run_all |= theme::tool_if(ui, can_run, "Source", "run the whole file · Ctrl+Shift+Enter").clicked();
                     run_line |= theme::tool_if(ui, can_run, "▶ Run", "run the line or selection · Ctrl+Enter").clicked();
                 }
+                // The kind of file, where there is room for it: on a phone it
+                // was drawn over Render.
+                if ui.available_width() < 120.0 {
+                    return;
+                }
                 theme::tool_sep(ui);
                 let kind = if document {
                     if self.docs[self.cur].path.to_ascii_lowercase().ends_with(".qmd") { "Quarto" } else { "R Markdown" }
                 } else {
-                    lang.map_or("Text", |l| l.word())
+                    lang.map(|l| l.word()).or_else(|| file_kind(&self.docs[self.cur]).map(crate::syntax::Kind::label)).unwrap_or("Text")
                 };
                 ui.label(RichText::new(kind).size(11.5).color(theme::hush()));
             });
@@ -2572,6 +2956,7 @@ impl Ide {
         // Stopped in R's debugger: its buttons over the file too, so stepping
         // and the marked line are side by side.
         self.debug_bar(ui, ctx);
+        self.disk_bar(ui);
         let found = if self.find.open { self.find_bar(ui, ctx) } else { Vec::new() };
         let current = self.find.at;
         let scroll_line = self.scroll_line.take();
@@ -2583,10 +2968,11 @@ impl Ide {
 
         // The editor: line numbers, then the text, in ndexr Dark. No soft
         // wrap (RStudio's default), so the gutter stays in step with the rows.
-        let Ide { docs, cur, memo, .. } = self;
+        let Ide { docs, cur, memo, edc, backend, .. } = self;
         let doc = &mut docs[*cur];
         let doc_lang = doc.lang;
         let doc_document = doc.document;
+        let doc_kind = file_kind(doc);
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, _wrap: f32| {
             let text = buf.as_str();
             let key = {
@@ -2595,11 +2981,16 @@ impl Ide {
                 text.hash(&mut h);
                 doc_lang.map(ix).hash(&mut h);
                 doc_document.hash(&mut h);
+                doc_kind.hash(&mut h);
                 h.finish()
             };
             let entry = memo.entry(doc.id).or_insert_with(|| (key.wrapping_add(1), LayoutJob::default()));
             if entry.0 != key {
-                *entry = (key, if doc_document { highlight_doc(text) } else { highlight(text, doc_lang) });
+                *entry = (key, match doc_kind {
+                    _ if doc_document => highlight_doc(text),
+                    Some(k) => highlight_kind(text, k),
+                    None => highlight(text, doc_lang),
+                });
             }
             let mut job = entry.1.clone();
             job.wrap.max_width = f32::INFINITY;
@@ -2630,6 +3021,17 @@ impl Ide {
                     );
                     let row_h = ui.fonts_mut(|f| f.row_height(&FontId::monospace(EDITOR_FONT)));
                     let char_w = ui.fonts_mut(|f| f.glyph_width(&FontId::monospace(EDITOR_FONT), 'x'));
+                    let here = crate::edcomplete::Here {
+                        id: doc.id,
+                        path: &doc.path,
+                        text: &mut doc.text,
+                        document: doc.document,
+                        lang: doc.lang,
+                        origin: egui::pos2(te.rect.left() + 6.0, te.rect.top() + 4.0),
+                        char_w,
+                        row_h,
+                    };
+                    edc.after(ui, backend, here, ask_complete);
                     let row_rect = |line: usize| egui::Rect::from_min_size(egui::pos2(te.rect.left(), te.rect.top() + 4.0 + row_h * line.saturating_sub(1) as f32), egui::vec2(te.rect.width(), row_h));
                     // Find's matches: each one marked, the current one strong.
                     for (k, (line, col, len)) in found.iter().enumerate() {
@@ -2674,29 +3076,162 @@ impl Ide {
         zoom
     }
 
+    /// The open file changed on disk while it had edits here: which to keep.
+    /// Theirs replaces the tab's text; mine stays, and the next save writes
+    /// it over what is on disk.
+    fn disk_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(disk) = self.docs[self.cur].disk.clone() else { return };
+        let (mut theirs, mut mine) = (false, false);
+        theme::strip(ui, theme::TOOL_H + 6.0, theme::amber().gamma_multiply(0.18), |ui| {
+            ui.add_space(8.0);
+            ui.label(RichText::new("This file changed on disk while you were editing it.").size(13.0).color(theme::text_strong()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(6.0);
+                mine = ui.button("Keep mine").on_hover_text("keep your edits; saving writes them over the file on disk").clicked();
+                theirs = ui.add(theme::primary_button("Use the file on disk")).on_hover_text("drop your unsaved edits and show what is on disk now").clicked();
+            });
+        });
+        let d = &mut self.docs[self.cur];
+        if theirs {
+            d.text = disk.clone();
+            d.saved = disk;
+            d.disk = None;
+        } else if mine {
+            d.saved = disk;
+            d.disk = None;
+        }
+    }
+
     /// The file ask bar at the foot of the open file (agent.rs FileAsk). An
     /// ask saves the file first when it has unsaved edits, so the agent
     /// starts from what is on screen.
+    /// The keys that depend on what is being written (editkeys.rs): Tab and
+    /// Shift+Tab, Enter, the pairs, closing tags, Backspace in a pair. Taken
+    /// before the editor sees them; the completion list has already had its
+    /// Tab and Enter when it is open (edcomplete.rs `keys`), so with a list up
+    /// Tab takes the choice and never indents, and without one it never
+    /// takes a suggestion.
+    fn smart_keys(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, id: egui::Id) {
+        use crate::editkeys as ek;
+        let list = self.edc.open();
+        let doc = &self.docs[self.cur];
+        if doc.table.is_some() || doc.preview {
+            return;
+        }
+        let Some(range) = egui::text_edit::TextEditState::load(ctx, id).and_then(|s| s.cursor.char_range()) else { return };
+        let (anchor, cursor): (usize, usize) = (range.secondary.index.into(), range.primary.index.into());
+        let kind = file_kind(doc);
+        let unit = ek::indent_unit(&doc.text, kind);
+        // The live snippet follows what is typed into its placeholder.
+        if let Some((sid, s)) = &mut self.snippet {
+            if *sid == id {
+                s.follow(&doc.text);
+            } else {
+                self.snippet = None;
+            }
+        }
+        let text = doc.text.clone();
+        let snippet = &mut self.snippet;
+        let mut out: Option<ek::Edit> = None;
+        let mut jump: Option<usize> = None;
+        ui.input_mut(|i| {
+            i.events.retain(|e| {
+                if out.is_some() || jump.is_some() {
+                    return true;
+                }
+                match e {
+                    egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
+                        *snippet = None;
+                        true
+                    }
+                    egui::Event::Key { key: Key::Tab, pressed: true, modifiers, .. } if !list && !modifiers.command && !modifiers.alt => {
+                        if let Some((_, s)) = snippet.as_mut() {
+                            match s.step(!modifiers.shift) {
+                                Some(m) => {
+                                    jump = Some(m);
+                                    return false;
+                                }
+                                None => *snippet = None,
+                            }
+                        }
+                        out = Some(if modifiers.shift {
+                            ek::shift_lines(&text, anchor, cursor, &unit, false)
+                        } else {
+                            kind.and_then(|k| ek::emmet(&text, anchor, cursor, k, &unit)).unwrap_or_else(|| ek::tab(&text, anchor, cursor, &unit))
+                        });
+                        false
+                    }
+                    egui::Event::Key { key: Key::Enter, pressed: true, modifiers, .. } if !list && modifiers.is_none() => {
+                        out = Some(ek::enter(&text, anchor, cursor, &unit, kind));
+                        false
+                    }
+                    egui::Event::Key { key: Key::Backspace, pressed: true, modifiers, .. } if modifiers.is_none() => match ek::backspace(&text, anchor, cursor) {
+                        Some(e) => {
+                            out = Some(e);
+                            false
+                        }
+                        None => true,
+                    },
+                    egui::Event::Text(t) if t.chars().count() == 1 => match ek::typed(&text, anchor, cursor, t.chars().next().unwrap_or(' '), kind) {
+                        Some(e) => {
+                            out = Some(e);
+                            false
+                        }
+                        None => true,
+                    },
+                    _ => true,
+                }
+            });
+        });
+        let set = |a: usize, c: usize| {
+            let mut st = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+            let (lo, hi) = (a.min(c), a.max(c));
+            st.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(lo), egui::text::CCursor::new(hi))));
+            st.store(ctx, id);
+        };
+        if let Some(m) = jump {
+            set(m, m);
+            ctx.request_repaint();
+        }
+        if let Some(e) = out {
+            self.docs[self.cur].text = e.text.clone();
+            set(e.anchor, e.cursor);
+            if let Some(s) = ek::Snippet::new(e.marks.clone(), &e.text) {
+                self.snippet = Some((id, s));
+            }
+            ctx.request_repaint();
+        }
+    }
+
+    /// Files' agent section: about the open file - a real one, not an
+    /// untitled script or a View() table - or the folder the tree is in.
     fn ask_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let path = self.docs[self.cur].path.clone();
+        let (file, folder) = self.ask_where();
+        // What Listen has heard, over this composer as over Agents' and Go's.
+        let heard = self.listen_status(ctx.input(|i| i.time));
         let mut asked = false;
         {
             let Ide { ask, backend, domain, .. } = self;
             egui::Panel::bottom(egui::Id::new("file-ask-bar"))
                 .resizable(false)
-                .show_separator_line(false)
+                .show_separator_line(true)
                 .frame(egui::Frame::NONE)
-                .show(ui, |ui| asked = ask.show(ui, ctx, backend, domain.as_ref(), &path));
+                .show(ui, |ui| {
+                    if let Some(h) = &heard {
+                        draw_listen(ui, h, "files");
+                    }
+                    asked = ask.show(ui, ctx, backend, domain.as_ref(), file.as_deref(), &folder);
+                });
         }
         if !asked {
             return;
         }
-        if self.docs[self.cur].dirty() {
+        if file.is_some() && self.docs[self.cur].dirty() {
             self.save(ctx);
         }
         if let Some(host) = self.domain.as_ref().map(|d| d.host.clone()) {
             let Ide { ask, backend, .. } = self;
-            ask.start(backend, ctx, &host, &path);
+            ask.start(backend, ctx, &host, file.as_deref(), &folder);
         }
     }
 
@@ -2893,9 +3428,10 @@ impl Ide {
         }
         let (path, text) = (doc.path.clone(), doc.text.clone());
         self.docs[self.cur].saved = text.clone();
+        self.docs[self.cur].disk = None;
         // The platform reloads a domain's .r files on the next request: a
         // save inside the open domain reloads its site in the Viewer.
-        if self.domain.as_ref().is_some_and(|d| path.starts_with(&format!("{}/", d.path))) {
+        if self.domain.as_ref().is_some_and(|d| path.starts_with(&format!("{}/", d.path)) && !self.live_off.contains(&d.host)) {
             self.site_seq += 1;
             self.site_saved_at = ctx.input(|i| i.time);
         }
@@ -2959,7 +3495,44 @@ impl Ide {
     /// The Files tab: the browser on the left of the tab, the
     /// editor (and its ask bar) beside it. True when its zoom was clicked.
     pub fn files_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, zoomed: bool) -> bool {
+        // Three sections: the tree, the open file, and the agent the full
+        // width under both (request #166, 2026-11-01: "takes up full width
+        // under the file names and the file itself ... more space and the
+        // context"). Reserved first, so the tree and the file fill the rest.
+        self.ask_bar(ui, ctx);
         let w = ui.available_width();
+        // A phone (operator, 2026-11-01, screenshot: the tree took 40% and
+        // every line of the file was cut): the tree or the file, each the
+        // whole width; opening a file shows it, the tab row's "‹" goes back.
+        if w < 600.0 {
+            let mut zoom = false;
+            if self.phone_tree || self.docs.is_empty() {
+                let mut made = None;
+                let tree = egui::CentralPanel::no_frame().show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if !self.docs.is_empty() && ui.add(egui::Button::new(RichText::new(format!("{} →", self.docs[self.cur].name())).size(14.0)).min_size(egui::vec2(0.0, 32.0))).on_hover_text("back to the open file").clicked() {
+                            self.phone_tree = false;
+                        }
+                        // The editor's + is not on screen with the tree.
+                        made = new_file_menu(ui, RichText::new("+ New file").size(14.0));
+                    });
+                    self.files(ui, ctx);
+                });
+                match made {
+                    Some(NewFile::Script(l)) => self.new_script(l),
+                    Some(NewFile::Document(quarto)) => self.new_document(quarto),
+                    None => {}
+                }
+                if made.is_some() {
+                    self.phone_tree = false;
+                }
+                crate::tour::mark_at(ctx, "files-tree", tree.response.rect);
+            } else {
+                let ed = egui::CentralPanel::no_frame().show(ui, |ui| zoom = self.source(ui, ctx, zoomed, true));
+                crate::tour::mark_at(ctx, "editor", ed.response.rect);
+            }
+            return zoom;
+        }
         let tree = egui::Panel::left("right-files-tree")
             .resizable(true)
             .show_separator_line(true)
@@ -2969,7 +3542,7 @@ impl Ide {
             .show(ui, |ui| self.files(ui, ctx));
         crate::tour::mark_at(ctx, "files-tree", tree.response.rect);
         let mut zoom = false;
-        let ed = egui::CentralPanel::no_frame().show(ui, |ui| zoom = self.source(ui, ctx, zoomed));
+        let ed = egui::CentralPanel::no_frame().show(ui, |ui| zoom = self.source(ui, ctx, zoomed, false));
         crate::tour::mark_at(ctx, "editor", ed.response.rect);
         zoom
     }
@@ -2981,8 +3554,31 @@ impl Ide {
     }
 
     pub fn account_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let Ide { account, backend, .. } = self;
-        account.show(ui, ctx, backend);
+        let status = match &*self.app_status.lock().unwrap() {
+            Some(Ok(s)) if self.domain.as_ref().is_some_and(|d| d.host == self.app_host) => Some(s.clone()),
+            _ => None,
+        };
+        let Ide { settings, backend, domain, .. } = self;
+        match settings.show(ui, ctx, backend, domain.as_ref(), status.as_ref()) {
+            Some(crate::settings_tab::Act::Access(h)) => self.want_access = Some(h),
+            Some(crate::settings_tab::Act::Publish(h)) => self.publish_domain(h, ctx),
+            Some(crate::settings_tab::Act::Run(verb)) => self.app_action(&verb, ctx),
+            Some(crate::settings_tab::Act::SetType(lang)) => self.set_app_type(lang, ctx),
+            None => {}
+        }
+    }
+
+    /// Settings › Info's Type menu (dotcove.rs set_type), then the status
+    /// again, so the strip and Settings show the new type at once.
+    fn set_app_type(&mut self, language: String, ctx: &egui::Context) {
+        let Some(d) = &self.domain else { return };
+        let (slot, errors, backend, host, c) = (self.app_status.clone(), self.errors.clone(), self.backend.clone(), d.host.clone(), ctx.clone());
+        self.backend.query(Query::AppType { host: host.clone(), language }, ctx, move |r: Result<String, String>| match r {
+            Err(e) => Ide::fail(&errors, format!("type not changed: {e}")),
+            Ok(_) => backend.query(Query::AppStatus { host }, &c, move |r: Result<crate::api::AppStatus, String>| {
+                *slot.lock().unwrap() = Some(r);
+            }),
+        });
     }
 
     /// Type a command into the Terminal and bring it forward (setup's
@@ -3013,6 +3609,52 @@ impl Ide {
             _ => {}
         }
         self.focus.push((t, false));
+    }
+
+    /// The start of the session has decided what it opens on (own_site_first,
+    /// then the first visit's own domain).
+    pub fn own_site_settled(&self) -> bool {
+        self.own_new_done && (self.own_opened || self.restore.is_some())
+    }
+
+    /// Open the person's own site first when it is waiting for its first
+    /// answer (`own_new_asked`); otherwise let the session open as it would.
+    fn own_site_first(&mut self, ctx: &egui::Context) {
+        if self.own_new_done {
+            return;
+        }
+        if self.own_new_asked {
+            let answer = self.own_new.lock().unwrap().take();
+            if let Some(found) = answer {
+                self.own_new_done = true;
+                if let Some(d) = found {
+                    self.restore = None;
+                    self.folder_domain = None;
+                    self.own_opened = true;
+                    self.exec_on = false;
+                    self.agents_layout = AgentsLayout::default();
+                    self.start_fresh = Some(d.path.clone());
+                    self.open_domain(d, ctx);
+                }
+            }
+            return;
+        }
+        self.ask_domains(ctx);
+        let own = match self.domains.lock().unwrap().as_ref() {
+            None => return,
+            Some(Ok(v)) => own_domain(v),
+            Some(Err(_)) => None,
+        };
+        match own.filter(|d| d.title == crate::agent::SITE_TITLE) {
+            None => self.own_new_done = true,
+            Some(d) => {
+                self.own_new_asked = true;
+                let slot = self.own_new.clone();
+                self.backend.query(Query::AgentHistory { domain: d.host.clone() }, ctx, move |r: Result<Vec<crate::api::AgentTurn>, String>| {
+                    *slot.lock().unwrap() = Some(Some(d).filter(|_| r.is_ok_and(|t| t.is_empty())));
+                });
+            }
+        }
     }
 
     /// A right-hand view forward: its tab, and which of Plots' two views.
@@ -3143,6 +3785,7 @@ impl Ide {
             Tab::Viewer => self.viewer(ui, ctx),
             Tab::Data => self.data_tab(ui, ctx),
             Tab::Account => self.account_tab(ui, ctx),
+            Tab::Logs => self.logs_tab(ui, ctx),
         }
         false
     }
@@ -3160,6 +3803,13 @@ impl Ide {
         // AGENT_R) - no access to exec.ndexr.io itself needed.
         // Which agent is chosen beside the mic (agent.rs scope_toggle); here
         // only how they are laid out. Each pane's header says whose it is.
+        // A phone shows one at a time and spends no row on the choice
+        // (operator, 2026-11-07: a row of three small icons and nothing else
+        // was "poor use of white space"); the saved layout returns on a wider
+        // screen.
+        let phone = ui.available_width() < 640.0;
+        let layout = if phone { AgentsLayout::One } else { self.agents_layout };
+        if !phone {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
@@ -3174,12 +3824,15 @@ impl Ide {
                 }
             });
         });
+        }
+        // What Listen has heard, as in Go and Files.
+        self.listen_bar(ui, "agents");
         // One at a time: the switch is beside the mic. Side by side both are
         // on screen, so neither composer carries one.
-        let one = self.agents_layout == AgentsLayout::One;
+        let one = layout == AgentsLayout::One;
         self.set_scope(one);
-        match self.agents_layout {
-            AgentsLayout::One if self.exec_on => self.exec_tab(ui, ctx),
+        match layout {
+            AgentsLayout::One if self.exec_on || self.domain.is_none() => self.exec_tab(ui, ctx),
             AgentsLayout::One => self.site_agent(ui, ctx),
             layout => {
                 let across = layout == AgentsLayout::SideBySide;
@@ -3234,10 +3887,11 @@ impl Ide {
     /// The switch beside each composer's mic (agent.rs scope_toggle): shown,
     /// or not, with what it should say this frame.
     fn set_scope(&mut self, shown: bool) {
-        if self.domain.is_none() {
-            self.exec_on = true;
-        }
-        let sc = shown.then(|| crate::agent::Scope { site: self.domain.as_ref().map(|d| d.host.clone()), exec_on: self.exec_on, exec_busy: self.exec.busy() });
+        // No project open means Exec for now, never a choice kept: this used to
+        // set exec_on, and it was saved, so a first visit (no domain yet on the
+        // first frame) stayed on Exec instead of its own site's thread.
+        let exec_on = self.exec_on || self.domain.is_none();
+        let sc = shown.then(|| crate::agent::Scope { site: self.domain.as_ref().map(|d| d.host.clone()), exec_on, exec_busy: self.exec.busy() });
         self.agent.scope = sc.clone();
         self.exec.scope = sc;
     }
@@ -3301,7 +3955,7 @@ impl Ide {
         // Site or Exec: the switch beside the mic, as on the Agents tab.
         self.set_scope(true);
         ui.add_space(4.0);
-        self.listen_bar(ui, ctx);
+        self.listen_bar(ui, "go");
         let (w, h) = (ui.available_width(), ui.available_height().max(min_h));
         // One composer, its mic and Send big - no second bar under it. Not on
         // a short screen (a laptop zoomed in): there the thread needs the room.
@@ -3309,7 +3963,7 @@ impl Ide {
         self.agent.big = big;
         self.exec.big = big;
         let tail = self.console_tail(Lang::R, 60);
-        let run = if self.exec_on {
+        let run = if self.exec_on || self.domain.is_none() {
             let scope = self.exec_scope();
             let Ide { exec, backend, .. } = self;
             ui.allocate_ui(egui::vec2(w, h), |ui| exec.show(ui, ctx, backend, Some(&scope), &tail)).inner
@@ -3325,19 +3979,61 @@ impl Ide {
         self.exec.big = false;
     }
 
-    /// Go's Listen (voice.rs Listen): a switch that keeps the mic open, what
-    /// it has heard so far, and what becomes of it. Each minute's piece goes
-    /// to the agent shown (Site or Exec) as it comes when "act as I talk" is
-    /// on - the agent acts only on what is a clear ask - and is kept here
-    /// either way. On Stop the whole recording is transcribed and kept in the
-    /// domain's supporting_docs/ beside its transcript, so nothing said is
-    /// lost; with "act as I talk" the agent gets the whole too, to pick up
-    /// what the pieces missed, else it lands in the box to send.
-    fn listen_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    /// Listen, the same everywhere (operator, 2026-11-01: "listen+act mode
+    /// like in go mode in all of the agent sections, Agents, Files, and Go,
+    /// unify function between those where possible - should remain up to
+    /// date together"): one mic, one "act as I talk", one list of what was
+    /// heard. Run every frame from `poll`, whichever view is up, so nothing
+    /// heard waits on a view being drawn; every composer that carries the
+    /// button (Agents' and Go's agent, the Files agent, the console) is
+    /// given the same state, and a click on any of them points "act as I
+    /// talk" at its agent (`listen_to`).
+    ///
+    /// Each minute's piece is kept, and with "act as I talk" sent to that
+    /// agent as it comes - which acts only on what is a clear ask. On Stop the
+    /// whole recording is transcribed and kept in the domain's
+    /// supporting_docs/ beside its transcript, so nothing said is lost; with
+    /// "act as I talk" the agent gets the whole too, to pick up what the
+    /// pieces missed, else it lands in that agent's box to send.
+    fn listen_frame(&mut self, ctx: &egui::Context) {
         if !crate::voice::Listen::shown() {
             return;
         }
-        let now = ui.input(|i| i.time);
+        let now = ctx.input(|i| i.time);
+        let agent = std::mem::take(&mut self.agent.listen_clicked) | std::mem::take(&mut self.exec.listen_clicked);
+        let file = std::mem::take(&mut self.ask.listen_clicked);
+        // The length picked beside either agent is the length everywhere, and
+        // a running Listen takes it from the piece it is hearing on.
+        for s in [self.agent.listen_secs, self.exec.listen_secs] {
+            if s != self.listen_secs {
+                self.listen_secs = crate::voice::piece(s);
+            }
+        }
+        (self.agent.listen_secs, self.exec.listen_secs) = (self.listen_secs, self.listen_secs);
+        let on = self.listen_mode() != crate::voice::ListenMode::Off;
+        if on {
+            self.listen.every(now, self.listen_secs);
+        }
+        let left = on.then(|| self.listen.next_piece_in(now));
+        (self.agent.listen_left, self.exec.listen_left) = (left, left);
+        if agent || file {
+            self.listen_to = if file { ListenTo::File } else { ListenTo::Agent };
+            self.listen_click(now);
+        }
+        self.listen_poll(ctx);
+        let mode = self.listen_mode();
+        let view = Some((mode, mode != crate::voice::ListenMode::Off || !self.listen.busy(), self.listen_tip(now)));
+        self.agent.listen = view.clone();
+        self.exec.listen = view.clone();
+        self.ask.listen = view;
+        if mode != crate::voice::ListenMode::Off || self.listen.busy() {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
+    }
+
+    /// What came back from Listen since the last frame: each piece kept, or
+    /// sent to the agent when acting as I talk; the whole when it stops.
+    fn listen_poll(&mut self, ctx: &egui::Context) {
         for h in self.listen.poll(ctx, &self.backend) {
             match h {
                 crate::voice::Heard::Chunk(t) => {
@@ -3345,72 +4041,204 @@ impl Ide {
                     if t.is_empty() {
                         continue;
                     }
-                    if self.listen_act && t.split_whitespace().count() >= 6 {
-                        self.go_say(ctx, &format!(
-                            "(Said aloud in Go while I keep talking - one minute's piece, transcribed. Act on it only if it is a clear, complete ask you can do now; if it is half a thought or context, reply in one line with what you took from it and wait for more.)\n\n{t}"
-                        ));
-                    }
-                    self.heard.push(t);
+                    let words = t.split_whitespace().count();
+                    let fate = if !self.listen_act {
+                        "kept - lands in the box when you stop".to_owned()
+                    } else if words < 6 {
+                        format!("kept, not sent - {words} word{} is too little to act on; the agent gets it with the whole when you stop", if words == 1 { "" } else { "s" })
+                    } else {
+                        let span = crate::voice::piece_span(self.listen_secs);
+                        let ask = if self.presenting() {
+                            format!(
+                                "(Presenting: said aloud during a live talk, the last {span}, transcribed. Keep what is on screen in step with the talk - move to the slide or section being spoken about, or make the one small change asked for. Change nothing when it already matches. Reply in one line; never stop to explain.)\n\n{t}"
+                            )
+                        } else {
+                            format!(
+                                "(Said aloud in Cove while I keep talking - the last {span}, transcribed. Do what in it is a clear, complete ask you can do now; if the rest is half a thought or context, reply briefly with what you took from it and wait for more.)\n\n{t}"
+                            )
+                        };
+                        if self.listen_say(ctx, &ask) {
+                            format!("sent to {}", self.listen_who())
+                        } else {
+                            "kept - the Files agent is still on the last piece; it gets this with the whole when you stop".to_owned()
+                        }
+                    };
+                    self.heard.push((t, fate));
                 }
                 crate::voice::Heard::Whole { audio, text } => self.listen_done(ctx, audio, text),
                 crate::voice::Heard::Error(e) => Ide::fail(&self.errors, e),
             }
         }
-        let state = self.listen.state();
-        // One switch, Off | Listen | Act as I talk, drawn like Site | Exec
-        // (operator, 2026-10-28: "act as i talk is the same as listen ...
-        // consolidated to choose in one place"). Either listening choice opens
-        // the mic; moving between them while it is open changes only what
-        // becomes of each minute; Off stops it and saves the whole.
-        theme::strip(ui, 44.0, theme::bg(), |ui| {
-            ui.add_space(6.0);
-            ui.spacing_mut().item_spacing.x = 8.0;
-            let on = matches!(state.as_str(), "starting" | "on");
-            let free = on || !self.listen.busy();
-            let clock = match state.as_str() {
-                "starting" => " ●".to_owned(),
-                "on" => format!(" ● {}", self.listen.clock(now)),
-                _ => String::new(),
-            };
-            let (listen_on, act_on) = (on && !self.listen_act, on && self.listen_act);
-            let items = [
-                ("Off".to_owned(), "the mic is closed; choosing Off while listening stops and saves the whole recording in supporting_docs/".to_owned(), !on, on),
-                (format!("Listen{}", if listen_on { clock.as_str() } else { "" }),
-                 "keep the mic open: every minute is transcribed and kept here; the whole lands in the box when you stop".to_owned(), listen_on, free),
-                (format!("Act as I talk{}", if act_on { clock.as_str() } else { "" }),
-                 "keep the mic open and send each minute to the agent as it is heard - it acts on clear asks and waits on the rest".to_owned(), act_on, free),
-            ];
-            match crate::agent::segmented(ui, true, &items) {
-                Some(0) if on => self.listen.stop(),
-                Some(i @ (1 | 2)) => {
-                    self.listen_act = i == 2;
-                    if !on {
-                        self.heard.clear();
-                        self.listen.start(now);
-                    }
-                }
-                _ => {}
-            }
-            match state.as_str() {
-                "packing" => { ui.label(RichText::new("Saving…").size(13.0).color(theme::text())); }
-                _ if !on && self.listen.busy() => { ui.label(RichText::new("Transcribing…").size(13.0).color(theme::text())); }
-                _ => {}
-            }
-            let n = self.heard.len();
-            let pending = self.listen.pending();
-            if n + pending > 0 {
-                ui.label(RichText::new(format!("{n} heard{}", if pending > 0 { format!(" · {pending} transcribing") } else { String::new() })).size(11.5).color(theme::muted()));
-            }
-        });
-        if !self.heard.is_empty() {
-            egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
-                egui::ScrollArea::vertical().id_salt("go-heard").max_height(70.0).stick_to_bottom(true).show(ui, |ui| {
-                    for t in &self.heard {
-                        ui.label(RichText::new(t).size(12.0).color(theme::text()));
-                    }
-                });
-            });
+    }
+
+    /// Listen acts for an agent whose mode pill is on Presenting.
+    fn presenting(&self) -> bool {
+        let pane = if self.exec_on || self.domain.is_none() { &self.exec } else { &self.agent };
+        matches!(self.listen_to, ListenTo::Agent) && pane.presenting()
+    }
+
+    /// Which agent "act as I talk" sends to, in words.
+    fn listen_who(&self) -> &'static str {
+        match self.listen_to {
+            ListenTo::File => "the Files agent",
+            ListenTo::Agent if self.exec_on || self.domain.is_none() => "Exec",
+            ListenTo::Agent => "the site's agent",
         }
+    }
+
+    /// Send `text` to the agent Listen acts for. False when it could not take
+    /// it now (the Files agent runs one ask at a time).
+    fn listen_say(&mut self, ctx: &egui::Context, text: &str) -> bool {
+        match self.listen_to {
+            ListenTo::Agent => {
+                let current = if self.exec_on || self.domain.is_none() { self.exec.model() } else { self.agent.model() };
+                let model = self.presenting().then(|| crate::voice::present_model(current));
+                self.go_say_on(ctx, text, model.as_deref());
+                true
+            }
+            ListenTo::File => self.file_say(ctx, text),
+        }
+    }
+
+    /// Put `text` in the box of the agent Listen acts for, to send.
+    fn listen_keep(&mut self, text: &str) {
+        match self.listen_to {
+            ListenTo::File => {
+                if !self.ask.input.trim().is_empty() {
+                    self.ask.input.push_str("\n\n");
+                }
+                self.ask.input.push_str(text);
+            }
+            ListenTo::Agent if self.exec_on || self.domain.is_none() => self.exec.add_to_input(text),
+            ListenTo::Agent => self.agent.add_to_input(text),
+        }
+    }
+
+    /// What the Files agent works on: the open file (a real one), and the
+    /// folder the tree is in - the domain's when the tree is nowhere yet.
+    fn ask_where(&self) -> (Option<String>, String) {
+        let file = self.docs.get(self.cur).filter(|d| !d.untitled() && d.table.is_none()).map(|d| d.path.clone());
+        let folder = if self.files_path.is_empty() { self.domain.as_ref().map(|d| d.path.clone()).unwrap_or_default() } else { self.files_path.clone() };
+        (file, folder)
+    }
+
+    /// An ask to the Files agent that the person did not type: saved first,
+    /// as Send does, and what they were typing left in the box.
+    fn file_say(&mut self, ctx: &egui::Context, text: &str) -> bool {
+        let Some(host) = self.domain.as_ref().map(|d| d.host.clone()) else {
+            self.go_say(ctx, text);
+            return true;
+        };
+        if self.ask.busy() {
+            return false;
+        }
+        let (file, folder) = self.ask_where();
+        if file.is_some() && self.docs[self.cur].dirty() {
+            self.save(ctx);
+        }
+        let typed = std::mem::replace(&mut self.ask.input, text.to_owned());
+        let Ide { ask, backend, .. } = self;
+        ask.start(backend, ctx, &host, file.as_deref(), &folder);
+        self.ask.input = typed;
+        true
+    }
+
+    /// Off, Listen, or Act as I talk, as the mic is now.
+    fn listen_mode(&self) -> crate::voice::ListenMode {
+        use crate::voice::ListenMode;
+        match (matches!(self.listen.state().as_str(), "starting" | "on"), self.listen_act) {
+            (false, _) => ListenMode::Off,
+            (true, false) => ListenMode::Listen,
+            (true, true) => ListenMode::Act,
+        }
+    }
+
+    /// The Listen button's hover: where it is, what a click does.
+    fn listen_tip(&self, now: f64) -> String {
+        use crate::voice::ListenMode;
+        let n = self.heard.len();
+        let heard = if n > 0 { format!(" · {n} piece{} heard", if n == 1 { "" } else { "s" }) } else { String::new() };
+        match self.listen_mode() {
+            ListenMode::Off if self.listen.busy() => "Listen · transcribing what it heard - ready again in a moment".to_owned(),
+            ListenMode::Off => "Listen · keeps the mic open while you talk, a speaker in the room included.\n\
+                                Click: Listen - every few minutes (30 s, 1 min or 5 min, beside Auto) what you said is transcribed and kept; the whole lands in this agent's box when you stop.\n\
+                                Click again: Act as I talk - each piece goes to this agent as it is heard.\n\
+                                Click a third time: stop, and the recording is saved in supporting_docs/.\n\
+                                The same Listen shows in Agents, Files and Go: whichever you click, its agent is the one it acts for.".to_owned(),
+            ListenMode::Listen => format!("Listening {}{heard} - kept, nothing sent.\nClick: act as I talk - send each piece to this agent from now on.", self.listen.clock(now)),
+            ListenMode::Act => format!(
+                "Acting as you talk {}{heard} · every {}{}, to {}.\nClick: stop - the whole is transcribed and saved in supporting_docs/.",
+                self.listen.clock(now),
+                crate::voice::piece_words(self.listen_secs),
+                if self.presenting() { ", presenting on Sonnet" } else { "" },
+                self.listen_who()
+            ),
+        }
+    }
+
+    /// A click on a Listen button: Off → Listen → Act as I talk → Off.
+    fn listen_click(&mut self, now: f64) {
+        use crate::voice::ListenMode;
+        match self.listen_mode() {
+            ListenMode::Off if !self.listen.busy() => {
+                self.listen_act = false;
+                self.heard.clear();
+                self.listen.start(now, self.listen_secs);
+            }
+            ListenMode::Off => {}
+            ListenMode::Listen => self.listen_act = true,
+            ListenMode::Act => self.listen.stop(),
+        }
+    }
+
+    /// The console's Listen button at `d` px, right of its mic: acts for the
+    /// site's agent (or Exec), as Agents and Go do.
+    fn listen_button(&mut self, ui: &mut egui::Ui, d: f32) {
+        if !crate::voice::Listen::shown() {
+            return;
+        }
+        let now = ui.input(|i| i.time);
+        let mode = self.listen_mode();
+        let enabled = mode != crate::voice::ListenMode::Off || !self.listen.busy();
+        let tip = self.listen_tip(now);
+        if crate::voice::listen_button(ui, mode, enabled, &tip, d).clicked() {
+            self.listen_to = ListenTo::Agent;
+            self.listen_click(now);
+        }
+    }
+
+    /// What Listen is doing and has heard, in words, above a composer that
+    /// carries its button - the same list in Agents, Files and Go. `salt`
+    /// keeps two of them on screen at once apart.
+    fn listen_bar(&self, ui: &mut egui::Ui, salt: &str) {
+        if let Some(s) = self.listen_status(ui.input(|i| i.time)) {
+            draw_listen(ui, &s, salt);
+        }
+    }
+
+    /// The list `listen_bar` draws, or None while Listen is idle.
+    fn listen_status(&self, now: f64) -> Option<ListenStatus> {
+        if !crate::voice::Listen::shown() {
+            return None;
+        }
+        let state = self.listen.state();
+        let on = matches!(state.as_str(), "starting" | "on");
+        let pending = self.listen.pending();
+        let doing = match state.as_str() {
+            "starting" => Some("Opening the microphone…".to_owned()),
+            "packing" => Some("Saving…".to_owned()),
+            "on" => Some(format!(
+                "Listening · {}the next {} transcribed in {}s{}",
+                if pending > 0 { format!("transcribing {pending} piece{} · ", if pending == 1 { "" } else { "s" }) } else { String::new() },
+                if self.heard.is_empty() && pending == 0 { "first piece is" } else { "piece is" },
+                self.listen.next_piece_in(now),
+                if self.listen_act { format!(" and goes to {} if it is a clear ask", self.listen_who()) } else { String::new() },
+            )),
+            _ if pending > 0 => Some(format!("Transcribing the last {pending} piece{}…", if pending == 1 { "" } else { "s" })),
+            "off" if self.listen.busy() => Some("Transcribing…".to_owned()),
+            _ => None,
+        };
+        (on || doing.is_some() || !self.heard.is_empty()).then(|| ListenStatus { heard: self.heard.clone(), doing })
     }
 
     /// Where Go's agent is pointed: (its host, its folder) - Exec or the site.
@@ -3426,20 +4254,25 @@ impl Ide {
 
     /// A message to Go's agent of the moment, leaving the box as it is.
     fn go_say(&mut self, ctx: &egui::Context, text: &str) {
+        self.go_say_on(ctx, text, None);
+    }
+
+    /// `go_say`, on `model` for this one turn when given.
+    fn go_say_on(&mut self, ctx: &egui::Context, text: &str, model: Option<&str>) {
         let tail = self.console_tail(Lang::R, 60);
         let (host, _) = self.go_target();
         let Ide { agent, exec, backend, exec_on, domain, .. } = self;
         if *exec_on || domain.is_none() {
-            exec.say(backend, ctx, &host, text, &tail);
+            exec.say_on(backend, ctx, &host, text, &tail, model);
         } else {
-            agent.say(backend, ctx, &host, text, &tail);
+            agent.say_on(backend, ctx, &host, text, &tail, model);
         }
     }
 
     /// Listen stopped: keep the recording and its transcript, then hand the
     /// transcript on.
     fn listen_done(&mut self, ctx: &egui::Context, audio: String, text: Result<String, String>) {
-        let pieces = self.heard.join("\n\n");
+        let pieces = self.heard.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join("\n\n");
         let (whole, note) = match text {
             Ok(t) if !t.trim().is_empty() => (t.trim().to_owned(), String::new()),
             Ok(_) => (pieces.clone(), "(the whole recording came back empty; this is the pieces heard as it went)\n\n".to_owned()),
@@ -3459,7 +4292,7 @@ impl Ide {
                 Ide::upload_one(&self.backend, &docs, format!("{stamp}.{ext}"), bytes, &self.errors, &self.files_stale, ctx);
             }
             if !whole.is_empty() {
-                let md = format!("# Go note · {stamp}\n\nSaid aloud in Cove's Go mode; the recording is {stamp}.{ext} beside this file.\n\n{note}{whole}\n");
+                let md = format!("# Spoken note · {stamp}\n\nSaid aloud in Cove (Listen); the recording is {stamp}.{ext} beside this file.\n\n{note}{whole}\n");
                 Ide::upload_one(&self.backend, &docs, format!("{stamp}.md"), md.into_bytes(), &self.errors, &self.files_stale, ctx);
             }
         }
@@ -3467,14 +4300,12 @@ impl Ide {
             Ide::fail(&self.errors, "Listen heard nothing to keep".into());
             return;
         }
-        if self.listen_act {
-            self.go_say(ctx, &format!(
-                "(The whole of what I said in Go just now, transcribed - saved as supporting_docs/{stamp}.md with the recording. You have had it in pieces as I talked; do whatever in it is a clear ask that has not been done yet, and list anything left open.)\n\n{whole}"
+        let said = self.listen_act
+            && self.listen_say(ctx, &format!(
+                "(The whole of what I said in Cove just now, transcribed - saved as supporting_docs/{stamp}.md with the recording. You have had it in pieces as I talked; do whatever in it is a clear ask that has not been done yet, and list anything left open.)\n\n{whole}"
             ));
-        } else if self.exec_on || self.domain.is_none() {
-            self.exec.add_to_input(&whole);
-        } else {
-            self.agent.add_to_input(&whole);
+        if !said {
+            self.listen_keep(&whole);
         }
         self.heard.clear();
     }
@@ -3833,9 +4664,12 @@ impl Ide {
                 }
                 // 🎤: say what you want; the agent writes it for this channel.
                 if crate::voice::Mic::shown() && self.assisting.is_none() {
-                    let Ide { console_mic, backend, .. } = &mut *self;
+                    let Ide { console_mic, backend, domain, .. } = &mut *self;
+                    console_mic.keep = domain.as_ref().map(|d| d.path.clone());
                     console_mic.ui(ui, ctx, backend, &mut heard);
                 }
+                // Listen / Act as I talk, one icon right of the mic (as in Go).
+                self.listen_button(ui, 32.0);
                 ui.add_space(6.0);
                 if busy {
                     // the prompt's height: the default spinner is taller and
@@ -4069,7 +4903,8 @@ impl Ide {
     fn watch_site(&mut self, ctx: &egui::Context, now: f64) {
         if let Some((path, st)) = self.site_stamp_slot.lock().unwrap().take() {
             let changed = self.site_stamp.as_ref().is_some_and(|(p, old)| *p == path && *old != st && !st.is_empty());
-            if changed && now - self.site_saved_at > 4.0 {
+            let live = self.domain.as_ref().is_some_and(|d| !self.live_off.contains(&d.host));
+            if changed && live && now - self.site_saved_at > 4.0 {
                 self.site_seq += 1;
             }
             self.site_stamp = Some((path, st));
@@ -4115,7 +4950,9 @@ impl Ide {
                         self.textures.remove(&path);
                         self.images.remove(&path);
                     }
-                } else if !d.dirty() && !st.is_empty() {
+                } else if !st.is_empty() {
+                    // Read even with edits here: reread decides (it never
+                    // overwrites them, it asks).
                     let (slot, errors) = (self.reread.clone(), self.errors.clone());
                     self.backend.query(Query::ReadFile { path }, ctx, move |r: Result<FileText, String>| match r {
                         Ok(f) => slot.lock().unwrap().push(f),
@@ -4387,6 +5224,15 @@ impl Ide {
         }
     }
 
+    /// The account - who you are, your cell, Claude, your domains and API
+    /// keys (account_tab.rs) - as Account mode draws it (app.rs, request
+    /// #167, 2026-11-01: "account should move out of files and into its own
+    /// section").
+    pub fn account_pane(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Ide { account, backend, .. } = self;
+        account.show(ui, ctx, backend);
+    }
+
     pub fn files(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let current = self.listing.lock().unwrap().clone();
         let path = match &current {
@@ -4396,6 +5242,25 @@ impl Ide {
         self.files_path = path.clone();
         let mut go: Option<String> = None;
         let mut download: Option<String> = None;
+        // Where the agents are writing (request #165): both panes' running
+        // turns, matched to this listing by their place in the project.
+        let host = self.domain.as_ref().map(|d| d.host.clone()).unwrap_or_default();
+        let (mut changing, now_a) = self.agent.changing();
+        let (more, now_b) = self.exec.changing();
+        for f in more {
+            if !changing.contains(&f) {
+                changing.push(f);
+            }
+        }
+        let now = now_a.or(now_b);
+        let marks = (changing.len(), !changing.is_empty() || now.is_some());
+        if marks != self.agent_marks {
+            // Listed again when a new file is written and once more when the
+            // run ends, since a step is announced before its write lands.
+            go = Some(path.clone());
+            self.agent_marks = marks;
+        }
+        let changing: Vec<String> = changing.iter().map(|f| in_project(&host, f).to_owned()).collect();
         // Drawn icons, with words beside them only when the pane has room
         // (operator, 2026-10-15: "shift to icons on smaller screens").
         let words = ui.available_width() > 360.0;
@@ -4415,11 +5280,56 @@ impl Ide {
             if tool(ui, Glyph::Upload, words.then_some("Upload"), "copy files from this computer into this folder (or drop them on the window)").clicked() {
                 self.upload_pick(path.clone(), ctx);
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(4.0);
+                // The folder shown, as `ndexr glimpse` prints it, onto the
+                // clipboard: to paste into another chat (request #164). The
+                // account that sat here is a mode of its own (app.rs, #167).
+                let asking = matches!(&*self.glimpse.lock().unwrap(), Some((p, Err(e))) if p == &path && e.is_empty());
+                if asking {
+                    ui.spinner();
+                } else if ui.button(if words { "Copy glimpse" } else { "Glimpse" }).on_hover_text("copy this folder's tree and every file's text (ndexr glimpse) - paste it into any chat").clicked() {
+                    *self.glimpse.lock().unwrap() = Some((path.clone(), Err(String::new())));
+                    let slot = self.glimpse.clone();
+                    let p = path.clone();
+                    self.backend.query(Query::Glimpse { path: path.clone() }, ctx, move |r: Result<String, String>| {
+                        *slot.lock().unwrap() = Some((p, r));
+                    });
+                }
+            });
             // No "Set As Working Directory": the consoles always work from the
             // open domain's folder (operator, 2026-10-16: "there is no set as
             // working directory with code, you will always work from the
             // domain directory") - open_domain sets it.
         });
+        let arrived = match &*self.glimpse.lock().unwrap() {
+            Some((p, Ok(text))) => Some((p.clone(), Ok(text.clone()))),
+            Some((p, Err(e))) if !e.is_empty() => Some((p.clone(), Err(e.clone()))),
+            _ => None,
+        };
+        if let Some((p, r)) = arrived {
+            *self.glimpse.lock().unwrap() = None;
+            let now = ctx.input(|i| i.time);
+            let said = match r {
+                Ok(text) => {
+                    let lines = text.lines().count();
+                    ctx.copy_text(text);
+                    format!("Copied the glimpse of {} - {lines} lines", p.rsplit('/').next().unwrap_or(&p))
+                }
+                Err(e) => e,
+            };
+            self.glimpse_said = Some((now, said));
+        }
+        if let Some((at, said)) = self.glimpse_said.clone() {
+            if ctx.input(|i| i.time) - at < 6.0 {
+                egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
+                    ui.label(RichText::new(said).size(12.5).color(theme::text_strong()));
+                });
+                ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            } else {
+                self.glimpse_said = None;
+            }
+        }
         // Inside a star's source workspace: its changes, checkpoints and
         // candidates (operator, 2026-10-17: "customize it, and use the
         // resulting variant in a recorded environment").
@@ -4437,6 +5347,22 @@ impl Ide {
         egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
             ui.add(egui::Label::new(RichText::new(&path).monospace().size(11.0).color(theme::muted())).truncate());
         });
+        if let Some(f) = &now {
+            // The file the agent is writing, as it writes it: a click goes to
+            // its folder and opens it.
+            let pulse = 0.55 + 0.45 * (ctx.input(|i| i.time) * 4.0).sin().abs() as f32;
+            ctx.request_repaint_after(std::time::Duration::from_millis(80));
+            egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 3)).fill(theme::primary().gamma_multiply(0.10)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let r = ui.add(egui::Label::new(RichText::new(format!("✎ agent editing  {}", in_project(&host, f).trim_start_matches('/'))).monospace().size(11.5).color(theme::primary().gamma_multiply(pulse))).truncate().sense(egui::Sense::click()));
+                if r.on_hover_text(format!("{f}\nclick to open it")).clicked() {
+                    if let Some((dir, _)) = f.rsplit_once('/') {
+                        go = Some(dir.to_owned());
+                    }
+                    self.open(f.clone(), ctx);
+                }
+            });
+        }
         // Both ways: a long name widens its column and the listing shifts
         // sideways to it, instead of cutting it off (operator, 2026-10-15).
         let open_paths: std::collections::HashSet<&str> = self.docs.iter().map(|d| d.path.as_str()).collect();
@@ -4495,6 +5421,15 @@ impl Ide {
                         let tw = ui.painter().layout_no_wrap(shown.clone(), egui::FontId::monospace(12.0), c).size().x.min(name_w - 10.0);
                         ui.painter().circle_filled(egui::pos2(r.left() + icon_w + tw + 7.0, r.center().y), 3.0, c);
                     }
+                    // A bar at the row's edge: the agent is changing this file,
+                    // or a file somewhere inside this folder (request #165).
+                    let rel = in_project(&host, &full);
+                    let inside = changing.iter().any(|c| c == rel || (e.dir && c.starts_with(rel) && c[rel.len()..].starts_with('/')));
+                    if inside {
+                        let hot = now.as_deref().is_some_and(|n| { let n = in_project(&host, n); n == rel || (e.dir && n.starts_with(rel) && n[rel.len()..].starts_with('/')) });
+                        let c = if hot { theme::primary() } else { theme::primary().gamma_multiply(0.5) };
+                        ui.painter().rect_filled(egui::Rect::from_min_size(r.min, egui::vec2(3.0, r.height())), 0.0, c);
+                    }
                     cell(ui, r, icon_w, name_w - 12.0, RichText::new(shown).monospace().size(12.0).color(if e.dir { theme::text_strong() } else { theme::text() }), false);
                     if !e.dir && show_size {
                         cell(ui, r, size_x, size_w, RichText::new(human_bytes(e.bytes)).monospace().size(11.0).color(theme::muted()), true);
@@ -4516,7 +5451,8 @@ impl Ide {
                             ui.close();
                         }
                     });
-                    if resp.on_hover_text(&full).clicked() {
+                    let hover = if inside { format!("{full}\nthe agent is changing {}", if e.dir { "files in here" } else { "this file" }) } else { full.clone() };
+                    if resp.on_hover_text(hover).clicked() {
                         if e.dir {
                             go = Some(full.clone());
                         } else {
@@ -4579,7 +5515,7 @@ impl Ide {
     fn upload_pick(&self, dir: String, ctx: &egui::Context) {
         let (backend, errors, stale, ctx) = (self.backend.clone(), self.errors.clone(), self.files_stale.clone(), ctx.clone());
         let pick = async move {
-            let Some(files) = rfd::AsyncFileDialog::new().set_title("Upload to Cove").pick_files().await else { return };
+            let Some(files) = crate::pick::files("Upload to Cove", true).await else { return };
             for f in files {
                 let name = f.file_name();
                 let bytes = f.read().await;
@@ -4656,7 +5592,8 @@ impl Ide {
         if n == 0 {
             let hint = match lang {
                 Lang::R | Lang::Python => "No plots yet. Base graphics, lattice and ggplot2 draw here, and matplotlib (seaborn, pandas .plot) through reticulate.",
-                Lang::Shell | Lang::Julia => "",
+                Lang::Julia => "No plots yet. Plots.jl, CairoMakie and anything else that renders to PNG draw here.",
+                Lang::Shell => "",
             };
             ui.add_space(8.0);
             ui.vertical_centered(|ui| ui.label(RichText::new(hint).color(theme::hush())));
@@ -4851,6 +5788,61 @@ impl Ide {
         self.software.reveal(i);
     }
 
+    /// Ask ndexr about `names` (and the shares waiting for me), once per set.
+    fn ask_names(&mut self, ctx: &egui::Context, names: Vec<String>) {
+        let key = names.join(",");
+        if self.names_asked.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.names_asked = Some(key);
+        let slot = self.names.clone();
+        self.backend.query(Query::ProjectNames { names }, ctx, move |r: Result<api::ProjectNames, String>| {
+            if let Ok(v) = r {
+                *slot.lock().unwrap() = Some(v);
+            }
+        });
+    }
+
+    /// Who holds `host`, when someone else does.
+    fn taken_by(&self, host: &str) -> Option<String> {
+        self.names.lock().unwrap().as_ref()?.taken.iter().find(|t| t.host == host).map(|t| t.owner.clone())
+    }
+
+    /// The shares waiting for me.
+    fn offered(&self) -> Vec<api::OfferedShare> {
+        self.names.lock().unwrap().as_ref().map(|n| n.offered.clone()).unwrap_or_default()
+    }
+
+    /// Take a share and open it once it is mounted here.
+    fn accept_share(&mut self, s: &api::OfferedShare, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        self.pending_open = Some((s.domain.clone(), now, 0.0));
+        self.names_asked = None;
+        self.backend.query(Query::InboxAct { act: api::InboxAct::ShareDecide { id: s.id, accept: true } }, ctx, |_: Result<serde_json::Value, String>| {});
+    }
+
+    /// A share accepted: open it when it is among my projects; ask for them
+    /// again every 2 s until then, for 40 s.
+    fn open_pending(&mut self, ctx: &egui::Context) {
+        let Some((host, since, asked)) = self.pending_open.clone() else { return };
+        let now = ctx.input(|i| i.time);
+        let found = match &*self.domains.lock().unwrap() {
+            Some(Ok(v)) => v.iter().find(|d| d.host == host).cloned(),
+            _ => None,
+        };
+        if let Some(d) = found {
+            self.pending_open = None;
+            self.open_domain(d, ctx);
+        } else if now - since > 40.0 {
+            self.pending_open = None;
+        } else if now - asked > 2.0 {
+            self.pending_open = Some((host, since, now));
+            self.domains_asked = false;
+            self.ask_domains(ctx);
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+
     fn ask_domains(&mut self, ctx: &egui::Context) {
         if self.domains_asked {
             return;
@@ -4876,87 +5868,16 @@ impl Ide {
         }
     }
 
-    /// The toolbar's Domain menu: type to find one or to name a new one, pick
-    /// to step into it (operator, 2026-10-13: "a dropdown where the user can
-    /// either type in a new domain or select an existing one").
-    /// Projects, for the ☰ and Recent menus: a new one, then the recent ones,
-    /// each a tap to open. New project opens the same dialog as the domain
-    /// menu's (new_project_dialog), the one a phone can type into.
-    pub fn projects_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        self.ask_domains(ctx);
-        // Who may open the open project's app, and who can find me (access.rs).
-        if let Some(d) = self.domain.as_ref().filter(|_| !self.ndexr_open) {
-            let b = egui::Button::new(RichText::new(format!("Access - who can open {}…", d.host)).size(13.0)).min_size(egui::vec2(0.0, 30.0));
-            if ui.add(b).on_hover_text("everyone, anyone signed in, or the people and groups you choose - and who can find you").clicked() {
-                self.want_access = Some(d.host.clone());
-                ui.close();
-            }
-            ui.separator();
-        }
-        let b = ui.add(egui::Button::new(RichText::new("+ New project…").size(13.0).color(theme::ok())).min_size(egui::vec2(0.0, 30.0)));
-        crate::tour::mark(ui, "new-project-item", b.rect);
-        if b.on_hover_text("name a new domain, then choose what it starts as").clicked() {
-            self.naming = Some(String::new());
-            ui.close();
-        }
-        if ui.add(egui::Button::new(RichText::new("Find another project…").size(12.5)).min_size(egui::vec2(0.0, 28.0))).on_hover_text("type a name: open any of yours, or restore a saved one").clicked() {
-            self.naming = Some(String::new());
-            ui.close();
-        }
-        let have = self.domains.lock().unwrap().clone();
-        let all = match have {
-            Some(Ok(v)) => v,
-            Some(Err(e)) => {
-                ui.label(RichText::new(e).size(11.5).color(theme::warn()));
-                return;
-            }
-            None => {
-                ui.spinner();
-                return;
-            }
-        };
-        let recent = recent_projects(&self.recent_hosts, &all);
-        if recent.is_empty() {
-            ui.label(RichText::new("No projects yet - start one above").size(12.0).color(theme::text()));
-            return;
-        }
-        ui.label(RichText::new("Recent projects").size(11.5).strong().color(theme::text()));
-        let current = self.domain.as_ref().map(|d| d.host.clone());
-        let mut open = None;
-        for d in recent {
-            let here = current.as_deref() == Some(d.host.as_str());
-            let label = if d.title.is_empty() { d.host.clone() } else { format!("{}  ·  {}", d.host, d.title) };
-            let clicked = ui
-                .horizontal(|ui| {
-                    // Its framework's mark, or the house where none is known.
-                    if crate::frameworks::icon(ui, &d.framework, 20.0).is_none() {
-                        ui.label(RichText::new("⌂").size(14.0));
-                    }
-                    let b = egui::Button::selectable(here, RichText::new(label).size(12.5));
-                    ui.add(b.min_size(egui::vec2(0.0, 28.0))).on_hover_text(if here { "the project open now" } else { "open it" }).clicked()
-                })
-                .inner;
-            if clicked {
-                open = Some(d);
-                ui.close();
-            }
-        }
-        if let Some(d) = open {
-            self.open_domain(d, ctx);
-        }
-    }
-
+    /// The project button: the open project's name, and a tap opens the
+    /// Projects dialog (project_dialog), the one place to go to a project or
+    /// create one.
     pub fn domain_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, width: f32, sessions: impl FnOnce(&mut egui::Ui)) {
         self.ask_domains(ctx);
+        self.open_pending(ctx);
         // The host, plus what serves it when that is not its own module.r
         // (src/r/nginx/target.r): "svbt.ndexr.io · port:8001".
         let served = |d: &DomainInfo| if d.target.is_empty() || d.target == "module" { d.host.clone() } else { format!("{} · {}", d.host, d.target) };
-        let label = if self.ndexr_open { "ndexr".to_owned() } else { self.domain.as_ref().map_or("Project…".to_owned(), served) };
-        // What Recent was, in the project's own place (operator, 2026-10-26:
-        // "The Recent button ... with the recent, create new, etc is what the
-        // Project ... should be in the spot"): a new project, the recent ones,
-        // the person's own ndexr, then their sessions. Finding any other
-        // project, or restoring one, is the New project dialog's.
+        let mut label = if self.ndexr_open { "ndexr".to_owned() } else { self.domain.as_ref().map_or("Project…".to_owned(), served) };
         // The open project's framework mark in place of the house, so what
         // kind of app this is shows as projects change (operator, 2026-10-28).
         // A project opened from a session or a new create may not carry it:
@@ -4971,25 +5892,213 @@ impl Ide {
         };
         let marked = crate::frameworks::icon(ui, &fw, 20.0).is_some();
         let house = if marked { "" } else { "⌂ " };
-        let r = ui.menu_button(RichText::new(format!("{house}{label} ▾")).monospace().size(12.0).color(if self.domain.is_some() { theme::text_strong() } else { theme::primary() }), |ui| {
-            ui.set_width(width.max(300.0));
-            self.projects_menu(ui, ctx);
-            // The person's own ndexr (operator, 2026-10-25: "their shiny app
-            // must be a default project which is whatever ndexr has to run"):
-            // the platform's code, read-only, with their domains in it -
-            // scripts/cells/tenant-ndexr.sh lays it at ~/ndexr.
-            if !self.home.is_empty() {
+        // Within `width`: on a phone the project shares a row with the
+        // panes, and its full name and port pushed the App pane's button off
+        // the screen (request #188: "can't see the top bar when on mobile
+        // vertical for going to the app, which is more important than
+        // showing the port"). What serves it goes first, then the name is
+        // cut; the dialog lists it in full.
+        let font = egui::FontId::monospace(12.0);
+        let fits = |t: &str| ui.ctx().fonts_mut(|f| f.layout_no_wrap(format!("{house}{t} ▾"), font.clone(), egui::Color32::WHITE).size().x) + 16.0 <= width;
+        if !fits(&label) {
+            if let Some((host, _)) = label.split_once(" · ") {
+                label = host.to_owned();
+            }
+            while !fits(&label) && label.chars().count() > 4 {
+                let keep = label.trim_end_matches('…').chars().count().saturating_sub(1);
+                label = format!("{}…", label.chars().take(keep).collect::<String>());
+            }
+        }
+        let text = RichText::new(format!("{house}{label} ▾")).monospace().size(12.0).color(if self.domain.is_some() { theme::text_strong() } else { theme::primary() });
+        let r = ui.add(egui::Button::new(text).frame(false));
+        crate::tour::mark(ui, "project-button", r.rect);
+        if r.on_hover_text("your projects: type a name to go to one, or to create it").clicked() && self.choosing.is_none() {
+            self.naming = Some(String::new());
+        }
+        self.bar_frame = ctx.cumulative_frame_nr();
+        self.project_dialog(ctx, Some(sessions));
+    }
+
+    /// The open projects as a browser's tabs, one row (tabs.rs; operator,
+    /// 2026-11-14: "act like a browser with domains as tabs, and it should
+    /// have a full tab menu"). A click brings a tab forward, a middle click
+    /// closes it, a right click opens its menu; + is a new tab (Projects) and
+    /// ⌄ lists every tab and the ones closed lately.
+    pub fn tab_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.ask_domains(ctx);
+        let listed: Vec<DomainInfo> = match &*self.domains.lock().unwrap() {
+            Some(Ok(v)) => v.clone(),
+            _ => Vec::new(),
+        };
+        self.tabs.keep_listed(&listed.iter().map(|d| d.host.clone()).collect::<Vec<_>>());
+        if let Some(d) = &self.domain {
+            if !self.tabs.open.contains(&d.host) {
+                let h = d.host.clone();
+                self.tabs.opened(&h, None);
+            }
+        }
+        let active = if self.ndexr_open { None } else { self.domain.as_ref().map(|d| d.host.clone()) };
+        let mut act: Option<TabAct> = None;
+        let small = ui.ctx().content_rect().width() < 600.0;
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let tail = 56.0;
+            let room = (ui.available_width() - tail).max(80.0);
+            egui::ScrollArea::horizontal().id_salt("project-tabs").max_width(room).auto_shrink([true, true]).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let n = self.tabs.open.len().max(1) as f32;
+                    // As a browser does: tabs share the row, wide while few.
+                    let w = (room / n - 2.0).clamp(if small { 84.0 } else { 110.0 }, 200.0);
+                    for host in self.tabs.open.clone() {
+                        let on = active.as_deref() == Some(host.as_str());
+                        let pinned = self.tabs.is_pinned(&host);
+                        let info = listed.iter().find(|d| d.host == host);
+                        let r = project_tab(ui, &host, info, on, pinned, self.live_off.contains(&host), if pinned { 40.0 } else { w }, small);
+                        if r.close {
+                            act = Some(TabAct::Close(vec![host.clone()]));
+                        } else if r.resp.middle_clicked() {
+                            act = Some(TabAct::Close(vec![host.clone()]));
+                        } else if r.resp.clicked() && !on {
+                            act = Some(TabAct::Switch(host.clone()));
+                        }
+                        let full = info.map_or(host.clone(), |d| if d.title.is_empty() { d.host.clone() } else { format!("{} · {}", d.host, d.title) });
+                        let resp = r.resp.on_hover_text(format!("{full}\nright-click: the tab menu · middle-click: close"));
+                        resp.context_menu(|ui| {
+                            ui.set_min_width(230.0);
+                            if let Some(a) = self.tab_menu(ui, &host, on) {
+                                act = Some(a);
+                            }
+                        });
+                    }
+                });
+            });
+            if theme::tool(ui, "+", "new tab - go to a project, or create one (Projects)").clicked() {
+                act = Some(TabAct::New);
+            }
+            ui.menu_button(RichText::new("⌄").size(13.0).color(theme::text_strong()), |ui| {
+                ui.set_min_width(260.0);
+                ui.label(RichText::new(format!("{} open", self.tabs.open.len())).size(12.0).strong().color(theme::text_strong()));
+                for host in self.tabs.open.clone() {
+                    let on = active.as_deref() == Some(host.as_str());
+                    let mark = if self.tabs.is_pinned(&host) { " · pinned" } else { "" };
+                    if ui.selectable_label(on, RichText::new(format!("{host}{mark}")).monospace().size(12.0)).clicked() {
+                        if !on {
+                            act = Some(TabAct::Switch(host.clone()));
+                        }
+                        ui.close();
+                    }
+                }
                 ui.separator();
-                let b = egui::Button::selectable(self.ndexr_open, RichText::new("⌂ Your ndexr - the platform (read-only) and your domains").size(12.5));
-                if ui.add(b.min_size(egui::vec2(0.0, 28.0))).on_hover_text(format!("{}/ndexr: run ndexr with your own settings; the agent of all your sites works here", self.home)).clicked() {
-                    self.want_folder = Some(format!("{}/ndexr", self.home.trim_end_matches('/')));
+                if ui.button("+ New tab").clicked() {
+                    act = Some(TabAct::New);
                     ui.close();
                 }
-            }
-            sessions(ui);
+                let last = self.tabs.closed.last().cloned();
+                if ui.add_enabled(last.is_some(), egui::Button::new(format!("Reopen closed tab{}", last.as_ref().map_or(String::new(), |h| format!(" · {}", crate::tabs::Tabs::short(h)))))).clicked() {
+                    act = Some(TabAct::Reopen);
+                    ui.close();
+                }
+                if !self.tabs.closed.is_empty() {
+                    ui.menu_button("Recently closed", |ui| {
+                        for h in self.tabs.closed.iter().rev() {
+                            if ui.button(RichText::new(h).monospace().size(12.0)).clicked() {
+                                act = Some(TabAct::Switch(h.clone()));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                if let Some(a) = active.clone() {
+                    let others = self.tabs.others(&a);
+                    if ui.add_enabled(!others.is_empty(), egui::Button::new(format!("Close {} other tab{}", others.len(), if others.len() == 1 { "" } else { "s" }))).clicked() {
+                        act = Some(TabAct::Close(others));
+                        ui.close();
+                    }
+                }
+            });
         });
-        crate::tour::mark(ui, "project-button", r.response.rect);
-        r.response.on_hover_text("your projects: a recent one, a new one, or another session");
+        if let Some(a) = act {
+            self.tab_act(a, active.as_deref(), ctx);
+        }
+    }
+
+    /// One tab's menu, as a browser's: what it opens, its place, what closes.
+    fn tab_menu(&self, ui: &mut egui::Ui, host: &str, on: bool) -> Option<TabAct> {
+        let mut act = None;
+        let mut item = |ui: &mut egui::Ui, enabled: bool, label: String, a: TabAct| {
+            if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                act = Some(a);
+                ui.close();
+            }
+        };
+        let h = host.to_owned();
+        ui.label(RichText::new(host).monospace().size(12.0).strong().color(theme::text_strong()));
+        ui.separator();
+        item(ui, true, "New tab".into(), TabAct::New);
+        item(ui, true, if on { "Reload the site".into() } else { "Go to this tab".into() }, if on { TabAct::Reload } else { TabAct::Switch(h.clone()) });
+        item(ui, true, "Open the site in a browser tab ↗".into(), TabAct::Outside(h.clone()));
+        item(ui, true, "Copy its address".into(), TabAct::Copy(h.clone()));
+        ui.separator();
+        let pinned = self.tabs.is_pinned(host);
+        item(ui, true, if pinned { "Unpin tab".into() } else { "Pin tab".into() }, TabAct::Pin(h.clone()));
+        let live = !self.live_off.contains(host);
+        item(ui, true, if live { "Pause live reload".into() } else { "Resume live reload".into() }, TabAct::Live(h.clone()));
+        item(ui, true, "Move to start".into(), TabAct::Move(h.clone(), true));
+        item(ui, true, "Move to end".into(), TabAct::Move(h.clone(), false));
+        ui.separator();
+        item(ui, true, "Close tab".into(), TabAct::Close(vec![h.clone()]));
+        let others = self.tabs.others(host);
+        item(ui, !others.is_empty(), "Close other tabs".into(), TabAct::Close(others));
+        let right = self.tabs.right_of(host);
+        item(ui, !right.is_empty(), "Close tabs to the right".into(), TabAct::Close(right));
+        let left = self.tabs.left_of(host);
+        item(ui, !left.is_empty(), "Close tabs to the left".into(), TabAct::Close(left));
+        ui.separator();
+        let last = self.tabs.closed.last().cloned();
+        item(ui, last.is_some(), format!("Reopen closed tab{}", last.as_ref().map_or(String::new(), |h| format!(" · {}", crate::tabs::Tabs::short(h)))), TabAct::Reopen);
+        act
+    }
+
+    fn tab_act(&mut self, a: TabAct, active: Option<&str>, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        match a {
+            TabAct::Switch(h) => self.pending_open = Some((h, now, 0.0)),
+            TabAct::New => {
+                if self.choosing.is_none() {
+                    self.naming = Some(String::new());
+                }
+            }
+            TabAct::Reopen => {
+                if let Some(h) = self.tabs.reopen() {
+                    self.pending_open = Some((h, now, 0.0));
+                }
+            }
+            TabAct::Reload => self.site_seq += 1,
+            TabAct::Outside(h) => ctx.open_url(egui::OpenUrl::new_tab(format!("https://{h}/"))),
+            TabAct::Copy(h) => ctx.copy_text(format!("https://{h}/")),
+            TabAct::Pin(h) => self.tabs.toggle_pin(&h),
+            TabAct::Live(h) => {
+                if !self.live_off.remove(&h) {
+                    self.live_off.insert(h);
+                }
+            }
+            TabAct::Move(h, start) => self.tabs.move_to(&h, start),
+            TabAct::Close(hosts) => match self.tabs.close(&hosts, active) {
+                Some(next) => self.pending_open = Some((next, now, 0.0)),
+                // The tab in front closed and none is left: no project, as a
+                // browser's empty window - Projects opens to pick the next.
+                None if active.is_some_and(|a| hosts.iter().any(|h| h == a)) => {
+                    self.park_domain();
+                    self.domain = None;
+                    self.list("", ctx);
+                    if self.choosing.is_none() {
+                        self.naming = Some(String::new());
+                    }
+                }
+                None => {}
+            },
+        }
     }
 
     fn ask_versions(&mut self, ctx: &egui::Context) {
@@ -5001,9 +6110,11 @@ impl Ide {
         });
     }
 
-    /// The open project's versions (operator, 2026-10-25: "get older versions
-    /// ... they dont even need to have the git repos"): newest first, each its
-    /// time, whose and what changed, and Restore - which keeps what is there
+    /// The open project's Git window (operator, 2026-10-30: "just create a
+    /// basic git viewer in cove instead for now, think pycharm"; before it,
+    /// 2026-10-25's Versions list: "get older versions ... they dont even
+    /// need to have the git repos"): its history, each version's files and
+    /// each file's diff (gitview.rs), and Restore - which keeps what is there
     /// now as a version before it puts the old one back. Saved every 30
     /// minutes by the autosave service, mirrored to the private S3 archive.
     fn versions_window(&mut self, ctx: &egui::Context) {
@@ -5014,85 +6125,49 @@ impl Ide {
         let list = self.versions.lock().unwrap().clone();
         let said = self.version_said.lock().unwrap().clone();
         let mut open = true;
-        let mut restore = None;
-        let mut refresh = false;
-        egui::Window::new(format!("Versions · {}", d.host)).open(&mut open).default_width(560.0).show(ctx, |ui| {
-            match &said {
-                Some(Ok(m)) => {
-                    ui.label(RichText::new(format!("✓ {m}")).size(13.0).color(theme::ok()));
-                }
-                Some(Err(e)) => {
-                    ui.label(RichText::new(format!("Not restored: {e}")).size(13.0).color(theme::alt()));
-                }
-                None => {}
-            }
-            match &list {
-                None => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(RichText::new("reading its versions…").size(13.0).color(theme::text()));
-                    });
-                }
-                Some(Err(e)) => {
-                    ui.label(RichText::new(e).size(13.0).color(theme::alt()));
-                }
-                Some(Ok(v)) if v.is_empty() => {
-                    ui.label(RichText::new("No saved versions yet - the first is saved within 30 minutes of a change.").size(13.0).color(theme::text()));
-                }
-                Some(Ok(v)) => {
-                    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                        for (k, x) in v.iter().enumerate() {
-                            ui.horizontal(|ui| {
-                                let when = format!("{} UTC", crate::software::fmt_date(x.when));
-                                ui.label(RichText::new(when).monospace().size(12.0).color(theme::text_strong()));
-                                ui.add(egui::Label::new(RichText::new(&x.message).size(12.5).color(theme::text())).truncate());
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if k == 0 {
-                                        ui.label(RichText::new("now").size(12.0).color(theme::ok()));
-                                    } else if self.version_confirm.as_deref() == Some(x.sha.as_str()) {
-                                        if ui.add(theme::primary_button("Restore it")).clicked() {
-                                            restore = Some(x.sha.clone());
-                                        }
-                                        if ui.button("Cancel").clicked() {
-                                            self.version_confirm = None;
-                                        }
-                                    } else if ui.button("Restore").on_hover_text("put this version back - what is there now is saved as a version first").clicked() {
-                                        self.version_confirm = Some(x.sha.clone());
-                                    }
-                                });
-                            });
-                            if self.version_confirm.as_deref() == Some(x.sha.as_str()) && k > 0 {
-                                ui.label(RichText::new("Its files replace the project's. What is there now is saved as a version first, so nothing is lost.").size(12.5).color(theme::text()));
-                            }
-                        }
-                    });
-                }
-            }
-            ui.add_space(4.0);
-            if ui.button("⟳ list again").clicked() {
-                refresh = true;
-            }
-        });
-        if let Some(sha) = restore {
-            self.version_confirm = None;
-            let (said, versions, backend, host) = (self.version_said.clone(), self.versions.clone(), self.backend.clone(), d.host.clone());
-            *said.lock().unwrap() = None;
-            let ctx2 = ctx.clone();
-            self.backend.query(Query::VersionRestore { host: host.clone(), sha }, ctx, move |r: Result<String, String>| {
-                *said.lock().unwrap() = Some(r);
-                *versions.lock().unwrap() = None;
-                backend.query(Query::Versions { host }, &ctx2, move |r: Result<Vec<crate::api::Version>, String>| {
-                    *versions.lock().unwrap() = Some(r);
-                });
+        let mut act = crate::gitview::GitAct::None;
+        // As big as the screen allows: three panes need the room. On a phone
+        // it is the screen.
+        let screen = ctx.content_rect().size();
+        let size = egui::vec2((screen.x - 24.0).clamp(300.0, 1320.0), (screen.y - 90.0).clamp(300.0, 800.0));
+        // In front: app.rs hides the App pane's page (an HTML layer over the
+        // canvas) for any large foreground area, and a window in the middle
+        // layer had the page drawn over its diff.
+        egui::Window::new(format!("Git · {}", d.host))
+            .id(egui::Id::new("git-window"))
+            .order(egui::Order::Foreground)
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .fixed_size(size)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 12.0))
+            .show(ctx, |ui| {
+                ui.set_min_size(size);
+                act = self.git.ui(ui, &self.backend, &d.host, &list, &said);
             });
-        }
-        if refresh {
-            *self.version_said.lock().unwrap() = None;
-            self.ask_versions(ctx);
+        match act {
+            crate::gitview::GitAct::Restore(sha) => {
+                // The history it showed is about to grow: start it again.
+                self.git = Default::default();
+                let (said, versions, backend, host) = (self.version_said.clone(), self.versions.clone(), self.backend.clone(), d.host.clone());
+                *said.lock().unwrap() = None;
+                let ctx2 = ctx.clone();
+                self.backend.query(Query::VersionRestore { host: host.clone(), sha }, ctx, move |r: Result<String, String>| {
+                    *said.lock().unwrap() = Some(r);
+                    *versions.lock().unwrap() = None;
+                    backend.query(Query::Versions { host }, &ctx2, move |r: Result<Vec<crate::api::Version>, String>| {
+                        *versions.lock().unwrap() = Some(r);
+                    });
+                });
+            }
+            crate::gitview::GitAct::Refresh => {
+                *self.version_said.lock().unwrap() = None;
+                self.ask_versions(ctx);
+            }
+            crate::gitview::GitAct::None => {}
         }
         if !open {
             self.versions_open = false;
-            self.version_confirm = None;
         }
     }
 
@@ -5257,7 +6332,7 @@ impl Ide {
         }
     }
 
-    /// ☰ › Project › Versions…: the same window as the strip's button.
+    /// ☰ › Project › Git…: the same window as the strip's button.
     pub fn open_versions(&mut self, ctx: &egui::Context) {
         self.versions_open = true;
         self.ask_versions(ctx);
@@ -5345,14 +6420,15 @@ impl Ide {
                 "node" => "Node",
                 "python" => "Python",
                 "rust" => "Rust",
+                "unreal" => "Unreal Engine",
                 "" => "Project",
                 other => other,
             };
             ui.label(RichText::new(lang).size(12.5).strong().color(theme::text_strong()));
             for (verb, word, tip) in [
-                ("build", "Build", "./build.sh - compile or check it; never starts it"),
-                ("up", "Up", "./up.sh - start it and wait until it answers"),
-                ("down", "Down", "./down.sh - stop it"),
+                ("build", "Build", ".cove/build.sh - compile or check it; never starts it"),
+                ("up", "Up", ".cove/up.sh - start it and wait until it answers"),
+                ("down", "Down", ".cove/down.sh - stop it"),
             ] {
                 if !s.verbs.iter().any(|v| v == verb) {
                     continue;
@@ -5366,26 +6442,7 @@ impl Ide {
             if theme::tool(ui, "?", "show me how: a walkthrough of running this app, on these buttons").clicked() {
                 self.want_tour = Some("run");
             }
-            // A compile says so, with its age, whoever started it: Cove's
-            // Build, the agent or a terminal (apps.rs `compiling`).
-            let (dot, words) = if let Some(t) = s.compiling {
-                (theme::amber(), format!("compiling · {}:{:02}", t / 60, t % 60))
-            } else if running {
-                (theme::amber(), "working".to_owned())
-            } else if !s.built {
-                (theme::hush(), "not built yet - Build compiles it".to_owned())
-            } else if s.kind == "module" {
-                (theme::ok(), "served from module.r".to_owned())
-            } else if s.port.is_empty() && s.kind == "port" {
-                // Only when it has a program to run that lacks the setting.
-                (theme::warn(), if s.inferred { "add an app.env to run it here (APP-CONTRACT.md)".to_owned() } else { "app.env names no APP_PORT".to_owned() })
-            } else if s.port.is_empty() {
-                (Color32::TRANSPARENT, String::new())
-            } else if s.running {
-                (theme::ok(), format!("up · port {}", s.port))
-            } else {
-                (theme::hush(), format!("down · port {}", s.port))
-            };
+            let (dot, words) = strip_light(&s, running);
             if !words.is_empty() {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), egui::Sense::hover());
                 ui.painter().circle_filled(r.center(), 4.0, dot);
@@ -5398,7 +6455,7 @@ impl Ide {
             let last = if self.app_routed && route.is_some() && !running { route.clone().map(|r| (r, Some(true))) } else { last };
             // Every saved version of this project, any of them a click back.
             let versions_btn = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let clicked = ui.add(egui::Button::new(RichText::new("Versions").size(12.5))).on_hover_text("every saved version of this project - put any of them back").clicked();
+                let clicked = ui.add(egui::Button::new(RichText::new("Git").size(12.5))).on_hover_text("this project's history: every version, the files it changed and their diffs - put any of them back").clicked();
                 clicked
             }).inner;
             if versions_btn {
@@ -5432,6 +6489,34 @@ impl Ide {
                 self.app_log = open;
             }
         }
+    }
+
+    /// The strip folded into a phone's tab row (operator screenshot,
+    /// 2026-11-07: "lots of white space ... could be consolidated"): its light
+    /// and words, and Git, right to left into what the tabs leave. Build, Up
+    /// and Down are ☰ › Project's; the words open the log. app_strip(None)
+    /// still follows the project every frame.
+    pub fn app_strip_compact(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(Ok(s)) = self.app_status.lock().unwrap().clone() else { return };
+        let running = matches!(&*self.app_job.lock().unwrap(), Some(Ok(j)) if j.running);
+        if ui.add(egui::Button::new(RichText::new("Git").size(12.5))).on_hover_text("this project's history: every version, the files it changed and their diffs - put any of them back").clicked() {
+            self.versions_open = !self.versions_open;
+            if self.versions_open {
+                self.ask_versions(ctx);
+            }
+        }
+        let (dot, words) = strip_light(&s, running);
+        if words.is_empty() {
+            return;
+        }
+        // Right to left: the words take what is left, then the light before them.
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), egui::Sense::hover());
+            ui.painter().circle_filled(r.center(), 4.0, dot);
+            if ui.add(egui::Label::new(RichText::new(words).size(12.0).color(theme::text())).truncate().sense(egui::Sense::click())).on_hover_text("the whole log").clicked() {
+                self.app_log = !self.app_log;
+            }
+        });
     }
 
     /// The domains listed again (a new project just registered, say).
@@ -5584,7 +6669,9 @@ impl Ide {
         // A first Rust build is ~7 minutes before routing starts (measured on
         // the host, 2026-10-19), and a first Julia start compiles its
         // packages: they get longer before they are called slow.
-        let slow = now - l.started > if l.rust || port { 1200.0 } else { 600.0 } && !live;
+        // A first Unreal build compiles and cooks for tens of minutes.
+        let unreal = matches!(&app, Some(Ok(s)) if s.language == "unreal");
+        let slow = now - l.started > if unreal { 7200.0 } else if l.rust || port { 1200.0 } else { 600.0 } && !live;
         let failed = matches!(publish, Some(Err(_))) || deploy_failed || slow;
         // A name held by someone else (publish.R's own words) is not a failure
         // to retry: no second try can register it (operator's screenshot,
@@ -5598,6 +6685,7 @@ impl Ide {
                 "node" => "Node",
                 "python" => "Python",
                 "rust" => "Rust",
+                "unreal" => "Unreal Engine",
                 "r" => "R",
                 _ => "",
             },
@@ -5606,7 +6694,9 @@ impl Ide {
         let what = if rust {
             "A Rust app - built, served and routed for you".to_owned()
         } else if port {
-            format!("A {} app on its own port - started and routed for you", if lang.is_empty() { "web" } else { lang })
+            let lang = if lang.is_empty() { "web" } else { lang };
+            let a = if lang.starts_with(['A', 'E', 'I', 'O', 'U']) { "An" } else { "A" };
+            format!("{a} {lang} app on its own port - started and routed for you")
         } else if known {
             "A Shiny module - live as soon as its address answers".to_owned()
         } else {
@@ -5616,6 +6706,18 @@ impl Ide {
             Some(Ok(s)) => s.port.clone(),
             _ => String::new(),
         };
+
+        if l.quiet {
+            if live {
+                self.launch = None;
+                self.site_seq += 1;
+                self.gate_asked.clear();
+                return;
+            }
+            if !failed {
+                return;
+            }
+        }
 
         let mut close = false;
         let mut retry = false;
@@ -5688,15 +6790,15 @@ impl Ide {
                     let tail = |v: &JobView| v.lines.iter().rev().take(4).map(String::as_str).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
                     let on = if port_no.is_empty() { String::new() } else { format!(" on port {port_no}") };
                     match &up {
-                        _ if !published => row(ui, None, &format!("Start the app{on}"), "./up.sh, as you, after it is registered"),
+                        _ if !published => row(ui, None, &format!("Start the app{on}"), ".cove/up.sh, as you, after it is registered"),
                         Some(Err(e)) => row(ui, Some(false), "The app did not start", e),
                         Some(Ok(v)) if v.what.starts_with("up ") => match v.ok {
                             Some(true) => row(ui, Some(true), &format!("Started as you{on}"), ""),
                             Some(false) => row(ui, Some(false), "The app did not start", &tail(v)),
-                            None => row(ui, None, &format!("Starting it{on}: ./up.sh"), v.lines.last().map(String::as_str).unwrap_or("a first start compiles its packages")),
+                            None => row(ui, None, &format!("Starting it{on}: .cove/up.sh"), v.lines.last().map(String::as_str).unwrap_or("a first start compiles its packages")),
                         },
-                        Some(Ok(v)) if v.running => row(ui, None, "Compiling: ./build.sh", v.lines.last().map(String::as_str).unwrap_or("a first build takes a few minutes")),
-                        _ => row(ui, None, &format!("Start the app{on}"), "./up.sh"),
+                        Some(Ok(v)) if v.running => row(ui, None, "Compiling: .cove/build.sh", v.lines.last().map(String::as_str).unwrap_or("a first build takes a few minutes")),
+                        _ => row(ui, None, &format!("Start the app{on}"), ".cove/up.sh"),
                     }
                     match &route {
                         Some(Err(e)) => row(ui, Some(false), "Not routed", e),
@@ -5777,133 +6879,314 @@ impl Ide {
         Some((l.host.clone(), live))
     }
 
+    /// Projects (operator, 2026-11-14: "collapse all of that into one thing
+    /// that we can type in to either go to a project or if it doesn't exist
+    /// then it creates it ... not working very well on mobile because i'll
+    /// click on it and then the text box doesn't open up"). It replaced the
+    /// project menu, its finder field, "+ New project…" and "Find another
+    /// project…": one field, focused as it opens. Empty, it lists the shares
+    /// waiting, the recent projects, your ndexr, Inlet and the other sessions.
+    /// Typed, it lists the projects that match and what the name can be
+    /// created as - Enter opens the first match, or creates the first name.
+    /// A dialog, not a menu, because a phone's keyboard comes up for a field
+    /// in a dialog and did not for one in a menu.
+    ///
+    /// Drawn by domain_bar, which has the sessions list; by the IDE's own
+    /// frame (`sessions` None) only when the bar is not on screen.
+    fn project_dialog(&mut self, ctx: &egui::Context, sessions: Option<impl FnOnce(&mut egui::Ui)>) {
+        if sessions.is_none() && ctx.cumulative_frame_nr().saturating_sub(self.bar_frame) <= 1 {
+            return;
+        }
+        let Some(mut name) = self.naming.clone() else {
+            self.project_dialog_open = false;
+            self.project_pick = 0;
+            return;
+        };
+        let focus = !self.project_dialog_open;
+        self.project_dialog_open = true;
+        let have = self.domains.lock().unwrap().clone();
+        let all = match &have {
+            Some(Ok(v)) => v.clone(),
+            _ => Vec::new(),
+        };
+        let text = name.trim().to_ascii_lowercase();
+        // Who holds what this would create, and the shares waiting for me
+        // (Query::ProjectNames; operator, 2026-11-03: the search "shows
+        // projects you are allowed to work on" and "disables ability to
+        // create sites already created").
+        let mut ask: Vec<String> = if text.is_empty() { Vec::new() } else { std::iter::once(text.clone()).chain(new_domain_offers(&text, &all)).collect() };
+        ask.dedup();
+        self.ask_names(ctx, ask);
+        let held = |h: &str| self.taken_by(h);
+        let offered: Vec<api::OfferedShare> = self.offered().into_iter().filter(|o| !all.iter().any(|d| d.host == o.domain)).collect();
+        let ring = project_ring(&self.recent_hosts, &all);
+        let here = self.domain.as_ref().and_then(|d| ring.iter().position(|x| x.host == d.host));
+        let hits = find_projects(&text, &ring);
+        let mut offers = if text.is_empty() { Vec::new() } else { new_domain_offers(&text, &all) };
+        offers.retain(|h| crate::names::parse(h).is_none() && held(h).is_none() && crate::api::posit_mark(h).is_none() && !offered.iter().any(|o| o.domain == *h));
+        let restorable = crate::names::parse(&text).is_some() && !all.iter().any(|d| d.host == text);
+        let note = if text.is_empty() {
+            None
+        } else if let Some(m) = crate::api::posit_mark(&text) {
+            Some(crate::api::posit_mark_words(&text, m))
+        } else if let Some(who) = held(&text).filter(|_| !hits.iter().any(|d| d.host == text)) {
+            Some(format!("{text} is {who}'s - ask them to share it with you, or choose another name"))
+        } else if hits.is_empty() && offers.is_empty() && !restorable && !offered.iter().any(|o| o.domain.contains(&text)) {
+            Some("Letters, digits and hyphens only, like rix or my-app".to_owned())
+        } else {
+            None
+        };
+        let (up, down, enter, left, right) = ctx.input(|i| {
+            (i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight))
+        });
+        if !hits.is_empty() {
+            if down {
+                self.project_pick = (self.project_pick + 1).min(hits.len() - 1);
+            }
+            if up {
+                self.project_pick = self.project_pick.saturating_sub(1);
+            }
+            self.project_pick = self.project_pick.min(hits.len() - 1);
+        } else {
+            self.project_pick = 0;
+        }
+        let screen = ctx.content_rect();
+        let w = (screen.width() - 32.0).clamp(260.0, 520.0);
+        let (mut open, mut create, mut restore, mut accept, mut close, mut step) = (None, None, None, None, false, None::<isize>);
+        let mut want_ndexr = false;
+        let mut want_inlet = false;
+        egui::Modal::new(egui::Id::new("new-project")).show(ctx, |ui| {
+            ui.set_width(w);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Projects").size(20.0).strong().color(theme::text_strong()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(egui::Button::new(RichText::new("✕").size(15.0)).frame(false).min_size(egui::vec2(32.0, 32.0))).on_hover_text("close · Esc").clicked() {
+                        close = true;
+                    }
+                });
+            });
+            ui.horizontal(|ui| {
+                if ui.add_enabled(ring.len() > 1, egui::Button::new(RichText::new("‹").size(16.0)).min_size(egui::vec2(32.0, 36.0))).on_hover_text("the previous project (← in an empty field)").clicked() {
+                    step = Some(-1);
+                }
+                let fw = (ui.available_width() - 40.0).max(120.0);
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut name)
+                        .hint_text("type a name: go to it, or create it")
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(fw)
+                        .min_size(egui::vec2(0.0, 36.0)),
+                );
+                if focus {
+                    r.request_focus();
+                }
+                if ui.add_enabled(ring.len() > 1, egui::Button::new(RichText::new("›").size(16.0)).min_size(egui::vec2(32.0, 36.0))).on_hover_text("the next project (→ in an empty field)").clicked() {
+                    step = Some(1);
+                }
+            });
+            if let Some(n) = &note {
+                ui.label(RichText::new(n).size(13.5).color(theme::warn()));
+            }
+            ui.add_space(4.0);
+            let row = |ui: &mut egui::Ui, t: RichText| ui.add(egui::Button::new(t).min_size(egui::vec2(ui.available_width(), 34.0)).truncate());
+            egui::ScrollArea::vertical().max_height((screen.height() * 0.6).max(220.0)).auto_shrink([false, true]).show(ui, |ui| {
+                let share = |ui: &mut egui::Ui, o: &api::OfferedShare, accept: &mut Option<api::OfferedShare>| {
+                    let what = crate::access::role_words(&o.role);
+                    let r = row(ui, RichText::new(format!("↘ Accept and open {} · from {} · {what}", o.domain, o.owner)).size(13.0).color(theme::ok()));
+                    if r.on_hover_text("it was shared with you: take it, and it opens here").clicked() {
+                        *accept = Some(o.clone());
+                    }
+                };
+                if text.is_empty() {
+                    if !offered.is_empty() {
+                        ui.label(RichText::new("Shared with you, waiting for you").size(12.5).strong().color(theme::text_strong()));
+                        for o in &offered {
+                            share(ui, o, &mut accept);
+                        }
+                        ui.separator();
+                    }
+                    let recent = recent_projects(&self.recent_hosts, &all);
+                    if have.is_none() {
+                        ui.spinner();
+                    } else if let Some(Err(e)) = &have {
+                        ui.label(RichText::new(e).size(12.5).color(theme::warn()));
+                    } else if recent.is_empty() {
+                        ui.label(RichText::new("No projects yet - type a name above to create one").size(13.0).color(theme::text()));
+                    } else {
+                        ui.label(RichText::new("Recent").size(12.5).strong().color(theme::text()));
+                        let current = self.domain.as_ref().map(|d| d.host.clone());
+                        for d in recent {
+                            if project_row(ui, &d, current.as_deref() == Some(d.host.as_str())).clicked() {
+                                open = Some(d);
+                            }
+                        }
+                    }
+                    ui.separator();
+                    // The person's own ndexr (operator, 2026-10-25: "their
+                    // shiny app must be a default project which is whatever
+                    // ndexr has to run"): the platform's code, read-only, with
+                    // their domains in it (scripts/cells/tenant-ndexr.sh).
+                    if !self.home.is_empty() {
+                        let b = egui::Button::selectable(self.ndexr_open, RichText::new("⌂ Your ndexr").size(13.0)).min_size(egui::vec2(ui.available_width(), 32.0));
+                        if ui.add(b).on_hover_text(format!("{}/ndexr: the platform (read-only) and your domains", self.home)).clicked() {
+                            want_ndexr = true;
+                        }
+                    }
+                    // Inlet, the stack's RStudio fork, as a project everyone
+                    // has (operator, 2026-11-07): its easyconfig and every
+                    // patch, in the person's own workspace (source.rs).
+                    if row(ui, RichText::new("◧ Inlet").size(13.0)).on_hover_text("Inlet, ndexr's RStudio fork: its recipe and patches as a project of your own - change it and build your variant").clicked() {
+                        want_inlet = true;
+                    }
+                    if let Some(f) = sessions {
+                        f(ui);
+                    }
+                } else {
+                    for (i, d) in hits.iter().enumerate() {
+                        if project_row(ui, d, i == self.project_pick).clicked() {
+                            open = Some(d.clone());
+                        }
+                    }
+                    for o in offered.iter().filter(|o| o.domain.contains(&text)) {
+                        share(ui, o, &mut accept);
+                    }
+                    // A software project's name (names.rs) not here: its saved
+                    // repository, never a fresh empty domain standing in for it.
+                    if restorable && row(ui, RichText::new(format!("⤓ Restore {text}")).size(13.5).color(theme::ok())).on_hover_text("clone its saved repository, every version, into your domains").clicked() {
+                        restore = Some(text.clone());
+                    }
+                    if !hits.is_empty() && !offers.is_empty() {
+                        ui.add_space(4.0);
+                    }
+                    for (i, h) in offers.iter().take(3).enumerate() {
+                        let first = i == 0 && hits.is_empty() && !restorable;
+                        let r = row(ui, RichText::new(format!("+ Create {h}{}", if first { "  ⏎" } else { "" })).size(13.5).color(theme::ok()));
+                        if r.on_hover_text("create it, then choose what it starts as").clicked() {
+                            create = Some(h.clone());
+                        }
+                    }
+                }
+            });
+            crate::tour::mark(ui, "new-project-dialog", ui.min_rect());
+        });
+        // Enter: the picked match, else restore, else the first name it can be.
+        if enter && open.is_none() && create.is_none() && restore.is_none() && !text.is_empty() {
+            if let Some(d) = hits.get(self.project_pick) {
+                open = Some(d.clone());
+            } else if restorable {
+                restore = Some(text.clone());
+            } else if let Some(h) = offers.first() {
+                create = Some(h.clone());
+            }
+        }
+        if text.is_empty() && step.is_none() {
+            step = if left { Some(-1) } else if right { Some(1) } else { None };
+        }
+        if let Some(sn) = step.filter(|_| !ring.is_empty()) {
+            let n = ring.len() as isize;
+            let at = here.map_or(if sn > 0 { 0 } else { n - 1 }, |i| (i as isize + sn).rem_euclid(n));
+            if Some(at as usize) != here {
+                open = Some(ring[at as usize].clone());
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            close = true;
+        }
+        let done = open.is_some() || create.is_some() || restore.is_some() || want_ndexr || want_inlet || close;
+        if let Some(o) = accept {
+            self.accept_share(&o, ctx);
+            self.naming = None;
+        } else if done {
+            self.naming = None;
+        } else {
+            self.naming = Some(name);
+        }
+        if done {
+            self.domain_filter.clear();
+            self.project_pick = 0;
+        }
+        if let Some(h) = create {
+            self.choosing = Some(Choosing::new(&h));
+        } else if let Some(d) = open {
+            self.open_domain(d, ctx);
+        } else if let Some(h) = restore {
+            self.restore_domain(h, ctx);
+        } else if want_ndexr {
+            self.want_folder = Some(format!("{}/ndexr", self.home.trim_end_matches('/')));
+        } else if want_inlet {
+            self.want_inlet = true;
+        }
+    }
+
     /// What a new domain starts as: "What do you want to build?" - a category,
     /// then a language and framework, then Create (operator, 2026-10-24: "a
     /// scientific application launcher ... select something interesting to
     /// build, choose the language and framework, and immediately get a working
     /// application in the IDE"). Every row comes from starters.rs; a row with no
     /// template says "not yet" and cannot be picked.
-    /// New project: type a name, pick one of the names it can be (the
-    /// person's own domains filled in), then kind_chooser asks what it starts
-    /// as. A dialog rather than the Domain menu's box, so a phone's keyboard
-    /// comes up for it.
-    fn new_project_dialog(&mut self, ctx: &egui::Context) {
-        let Some(mut name) = self.naming.clone() else { return };
-        let have = self.domains.lock().unwrap().clone();
-        let w = (ctx.content_rect().width() - 32.0).clamp(280.0, 520.0);
-        let (mut pick, mut cancel, mut open, mut restore) = (None, false, None, None);
-        egui::Modal::new(egui::Id::new("new-project")).show(ctx, |ui| {
-            ui.set_width(w);
-            ui.label(RichText::new("Find or create a project").size(22.0).strong().color(theme::text_strong()));
-            ui.label(RichText::new("Type a name: open one of yours, or create it. A word becomes <word>.ndexr.io or a site under yours.").size(14.0).color(theme::text()));
-            ui.add_space(8.0);
-            ui.add(egui::TextEdit::singleline(&mut name).hint_text("e.g. rix").font(egui::TextStyle::Monospace).desired_width(f32::INFINITY).min_size(egui::vec2(0.0, 36.0)));
-            ui.add_space(8.0);
-            let text = name.trim().to_ascii_lowercase();
-            match &have {
-                Some(Ok(v)) => {
-                    let mut offers = new_domain_offers(&text, v);
-                    offers.retain(|h| crate::names::parse(h).is_none());
-                    let note = if text.is_empty() {
-                        None
-                    } else if let Some(d) = v.iter().find(|d| d.host == text) {
-                        Some(format!("{} is already yours - open it below", d.host))
-                    } else if offers.is_empty() {
-                        Some("Letters, digits and hyphens only, like rix or my-app".to_owned())
-                    } else {
-                        None
-                    };
-                    if let Some(n) = note {
-                        ui.label(RichText::new(n).size(14.0).color(theme::warn()));
-                    }
-                    // A software project's name (names.rs) not here: its saved
-                    // repository, never a fresh empty domain standing in for it.
-                    // Here since the domain menu became the recent list.
-                    if crate::names::parse(&text).is_some() && !v.iter().any(|d| d.host == text) {
-                        if ui.add(egui::Button::new(RichText::new(format!("⤓ Restore {text}")).size(14.0).color(theme::ok())).min_size(egui::vec2(0.0, 36.0))).on_hover_text("clone its saved repository, every version, into your domains").clicked() {
-                            restore = Some(text.clone());
-                        }
-                    }
-                    for h in offers.iter().take(3) {
-                        if ui.add(egui::Button::new(RichText::new(format!("Create {h}…")).size(14.0).color(theme::ok())).min_size(egui::vec2(0.0, 36.0))).clicked() {
-                            pick = Some(h.clone());
-                        }
-                    }
-                    // Yours that match: open one.
-                    if !text.is_empty() {
-                        let hits: Vec<&DomainInfo> = v.iter().filter(|d| d.host.contains(&text) || d.title.to_lowercase().contains(&text)).take(8).collect();
-                        if !hits.is_empty() {
-                            ui.add_space(6.0);
-                            ui.label(RichText::new("Yours").size(13.0).strong().color(theme::text()));
-                        }
-                        for d in hits {
-                            if ui.add(egui::Button::new(RichText::new(&d.host).monospace().size(14.0)).min_size(egui::vec2(0.0, 34.0)).truncate()).clicked() {
-                                open = Some(d.clone());
-                            }
-                        }
-                    }
-                }
-                Some(Err(e)) => {
-                    ui.label(RichText::new(e).color(theme::alt()));
-                }
-                None => {
-                    ui.spinner();
-                }
-            }
-            ui.add_space(8.0);
-            if ui.add(egui::Button::new("Cancel").min_size(egui::vec2(0.0, 36.0))).clicked() {
-                cancel = true;
-            }
-            crate::tour::mark(ui, "new-project-dialog", ui.min_rect());
-        });
-        if let Some(h) = pick {
-            self.naming = None;
-            self.domain_filter.clear();
-            self.choosing = Some(Choosing::new(&h));
-        } else if let Some(d) = open {
-            self.naming = None;
-            self.domain_filter.clear();
-            self.open_domain(d, ctx);
-        } else if let Some(h) = restore {
-            self.naming = None;
-            self.domain_filter.clear();
-            self.restore_domain(h, ctx);
-        } else if cancel {
-            self.naming = None;
-        } else {
-            self.naming = Some(name);
-        }
-    }
-
     fn kind_chooser(&mut self, ctx: &egui::Context) {
         use crate::starters::{ready_count, CATEGORIES};
         let Some(mut c) = self.choosing.clone() else { return };
         // The explorer wants room for three columns of worlds; a category's
         // page keeps the narrower width it reads best at.
-        let w = (ctx.content_rect().width() - 32.0).clamp(280.0, if c.cat.is_none() { 1120.0 } else { 860.0 });
+        // The width is the screen less the modal's own frame: on a phone the
+        // frame's margins and a title that could not wrap made it wider than
+        // the screen, and centred, its left edge fell off (operator
+        // screenshot, 2026-11-07: "mobile looks bad in the projects menu").
+        let screen = ctx.content_rect().width();
+        let phone = screen < 600.0;
+        let margin: i8 = if phone { 10 } else { 16 };
+        let w = (screen - 2.0 * f32::from(margin) - if phone { 12.0 } else { 32.0 }).clamp(240.0, if c.cat.is_none() { 1120.0 } else { 860.0 });
         let mut go: Option<&'static str> = None;
         let mut cancel = false;
-        let r = egui::Modal::new(egui::Id::new("kind-chooser")).show(ctx, |ui| {
+        // Placed, not anchored: egui's Modal centres its area from the size it
+        // measured, and that area holds the full-screen backdrop too, so on a
+        // phone the chooser sat 200 pt off the left edge and stayed there
+        // (release screenshots, 2026-11-07). Centred from our own width, and
+        // from its own last height.
+        let id = egui::Id::new("kind-chooser");
+        let screen_rect = ctx.content_rect();
+        let total_w = w + 2.0 * f32::from(margin);
+        let last_h = ctx.memory(|m| m.area_rect(id)).map_or(screen_rect.height(), |r| r.height().min(screen_rect.height()));
+        let at = egui::pos2(
+            screen_rect.left() + ((screen_rect.width() - total_w) / 2.0).max(0.0),
+            screen_rect.top() + ((screen_rect.height() - last_h) / 2.0).max(if phone { 8.0 } else { 24.0 }),
+        );
+        let area = egui::Area::new(id).kind(egui::UiKind::Modal).sense(egui::Sense::hover()).order(egui::Order::Foreground).interactable(true).fixed_pos(at)
+            // Not constrained either: the area's size counts the backdrop,
+            // so egui pushed it back to x = 0 on a desktop (measured).
+            .constrain(false);
+        let r = egui::Modal::new(id).area(area).frame(egui::Frame::popup(&ctx.global_style()).inner_margin(margin)).show(ctx, |ui| {
             ui.set_width(w);
+            ui.set_max_width(w);
             // Most of the window: a ScrollArea's max_height alone let it
             // shrink to egui's default minimum, so the explorer showed one
             // short strip of cards (operator screenshot, 2026-10-26: "this is
             // hard to read its a small modal"). min_scrolled_height makes it
             // take the room.
             let max_h = (ctx.content_rect().height() - 120.0).max(300.0);
+            // Both scroll areas below hold their width to `w` and may shrink to
+            // it: filling the available width inside a modal that sizes itself
+            // grew the modal each frame, past a phone's left edge (screenshot
+            // of the release, 2026-11-07: cards at 218 pt, scrollbar at 437).
             match c.cat {
                 None => {
                     // The explorer (operator, 2026-10-26: "Choose your next
                     // experiment ... Organize projects into worlds ... sticky
                     // search, filters ... an obvious close action"): title,
                     // search and worlds stay put; the worlds scroll beneath.
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Choose your next experiment").size(26.0).strong().color(theme::text_strong()));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(egui::Button::new(RichText::new("✕").size(18.0)).min_size(egui::vec2(36.0, 36.0))).on_hover_text("close").clicked() {
-                                cancel = true;
-                            }
+                    // The title wraps in a column of its own width, the close
+                    // button beside it. (A right-to-left layout here stretched
+                    // the auto-sized modal past the screen: measured.)
+                    ui.horizontal_top(|ui| {
+                        let tw = w - 48.0;
+                        ui.allocate_ui_with_layout(egui::vec2(tw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                            ui.set_max_width(tw);
+                            ui.add(egui::Label::new(RichText::new("Choose your next experiment").size(if phone { 21.0 } else { 26.0 }).strong().color(theme::text_strong())).wrap());
                         });
+                        if ui.add(egui::Button::new(RichText::new("✕").size(18.0)).min_size(egui::vec2(36.0, 36.0))).on_hover_text("close").clicked() {
+                            cancel = true;
+                        }
                     });
                     ui.add(egui::Label::new(RichText::new(format!("Discover an idea, see what it does, make it yours - {} starts as a working application, open in the IDE.", c.host)).size(14.5).color(theme::text())).wrap());
                     ui.add_space(10.0);
@@ -5921,7 +7204,7 @@ impl Ide {
                     });
                     ui.add_space(10.0);
                     let find = c.find.trim().to_lowercase();
-                    egui::ScrollArea::vertical().max_height(max_h - 210.0).min_scrolled_height(max_h - 210.0).auto_shrink([false, false]).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(max_h - 210.0).min_scrolled_height(max_h - 210.0).max_width(w).auto_shrink([true, false]).show(ui, |ui| {
                         if !find.is_empty() {
                             // Every starter that matches, whichever world it is in.
                             let mut any = false;
@@ -5990,16 +7273,16 @@ impl Ide {
                 }
                 Some(i) => {
                     let cat = &CATEGORIES[i];
-                    ui.horizontal(|ui| {
-                        if ui.button("‹ All experiments").clicked() {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.add(egui::Button::new("‹ All experiments").min_size(egui::vec2(0.0, 32.0))).clicked() {
                             c.cat = None;
                             c.way = None;
                         }
-                        ui.label(RichText::new(cat.title).size(22.0).strong().color(theme::text_strong()));
+                        ui.add(egui::Label::new(RichText::new(cat.title).size(if phone { 19.0 } else { 22.0 }).strong().color(theme::text_strong())).wrap());
                     });
                     ui.label(RichText::new(cat.what).size(14.5).color(theme::text()));
                     ui.add_space(10.0);
-                    egui::ScrollArea::vertical().max_height(max_h - 60.0).min_scrolled_height(max_h - 60.0).auto_shrink([false, false]).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(max_h - 60.0).min_scrolled_height(max_h - 60.0).max_width(w).auto_shrink([true, false]).show(ui, |ui| {
                         for (j, way) in cat.ways.iter().enumerate() {
                             let can = way.starter.is_some();
                             let on = c.way == Some(j);
@@ -6039,7 +7322,9 @@ impl Ide {
                             None => "Pick one".to_owned(),
                         };
                         let label = if c.creating { format!("Creating {}…", c.host) } else { label };
-                        if ui.add_enabled(picked.is_some() && !c.creating, theme::primary_button(&label).min_size(egui::vec2(0.0, 40.0))).clicked() {
+                        // Wraps rather than widening the window past a phone's
+                        // edge: the label carries the whole host name.
+                        if ui.add_enabled(picked.is_some() && !c.creating, theme::primary_button(&label).wrap().min_size(egui::vec2(0.0, 40.0))).clicked() {
                             go = picked.and_then(|w| w.starter);
                         }
                         if c.creating {
@@ -6263,6 +7548,64 @@ impl Ide {
         }
     }
 
+    /// The Logs tab: the end of the open project's app log, asked every
+    /// second while the tab is drawn, kept at the bottom as it grows unless
+    /// scrolled up.
+    fn logs_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let Some(d) = self.domain.clone() else {
+            ui.add_space(12.0);
+            ui.vertical_centered(|ui| ui.label(RichText::new("No project open").color(theme::hush())));
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        if now - self.run_log_asked > 1.0 {
+            self.run_log_asked = now;
+            let (slot, dir, build) = (self.run_log.clone(), d.path.clone(), self.run_log_build);
+            let key = format!("{dir}#{build}");
+            self.backend.query(Query::AppLog { path: dir, build }, ctx, move |r: Result<FileText, String>| {
+                *slot.lock().unwrap() = Some((key, r));
+            });
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        let key = format!("{}#{}", d.path, self.run_log_build);
+        let got = self.run_log.lock().unwrap().clone().filter(|(k, _)| *k == key).map(|(_, r)| r);
+        theme::strip(ui, theme::TOOL_H, theme::bg(), |ui| {
+            ui.add_space(4.0);
+            let where_ = match &got {
+                Some(Ok(f)) if !f.path.is_empty() => f.path.strip_prefix(&d.path).unwrap_or(&f.path).trim_start_matches('/').to_owned(),
+                _ if self.run_log_build => ".cove/run/build.log".to_owned(),
+                _ => ".cove/run/app.log".to_owned(),
+            };
+            // App: what run.sh prints while it serves; Build: the last Build.
+            for (build, word, tip) in [(false, "App", "the app's own output: what run.sh prints, as Up logs it"), (true, "Build", "the last Build's output (.cove/run/build.log)")] {
+                if ui.add(egui::Button::selectable(self.run_log_build == build, RichText::new(word).size(11.5))).on_hover_text(tip).clicked() && self.run_log_build != build {
+                    self.run_log_build = build;
+                    self.run_log_asked = 0.0;
+                }
+            }
+            ui.add(egui::Label::new(RichText::new(where_).monospace().size(11.5).color(theme::hush())).truncate());
+        });
+        match got {
+            None => {
+                ui.add_space(12.0);
+                ui.vertical_centered(|ui| ui.spinner());
+            }
+            Some(Err(e)) => {
+                ui.label(RichText::new(e).color(theme::warn()));
+            }
+            Some(Ok(f)) if f.path.is_empty() => {
+                ui.add_space(12.0);
+                let none = if self.run_log_build { "No build log yet - Build writes its output here" } else { "No app log yet - Up starts the app and its output appears here" };
+                ui.vertical_centered(|ui| ui.label(RichText::new(none).color(theme::hush())));
+            }
+            Some(Ok(f)) => {
+                egui::ScrollArea::both().id_salt("app-log").auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(f.text).monospace().size(11.5).color(theme::text())).extend());
+                });
+            }
+        }
+    }
+
     pub fn app(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.take_shots(ctx);
         // The domain is picked in the toolbar now, beside the environment
@@ -6284,6 +7627,22 @@ impl Ide {
                 if let Some(h) = &host {
                     if theme::tool_if(ui, true, "Open ↗", &format!("open https://{h}/ in a new browser tab")).clicked() {
                         ctx.open_url(egui::OpenUrl::new_tab(format!("https://{h}/")));
+                    }
+                    // Live refresh, per site: lit, the site reloads when its
+                    // files change; hollow, it waits for ⟳ or a click on its name.
+                    let live = !self.live_off.contains(h);
+                    let (mark, color, tip) = if live {
+                        ("●", theme::ok(), "live refresh on - reloads when its files change; click to stop")
+                    } else {
+                        ("○", theme::hush(), "live refresh off - reloads only when you ask; click to turn on")
+                    };
+                    if ui.add(egui::Button::new(RichText::new(mark).size(12.0).color(color)).frame(false)).on_hover_text(tip).clicked() {
+                        if live {
+                            self.live_off.insert(h.clone());
+                        } else {
+                            self.live_off.remove(h);
+                            self.site_seq += 1;
+                        }
                     }
                 }
             });
@@ -6483,14 +7842,22 @@ impl Ide {
         self.recent_hosts.retain(|h| *h != d.host);
         self.recent_hosts.insert(0, d.host.clone());
         self.recent_hosts.truncate(RECENT_MAX);
+        let from = self.domain.as_ref().map(|c| c.host.clone());
+        self.tabs.opened(&d.host, from.as_deref());
         // The domain already open: only its agent and site forward again.
         if self.domain.as_ref().is_some_and(|c| c.host == d.host) {
             self.bring(Tab::Agents);
             self.show_lower(Lower::App);
             return;
         }
-        // Leave the domain we were in: remember its open files, and park the
-        // ones with nothing unsaved (a dirty tab stays - nothing is lost).
+        self.park_domain();
+        self.open_folder(&d.path, ctx);
+        self.unpark(d, ctx);
+    }
+
+    /// Leave the domain we were in: remember its open files, and park the
+    /// ones with nothing unsaved (a dirty tab stays - nothing is lost).
+    fn park_domain(&mut self) {
         if let Some(prev) = self.domain.clone() {
             let inside = |p: &str| p.starts_with(&format!("{}/", prev.path));
             let paths: Vec<String> = self.docs.iter().filter(|x| !x.untitled() && x.table.is_none() && inside(&x.path)).map(|x| x.path.clone()).collect();
@@ -6508,7 +7875,11 @@ impl Ide {
             self.save_as = None;
             self.parked.insert(prev.host.clone(), keep);
         }
-        self.open_folder(&d.path, ctx);
+    }
+
+    /// The rest of stepping into `d`, once its folder is open: its parked
+    /// files back, or the ones it had open, and the rest.
+    fn unpark(&mut self, d: DomainInfo, ctx: &egui::Context) {
         let parked = self.parked.remove(&d.host).unwrap_or_default();
         if !parked.is_empty() {
             // Shown now, read again behind: a change made while away arrives
@@ -6566,6 +7937,15 @@ impl Ide {
         // and the site reloads itself on every save in the domain (operator,
         // 2026-10-15: "hide that line which has open and the domain").
         let url = format!("https://{}/", d.host);
+        if self.launch.as_ref().is_some_and(|l| l.quiet && l.host == d.host) {
+            ui.add_space(40.0);
+            ui.vertical_centered(|ui| {
+                ui.add(egui::Spinner::new().size(22.0));
+                ui.add_space(8.0);
+                ui.label(RichText::new(format!("Starting {}", d.host)).size(16.0).color(theme::text_strong()));
+            });
+            return;
+        }
         // Whatever answers at the domain is the app - a module.r, a proxied
         // server like cove.ndexr.io itself, a static page (operator,
         // 2026-10-15: "I dont think choosing to show module.r matters with
@@ -7456,6 +8836,18 @@ fn cell(ui: &mut egui::Ui, row: egui::Rect, x: f32, w: f32, text: RichText, righ
 }
 
 /// "2026-10-13 16:21" from seconds since the epoch (UTC); "" when unknown.
+/// A path from the project folder on ("/<host>/src/app.r"), so the agent's
+/// paths and Files' match wherever each sees the project mounted (a cell's
+/// ~/domains/<host> and the host's src/domains/<owner>/<host>). A path
+/// outside the project stays whole.
+fn in_project<'a>(host: &str, path: &'a str) -> &'a str {
+    if host.is_empty() {
+        return path;
+    }
+    let seg = format!("/{host}");
+    path.match_indices(&seg).map(|(i, _)| i).find(|&i| matches!(path[i + seg.len()..].chars().next(), None | Some('/'))).map_or(path, |i| &path[i..])
+}
+
 fn utc_minute(secs: i64) -> String {
     if secs <= 0 {
         return String::new();
@@ -7605,6 +8997,21 @@ mod tests {
     }
 
     #[test]
+    fn the_project_field_finds_by_start_then_anywhere() {
+        let d = |h: &str, t: &str, m: u64| DomainInfo { host: h.into(), title: t.into(), modified: m, ..Default::default() };
+        let all = vec![d("blender.fdrennan.ndexr.io", "", 3), d("system.fdrennan.ndexr.io", "Host monitor", 2), d("myblog.ndexr.io", "", 1)];
+        let ring = super::project_ring(&["system.fdrennan.ndexr.io".to_owned()], &all);
+        let hosts = |v: Vec<DomainInfo>| v.into_iter().map(|d| d.host).collect::<Vec<_>>();
+        assert_eq!(hosts(ring.clone()), ["system.fdrennan.ndexr.io", "blender.fdrennan.ndexr.io", "myblog.ndexr.io"], "opened first, then newest");
+        assert_eq!(hosts(super::find_projects("bl", &ring)), ["blender.fdrennan.ndexr.io", "myblog.ndexr.io"], "starts-with before contains");
+        assert_eq!(hosts(super::find_projects("monitor", &ring)), ["system.fdrennan.ndexr.io"], "titles count");
+        assert!(super::find_projects("  ", &ring).is_empty());
+        let named = |hs: &[&str]| hs.iter().map(|h| DomainInfo { host: (*h).to_owned(), ..Default::default() }).collect::<Vec<_>>();
+        let mine = named(&["ndexr.io.archive.ndexr.io", "100days.ndexr.io", "ndexr.io", "ndexr.ndexr.io"]);
+        assert_eq!(hosts(super::find_projects("ndexr.io", &mine))[0], "ndexr.io", "the name typed whole is first, before ring order");
+    }
+
+    #[test]
     fn sub_subdomains_sit_under_their_parent() {
         let d = |h: &str| DomainInfo { host: h.into(), ..Default::default() };
         let v = vec![d("x.consult.ndexr.io"), d("ndexr.io"), d("consult.ndexr.io"), d("a.b.consult.ndexr.io"), d("cove.ndexr.io")];
@@ -7648,6 +9055,21 @@ mod tests {
         assert_eq!(utc_minute(1), "1970-01-01 00:00");
         assert_eq!(utc_minute(951_782_400), "2000-02-29 00:00");
         assert_eq!(utc_minute(1_791_908_460), "2026-10-13 16:21");
+    }
+
+    #[test]
+    fn agent_and_files_paths_meet_at_the_project() {
+        let h = "blender.fdrennan.ndexr.io";
+        // The cell's mount and the host's owner folder name the same file.
+        assert_eq!(in_project(h, "/home/fdrennan/domains/blender.fdrennan.ndexr.io/src/app.r"), "/blender.fdrennan.ndexr.io/src/app.r");
+        assert_eq!(in_project(h, "/home/ubuntu/ndexr/src/domains/fdrennan/blender.fdrennan.ndexr.io/src/app.r"), "/blender.fdrennan.ndexr.io/src/app.r");
+        assert_eq!(in_project(h, "/x/domains/blender.fdrennan.ndexr.io"), "/blender.fdrennan.ndexr.io");
+        // A longer name that starts with the host is not the project.
+        assert_eq!(in_project(h, "/x/blender.fdrennan.ndexr.io.bak/a"), "/x/blender.fdrennan.ndexr.io.bak/a");
+        assert_eq!(in_project("", "/a/b"), "/a/b");
+        assert_eq!(crate::agent::edit_target("Edit · /d/x/module.r"), Some("/d/x/module.r"));
+        assert_eq!(crate::agent::edit_target("Bash · ls"), None);
+        assert_eq!(crate::agent::edit_target("Write"), None);
     }
 
     #[test]
@@ -7761,6 +9183,30 @@ fn lang_color(lang: &str) -> Color32 {
 
 /// One category: a small picture of what it makes, its name, a line, and what
 /// can be created today.
+/// The open project's light and words in the strip. A compile says so, with
+/// its age, whoever started it: Cove's Build, the agent or a terminal (apps.rs
+/// `compiling`).
+fn strip_light(s: &crate::api::AppStatus, running: bool) -> (Color32, String) {
+    if let Some(t) = s.compiling {
+        (theme::amber(), format!("compiling · {}:{:02}", t / 60, t % 60))
+    } else if running {
+        (theme::amber(), "working".to_owned())
+    } else if !s.built {
+        (theme::hush(), "not built yet - Build compiles it".to_owned())
+    } else if s.kind == "module" {
+        (theme::ok(), "served from module.r".to_owned())
+    } else if s.port.is_empty() && s.kind == "port" {
+        // Only when it has a program to run that lacks the setting.
+        (theme::warn(), if s.inferred { "pick its type in Settings › Info to run it here".to_owned() } else { ".cove/app.env names no APP_PORT".to_owned() })
+    } else if s.port.is_empty() {
+        (Color32::TRANSPARENT, String::new())
+    } else if s.running {
+        (theme::ok(), format!("up · port {}", s.port))
+    } else {
+        (theme::hush(), format!("down · port {}", s.port))
+    }
+}
+
 fn category_card(ui: &mut egui::Ui, cat: &crate::starters::Category, i: usize, w: f32) -> egui::Response {
     let ready = crate::starters::ready_count(cat);
     // Top-down inside its own column: inside the chooser's horizontal row the
@@ -7799,14 +9245,35 @@ fn category_card_body(ui: &mut egui::Ui, cat: &crate::starters::Category, i: usi
                     ui.label(RichText::new("planned").size(13.0).color(theme::text()));
                 }
                 for (l, key) in &langs {
+                    // Named for its framework where it has one (FastAPI,
+                    // Flask, Shiny, WebAssembly): Blank said "Python" four
+                    // times, each with a different mark.
+                    let name = crate::frameworks::mark(key).map_or(*l, |m| m.name);
+                    // A chip never wraps inside itself: at the row's end the
+                    // whole chip moves to the next row. A wrapping label here
+                    // squeezed "Python" to a letter a line and widened the
+                    // card (operator screenshot, 2026-11-01). A Frame does not
+                    // make the row wrap by itself either - the row ran past
+                    // the card and pushed the next card off the explorer
+                    // (operator screenshot, 2026-11-07) - so it is measured
+                    // and the row ended by hand.
+                    let text_w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_owned(), egui::FontId::proportional(13.0), egui::Color32::WHITE).size().x);
+                    let chip_w = 16.0 + 16.0 + 4.0 + text_w + 2.0;
+                    // Before wrap: in a wrapping row available_width() is the whole row.
+                    if ui.available_size_before_wrap().x < chip_w && ui.cursor().min.x > ui.max_rect().left() + 1.0 {
+                        ui.end_row();
+                    }
                     egui::Frame::new().fill(lang_color(l).gamma_multiply(0.18)).corner_radius(10).inner_margin(egui::Margin::symmetric(8, 2)).show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        crate::frameworks::icon(ui, key, 16.0);
-                        ui.label(RichText::new(*l).size(13.0).strong().color(lang_color(l)));
+                        ui.horizontal(|ui| {
+                            crate::frameworks::icon(ui, key, 16.0);
+                            ui.add(egui::Label::new(RichText::new(name).size(13.0).strong().color(lang_color(l))).extend());
+                        });
                     });
                 }
                 if ready > 1 {
-                    ui.label(RichText::new(format!("{ready} experiments")).size(13.0).color(theme::text()));
+                    // Whole, like a chip: "15 / experiments" split across rows.
+                    ui.add(egui::Label::new(RichText::new(format!("{ready} experiments")).size(13.0).color(theme::text())).extend());
                 }
             });
         })

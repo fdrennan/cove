@@ -76,6 +76,9 @@ pub struct Man {
     pub show_all: bool,
     /// The manifests Find and Tree are restricted to.
     pub filter: Vec<String>,
+    /// A draft of the open manifest being edited (draft.rs), never the
+    /// manifest itself.
+    pub draft: Option<super::draft::Draft>,
 }
 
 impl Man {
@@ -377,7 +380,7 @@ impl SoftwarePane {
         }
         let q = self.man.query.trim().to_lowercase();
         region(ui, left, |ui| self.manifest_list(ui, &l, &q));
-        region(ui, right, |ui| self.manifest_detail(ui, &l, &q, cat));
+        region(ui, right, |ui| self.manifest_detail(ui, ctx, backend, &l, &q, cat));
     }
 
     fn manifest_list(&mut self, ui: &mut egui::Ui, l: &Listing, q: &str) {
@@ -431,7 +434,7 @@ impl SoftwarePane {
         }
     }
 
-    fn manifest_detail(&mut self, ui: &mut egui::Ui, l: &Listing, q: &str, cat: Option<&Catalog>) {
+    fn manifest_detail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, l: &Listing, q: &str, cat: Option<&Catalog>) {
         let Some(name) = self.man.sel.clone() else {
             ui.add_space(14.0);
             ui.vertical_centered(|ui| ui.label(RichText::new("Pick a manifest.").color(theme::hush())));
@@ -440,6 +443,8 @@ impl SoftwarePane {
         let summary = l.sets.iter().find(|s| s.name == name).cloned().unwrap_or_default();
         let mut go_find = false;
         let mut go_install = false;
+        let mut start_draft = false;
+        let drafting = self.man.draft.as_ref().is_some_and(|d| d.base == name);
         let mut compare = self.man.compare.clone();
         egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 10, top: 8, bottom: 4 }).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -470,6 +475,9 @@ impl SoftwarePane {
                 }
                 if ui.button("install it…").on_hover_text("Software › Install, with this one picked").clicked() {
                     go_install = true;
+                }
+                if !drafting && ui.add(theme::primary_button("Edit a draft")).on_hover_text("add, drop and pin packages in a copy of it, check the change against the stack, and propose it to ndexr - the manifest itself is never touched").clicked() {
+                    start_draft = true;
                 }
                 let now = compare.clone().unwrap_or_else(|| "nothing".into());
                 egui::ComboBox::from_id_salt("mf-compare").selected_text(RichText::new(format!("compare with: {now}")).size(11.5)).width(240.0).show_ui(ui, |ui| {
@@ -507,6 +515,14 @@ impl SoftwarePane {
             }
             Some(Ok(d)) => d,
         };
+        if start_draft {
+            self.man.draft = Some(super::draft::Draft::of(&d));
+            self.man.compare = None;
+        }
+        if self.man.draft.as_ref().is_some_and(|x| x.base == name) {
+            self.draft_view(ui, ctx, backend, &d, cat, q);
+            return;
+        }
         let lang = self.man.lang;
         if let Some(other) = self.man.compare.clone() {
             match self.man.detail(&other) {
@@ -567,17 +583,33 @@ impl SoftwarePane {
     }
 }
 
-/// The records as a table: Package, Language, Source, Version, Group. A row
-/// whose software the catalog has opens it (the index comes back).
+/// The catalog's row for a manifest record: the same language's software by
+/// the name it matches on (Record::key).
+pub fn catalog_index(cat: &Catalog, r: &Record) -> Option<usize> {
+    let (k, key) = (lang_kind(r.lang()), r.key());
+    (0..cat.items.len()).find(|&i| {
+        cat.kind[i] == k
+            && match r.lang() {
+                Lang::Python => manifest::py_norm(&cat.items[i].n) == key,
+                Lang::Rust => manifest::crate_norm(&cat.items[i].n) == key,
+                Lang::R | Lang::Julia => cat.lname[i] == key,
+            }
+    })
+}
+
+/// The records as a table: Package, Language, Source, Version, Where, Group.
+/// Where is the manifest's `SiteLibrary: yes` - kept on the box as well as S3 -
+/// or S3 alone, installed on demand (operator, 2026-10-31). A row whose
+/// software the catalog has opens it (the index comes back).
 fn record_table(ui: &mut egui::Ui, salt: &str, recs: &[&Record], cat: Option<&Catalog>) -> Option<usize> {
     let row_h = 20.0;
     let w = ui.available_width();
-    let cols = [0.0, 0.34, 0.46, 0.62, 0.78];
+    let cols = [0.0, 0.30, 0.41, 0.55, 0.69, 0.80];
     let x = |c: usize, left: f32| left + 10.0 + (w - 20.0) * cols[c];
     theme::strip(ui, 20.0, theme::surface(), |ui| {
         let r = ui.max_rect();
         let p = ui.painter();
-        for (c, h) in ["Package", "Language", "Source", "Version", "Group"].iter().enumerate() {
+        for (c, h) in ["Package", "Language", "Source", "Version", "Where", "Group"].iter().enumerate() {
             p.text(egui::pos2(x(c, r.left()), r.center().y), egui::Align2::LEFT_CENTER, *h, FontId::proportional(10.5), theme::hush());
         }
         p.text(egui::pos2(r.right() - 8.0, r.center().y), egui::Align2::RIGHT_CENTER, format!("{} records", thousands(recs.len())), FontId::proportional(10.5), theme::hush());
@@ -587,18 +619,7 @@ fn record_table(ui: &mut egui::Ui, salt: &str, recs: &[&Record], cat: Option<&Ca
         ui.vertical_centered(|ui| ui.label(RichText::new("No records match.").color(theme::hush())));
         return None;
     }
-    let find = |r: &Record| -> Option<usize> {
-        let cat = cat?;
-        let (k, key) = (lang_kind(r.lang()), r.key());
-        (0..cat.items.len()).find(|&i| {
-            cat.kind[i] == k
-                && match r.lang() {
-                    Lang::Python => manifest::py_norm(&cat.items[i].n) == key,
-                    Lang::Rust => manifest::crate_norm(&cat.items[i].n) == key,
-                    Lang::R | Lang::Julia => cat.lname[i] == key,
-                }
-        })
-    };
+    let find = |r: &Record| -> Option<usize> { catalog_index(cat?, r) };
     let mut picked = None;
     ui.spacing_mut().item_spacing.y = 0.0;
     egui::ScrollArea::vertical().id_salt(salt).auto_shrink([false, false]).show_rows(ui, row_h, recs.len(), |ui, range| {
@@ -621,7 +642,12 @@ fn record_table(ui: &mut egui::Ui, salt: &str, recs: &[&Record], cat: Option<&Ca
             cell(1, &r.language, lc, false);
             cell(2, &r.source, theme::muted(), false);
             cell(3, &r.version, theme::text(), true);
-            cell(4, &r.group, theme::hush(), false);
+            if r.site_library {
+                cell(4, "box + S3", theme::ok(), false);
+            } else {
+                cell(4, "S3", theme::hush(), false);
+            }
+            cell(5, &r.group, theme::hush(), false);
             let tip = [&r.description, &r.note, &r.url].iter().filter(|s| !s.is_empty()).map(|s| s.as_str()).collect::<Vec<_>>().join("\n");
             let resp = if tip.is_empty() { resp } else { resp.on_hover_text(tip) };
             if resp.clicked() {

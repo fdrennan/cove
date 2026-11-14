@@ -1,0 +1,6 @@
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.cove/unreal/ps/
+.cove/run/

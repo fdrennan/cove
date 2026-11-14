@@ -16,7 +16,9 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod account;
+mod tabs;
 mod account_tab;
+mod settings_tab;
 mod access;
 mod agent;
 mod api;
@@ -30,16 +32,24 @@ mod backend;
 mod boxes;
 mod db;
 mod dock;
+// Server-side but for TYPES, which the Settings tab's Type menu reads.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+mod dotcove;
+mod edcomplete;
+mod editkeys;
 #[cfg(not(target_arch = "wasm32"))]
 mod envs;
 mod find;
 mod frameworks;
+mod gitview;
 #[cfg(not(target_arch = "wasm32"))]
 mod host;
 #[cfg(not(target_arch = "wasm32"))]
 mod vitals;
 mod icons;
 mod ide;
+#[cfg(not(target_arch = "wasm32"))]
+mod lsp;
 mod inbox;
 #[cfg(not(target_arch = "wasm32"))]
 mod kernel;
@@ -53,9 +63,9 @@ mod brief;
 mod patches;
 #[cfg(not(target_arch = "wasm32"))]
 mod pkgflow;
-mod pkgview;
 mod manifest;
 mod md;
+mod pick;
 mod names;
 mod recents;
 mod release;
@@ -67,11 +77,14 @@ mod limits;
 mod multiuser;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod server;
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+mod shares;
 mod software;
 mod source;
 mod stage;
 #[cfg(not(target_arch = "wasm32"))]
 mod stack;
+mod syntax;
 mod starters;
 #[cfg(not(target_arch = "wasm32"))]
 mod storage;
@@ -108,6 +121,29 @@ fn carry_over_ide_config() {
     }
 }
 
+/// A panic is also appended to ~/.cache/ndexr/cove/crash.log, with its
+/// backtrace: launched from the app menu, stderr goes nowhere, and a crash on
+/// the laptop left no trace at all (2026-11-02, "cove crashed when clicking on
+/// a new sub directory").
+#[cfg(not(target_arch = "wasm32"))]
+fn keep_crashes() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        use std::io::Write;
+        let path = kernel::cache_dir().join("crash.log");
+        let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let thread = std::thread::current().name().unwrap_or("?").to_owned();
+        let trace = std::backtrace::Backtrace::force_capture();
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "--- cove {} · unix {when} · thread '{thread}'\n{info}\n{trace}", env!("CARGO_PKG_VERSION"));
+        }
+        default(info);
+    }));
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     // Windows has no HOME; every path here (~/.config/ndexr, ~/.cache/ndexr)
@@ -119,6 +155,7 @@ fn main() -> eframe::Result<()> {
         }
     }
     carry_over_ide_config();
+    keep_crashes();
     let args: Vec<String> = std::env::args().collect();
     let mut backend = backend::Backend::Local;
     // `--folder <dir>` opens a folder as the project, as cove.ndexr.io/?folder= does.
@@ -136,6 +173,10 @@ fn main() -> eframe::Result<()> {
         // Compiled starters, built once for everyone (host.rs seeds).
         #[cfg(unix)]
         Some("seed") => std::process::exit(host::seed_cli(&args[2..])),
+        // Move projects made before .cove/ into it (dotcove.rs adopt):
+        // `cove dotcove <project folder>...`, run once over every project.
+        #[cfg(not(target_arch = "wasm32"))]
+        Some("dotcove") => std::process::exit(host::dotcove_cli(&args[2..])),
         Some("--connect") => match args.get(2) {
             Some(url) => backend = backend::Backend::Http { base: url.trim_end_matches('/').to_owned() },
             None => {

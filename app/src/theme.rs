@@ -1,6 +1,6 @@
 //! ndexr Regolith, drawn natively: the palette, type and shape of
 //! Inlet 0012's `ndexr_regolith.rstheme` (operator, 2026-10-13: "sleek,
-//! modern, we like regolith os"), so cove.ndexr.io and rstudio.ndexr.io are one
+//! modern, we like regolith os"), so cove.ndexr.io and inlet.ndexr.io are one
 //! look. Flat charcoal panes tiled on a darker ground with i3-style gaps,
 //! square corners, one teal accent and an amber focus mark; Inter for the
 //! interface, JetBrains Mono for code.

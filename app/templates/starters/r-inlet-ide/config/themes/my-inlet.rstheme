@@ -1,0 +1,18 @@
+/* rs-theme-name: My Inlet */
+/* rs-theme-is-dark: TRUE */
+/* Your editor theme: change a colour, save, and pick it again under
+   Tools > Global Options > Appearance. Copy this file to make another. */
+.ace_editor, .rstudio-themes-flat.ace_editor_theme .profvis-flamegraph, .rstudio-themes-flat.ace_editor_theme, .rstudio-themes-flat .ace_editor_theme {
+  background-color: #14181f;
+  color: #d8dee9;
+}
+.ace_gutter { background: #10141a; color: #5c6773; }
+.ace_marker-layer .ace_active-line { background: #1b212b; }
+.ace_marker-layer .ace_selection { background: #2a3442; }
+.ace_cursor { color: #5ec4c0; }
+.ace_keyword, .ace_meta.ace_tag { color: #b99ce0; }
+.ace_string { color: #a3c585; }
+.ace_constant.ace_numeric, .ace_constant.ace_language { color: #e8a75d; }
+.ace_support.ace_function, .ace_identifier.ace_support.ace_function { color: #7aa7e0; }
+.ace_comment { color: #6f7887; font-style: italic; }
+.ace_keyword.ace_operator { color: #5ec4c0; }

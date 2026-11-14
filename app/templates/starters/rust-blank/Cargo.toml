@@ -1,0 +1,17 @@
+[package]
+name = "__CRATE__"
+version = "0.1.0"
+edition = "2021"
+description = "__HOST__ - a blank Rust app, started from Cove's template"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+# Exact versions, the stack's Rust set (manifests/Rust/1.96.0): env.sh points cargo at
+# its vendor directory, so this builds offline.
+[dependencies]
+tiny_http = "=0.12.0"
+
+[profile.release]
+opt-level = 3

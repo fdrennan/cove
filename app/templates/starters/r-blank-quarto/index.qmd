@@ -1,0 +1,19 @@
+---
+title: "__HOST__"
+format: html
+engine: knitr
+---
+
+A blank Quarto document with R. `quarto preview` renders it again on every
+save and the page reloads itself.
+
+```{r}
+set.seed(1)
+x <- rnorm(500)
+summary(x)
+```
+
+```{r}
+#| fig-height: 3
+hist(x, breaks = 30, main = "500 draws from a normal distribution", xlab = "x")
+```

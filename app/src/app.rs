@@ -156,8 +156,10 @@ enum Mode {
     Go,
     Connect,
     Builds,
-    Pkgs,
     Atlas,
+    /// Who you are, your cell, Claude, your domains and API keys (request
+    /// #167, 2026-11-01): in Files' toolbar from 2026-10-28 until then.
+    Account,
 }
 
 /// What survives a restart (the splitters persist on their own).
@@ -199,15 +201,36 @@ struct Saved {
     /// The projects stepped into, newest first (the ☰ menu's Recent projects).
     #[serde(default)]
     recent_domains: Vec<String>,
+    /// The open projects as tabs (tabs.rs): their order, the pinned ones,
+    /// the ones closed lately.
+    #[serde(default)]
+    tabs: crate::tabs::Tabs,
     /// The walkthroughs' welcome answered, the first-project tour finished (tour.rs).
     #[serde(default)]
     tour: crate::tour::Prefs,
+    /// Sites with live refresh off (ide.rs `live_off`).
+    #[serde(default)]
+    live_off: std::collections::BTreeSet<String>,
+    /// Speak beside Listen (voice.rs `speak`).
+    #[serde(default)]
+    speak: bool,
+    /// Minutes between Listen's pieces, 2026-11-11 to 11-13: still written
+    /// (whole minutes, at least 1) for a session on an older release, read
+    /// only when `listen_secs` is not saved yet.
+    #[serde(default)]
+    listen_minutes: u8,
+    /// Seconds between Listen's pieces (voice.rs PIECES); 0, never saved.
+    #[serde(default)]
+    listen_secs: u32,
 }
 
 pub struct App {
     backend: Backend,
     saved: Saved,
     ide: Ide,
+    /// A first visit may open the person's own ndexr, once their own site has
+    /// had its turn.
+    ndexr_due: bool,
     /// The machine: None until it answers.
     probe: Slot<api::Probe>,
     settings: Slot<SettingsView>,
@@ -281,6 +304,10 @@ pub struct App {
     stack_asked: f64,
     stack_inflight: Arc<Mutex<bool>>,
     auto_setup: bool,
+    /// This launch is the person's first start: the stack is theirs to
+    /// choose (setup's Stack step), so nothing sets it up unasked; a browser
+    /// on a server with no stack gets that step once settings arrive.
+    first_start: bool,
     /// Global Options' proxy test, while it runs and after.
     proxy_test: Slot<Result<Vec<ProxyCheck>, String>>,
     testing: bool,
@@ -331,7 +358,6 @@ pub struct App {
     /// admin's only): the last answer and when it was asked.
     serving: std::sync::Arc<std::sync::Mutex<Option<crate::api::Serving>>>,
     serving_at: f64,
-    pkgs: crate::pkgview::PkgView,
     /// Go's machines (admin only: a refusal hides them), when last asked,
     /// and the last action's job.
     go_boxes: Arc<Mutex<Option<Result<Vec<crate::api::BoxView>, String>>>>,
@@ -390,11 +416,16 @@ impl App {
         // setting up claude, you give the person their free commands"): in a
         // browser, signed in already, nothing to answer - a welcome, and the
         // free commands from the first prompt. The desktop still signs in.
-        let mut welcome = None;
+        //
+        // The first decision is what to build (operator, 2026-10-30: "the most
+        // important conversion"), asked by the Agents pane beside the site, so
+        // no welcome or tour stands in front of it. Help still has the tour.
+        let first_visit = !saved.setup_seen && cfg!(target_arch = "wasm32");
+        let first_start = !saved.setup_seen;
         if !saved.setup_seen {
-            if cfg!(target_arch = "wasm32") {
+            if first_visit {
                 saved.setup_seen = true;
-                welcome = Some(("Welcome to Cove - the atlas is everything built here. Your first agent commands are free: IDE › Agents builds your site; Help › Set up Cove has the look and your Claude.".to_owned(), 14.0));
+                saved.tour.welcomed = true;
             } else {
                 setup.start();
             }
@@ -436,6 +467,7 @@ impl App {
             account,
             ide: {
                 let mut ide = Ide::new(backend.clone(), &cc.egui_ctx);
+                ide.first_site = first_visit;
                 ide.restore = saved.domain.clone();
                 ide.agents_layout = saved.agents_layout;
                 ide.agents_frac = saved.agents_frac.unwrap_or(0.5);
@@ -443,6 +475,14 @@ impl App {
                 ide.exec_on = url_agent().unwrap_or(saved.agent_all);
                 ide.open_by_domain = saved.open_by_domain.clone();
                 ide.recent_hosts = saved.recent_domains.clone();
+                ide.tabs = saved.tabs.clone();
+                ide.live_off = saved.live_off.clone();
+                ide.listen_secs = match (saved.listen_secs, saved.listen_minutes) {
+                    (0, 0) => 60,
+                    (0, m) => crate::voice::piece(m as u32 * 60),
+                    (s, _) => crate::voice::piece(s),
+                };
+                crate::voice::speak::set(saved.speak);
                 ide
             },
             #[cfg(not(target_arch = "wasm32"))]
@@ -489,10 +529,12 @@ impl App {
             stack_asked: f64::NEG_INFINITY,
             stack_inflight: Default::default(),
             auto_setup: false,
+            first_start,
             proxy_test: Slot::default(),
             testing: false,
             notes: Default::default(),
-            toast: welcome,
+            toast: None,
+            ndexr_due: false,
             source_ready: Default::default(),
             claim_ready: Default::default(),
             storage: Slot::default(),
@@ -515,7 +557,6 @@ impl App {
             connect_whose: 0,
             connect_owner: None,
             connect_sort: 0,
-            pkgs: Default::default(),
             go_boxes: Default::default(),
             go_boxes_at: f64::NEG_INFINITY,
             vitals: Default::default(),
@@ -782,11 +823,27 @@ impl App {
     /// The stack is missing here: set it up unasked where that needs no
     /// prompt (operator, 2026-10-13: "cvmfs setup will be in the background
     /// for them"); where it needs one, the strip below the toolbar offers it.
+    ///
+    /// A first start never does (operator, 2026-11-13: the desktop and the
+    /// server "should go through inital setup of installing the stack
+    /// themselves or consuming it through cvmfs"): setup's Stack step asks.
+    /// Nor does airgap mode, or a machine already building its own.
     fn auto_setup(&mut self, ctx: &egui::Context) {
+        if self.first_start {
+            let missing = self.settings.lock().unwrap().as_ref().map(|v| stack_missing(&v.stack) && !v.settings.airgap);
+            if let Some(missing) = missing {
+                self.first_start = false;
+                self.auto_setup = true;
+                if missing && cfg!(target_arch = "wasm32") && !self.setup.open {
+                    self.setup.start_stack();
+                }
+            }
+            return;
+        }
         if self.auto_setup {
             return;
         }
-        let quiet = self.settings.lock().unwrap().as_ref().is_some_and(|v| stack_missing(&v.stack) && matches!(v.stack.root_by.as_str(), "root" | "sudo"));
+        let quiet = self.settings.lock().unwrap().as_ref().is_some_and(|v| stack_missing(&v.stack) && !v.settings.airgap && !v.stack.building && matches!(v.stack.root_by.as_str(), "root" | "sudo"));
         if quiet {
             self.setup_stack(ctx);
         }
@@ -899,7 +956,7 @@ impl App {
                         ui.close();
                     }
                     // The strip's own actions, here when it is not showing.
-                    if item(ui, "Versions…", "") {
+                    if item(ui, "Git…", "") {
                         self.ide.open_versions(ctx);
                         ui.close();
                     }
@@ -1019,6 +1076,11 @@ impl App {
                 }
                 if item(ui, "Connect Claude…", "") {
                     self.setup.start_claude(ctx);
+                }
+                // The install instructions for every environment set the
+                // Builds view shows the status of (repo.ndexr.io, 2026-10-28).
+                if item(ui, "How to use the environments", "") {
+                    ctx.open_url(egui::OpenUrl::new_tab("https://repo.ndexr.io"));
                 }
                 ui.separator();
                 if item(ui, "Send a Request…", "") {
@@ -1598,8 +1660,16 @@ impl App {
         self.drag.rects.push((at, ui.available_rect_before_wrap()));
         let toggled = theme::pane(ui, |ui| {
             let (mut z, mut click, mut out) = (false, None, None);
+            // On a phone the agent's window shows the agent: its console,
+            // terminal and files are a desk's (operator, 2026-11-13: "when we
+            // are in IDE agents. I don't think that we need to see console or
+            // files"). One of them already in front stays, so it can be left.
+            let phone = compact(ctx);
             let strip = theme::strip(ui, theme::TAB_H, theme::pane_hdr(), |ui| {
                 for &t in &tabs {
+                    if phone && t != front && matches!(t, Tab::Console | Tab::Terminal | Tab::Files) {
+                        continue;
+                    }
                     // No status light in the strip (operator, 2026-10-20: "we
                     // dont need the * in the tabs"); the state is in the tip.
                     let (label, _, tip) = self.ide.tab_head(t);
@@ -1628,6 +1698,9 @@ impl App {
                         out = Some(front);
                     }
                     self.ide.tab_tools(ui, ctx, front);
+                    if at == (0, 0) && ctx.content_rect().width() < 600.0 && self.ide.domain.is_some() && self.ide.app_strip_wanted() {
+                        self.ide.app_strip_compact(ui, ctx);
+                    }
                 });
                 ui.max_rect()
             });
@@ -2235,6 +2308,27 @@ impl App {
 /// time; RStudio's quadrants need about two 380 px columns.
 const COMPACT_W: f32 = 760.0;
 
+/// This page is a frame inside a page of the same site - Cove shown in
+/// Cove's own App pane. A frame inside another site cannot read that site's
+/// address, and is not this case. Asked once.
+fn inside_cove() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        static INSIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *INSIDE.get_or_init(|| {
+            use wasm_bindgen::JsValue;
+            let Some(w) = web_sys::window() else { return false };
+            let Ok(Some(top)) = w.top() else { return false };
+            if JsValue::from(top.clone()) == JsValue::from(w.clone()) {
+                return false;
+            }
+            matches!((top.location().host(), w.location().host()), (Ok(a), Ok(b)) if a == b)
+        })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    false
+}
+
 fn compact(ctx: &egui::Context) -> bool {
     ctx.content_rect().width() < COMPACT_W
 }
@@ -2319,6 +2413,9 @@ fn pimped(ui: &mut egui::Ui) {
     // every literal against rstudio/rstudio v2026.04.0+526), so RStudio's
     // AGPL does not reach it, and RStudio's name is Posit's, not ours to use.
     ui.label(RichText::new("Cove is MIT-licensed and contains no RStudio code. RStudio and Positron are trademarks of Posit Software, PBC; Cove is not affiliated with Posit.").size(10.5).color(theme::hush()));
+    // The notices of the 469 crates Cove is built from (Cargo.lock), which their
+    // licences ask to travel with every copy of Cove.
+    ui.hyperlink_to(RichText::new("Third-party notices").size(10.5), "https://cove.ndexr.io/view/third-party-notices");
 }
 
 /// Where every module comes from: the ndexr stack on CVMFS, and the
@@ -2604,7 +2701,9 @@ impl App {
         // strip shows only while it has something to act on (app_strip_wanted)
         // and never over a window zoomed to fill the screen.
         if self.ide.domain.is_some() {
-            if self.ide.app_strip_wanted() && self.saved.zoom_tab.is_none() {
+            // A phone has no row to spare: the strip folds into the first
+            // window's tab row (pane, app_strip_compact).
+            if self.ide.app_strip_wanted() && self.saved.zoom_tab.is_none() && ctx.content_rect().width() >= 600.0 {
                 egui::Panel::top("rs-appstrip").resizable(false).show_separator_line(true).exact_size(28.0).frame(bar(theme::surface())).show(root, |ui| self.ide.app_strip(Some(ui), ctx));
             } else {
                 self.ide.app_strip(None, ctx);
@@ -2687,10 +2786,19 @@ impl App {
         let frame = egui::Frame::new().fill(theme::ground().gamma_multiply(0.9)).inner_margin(egui::Margin::symmetric(6, 3));
         if small {
             // The modes where a thumb reaches them, each a 44-pt target.
-            egui::Panel::bottom("rs-nav").resizable(false).show_separator_line(true).exact_size(52.0).frame(frame).show(root, |ui| {
+            // Tighter than it was (52 points, 36-point buttons, 4 apart):
+            // the agent's thread above gets the room (operator, 2026-11-13:
+            // "The IDE connect builds atlas and account has padding and margin
+            // that could be decreased slightly for mobile").
+            let nav_frame = egui::Frame::new().fill(theme::ground().gamma_multiply(0.9)).inner_margin(egui::Margin::symmetric(3, 2));
+            egui::Panel::bottom("rs-nav").resizable(false).show_separator_line(true).exact_size(44.0).frame(nav_frame).show(root, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let tab = ((ui.available_width() - 4.0 * 4.0) / 5.0).max(44.0);
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.spacing_mut().button_padding.x = 4.0;
+                    // Five on a phone: Go is a desk view (operator, 2026-11-07:
+                    // "go mode can be dropped for mobile ... focus on smaller
+                    // screens in ide mode").
+                    let tab = (ui.available_width() - 4.0 * 2.0) / 5.0;
                     self.mode_tabs(ui, true, tab);
                 });
             });
@@ -2698,18 +2806,20 @@ impl App {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     self.main_menu(ui, ctx);
-                    if self.mode == Mode::Go && self.go_is_admin() {
-                        self.go_recap_bar(ui, ctx);
-                    }
                     if ide {
+                        // The panes keep their room; the project's label is
+                        // cut to the rest (ide.rs domain_bar, request #188).
                         let panes = self.saved.grid.windows().len() as f32;
-                        let w = (ui.available_width() - panes * 64.0 - 8.0).max(110.0);
+                        let w = (ui.available_width() - panes * 64.0 - 8.0).max(60.0);
                         let (ide, recents, backend) = (&mut self.ide, &mut self.recents, &self.backend);
                         ide.domain_bar(ui, ctx, w, |ui| recents.sessions_list(ui, backend));
                         self.pane_switcher(ui);
                     }
                 });
             });
+            if ide {
+                self.tab_row(root, ctx, 34.0);
+            }
             return;
         }
         egui::Panel::top("rs-modebar").resizable(false).show_separator_line(true).exact_size(40.0).frame(frame).show(root, |ui| {
@@ -2787,6 +2897,19 @@ impl App {
                 });
             });
         });
+        if ide {
+            self.tab_row(root, ctx, 30.0);
+        }
+    }
+
+    /// The projects' tabs, a row of their own under the top bar (ide.rs
+    /// tab_strip; operator, 2026-11-14: "act like a browser with domains as
+    /// tabs").
+    fn tab_row(&mut self, root: &mut egui::Ui, ctx: &egui::Context, h: f32) {
+        let frame = egui::Frame::new().fill(theme::ground().gamma_multiply(0.75)).inner_margin(egui::Margin { left: 6, right: 6, top: 2, bottom: 0 });
+        egui::Panel::top("rs-tabs").resizable(false).show_separator_line(true).exact_size(h).frame(frame).show(root, |ui| {
+            self.ide.tab_strip(ui, ctx);
+        });
     }
 
     /// The IDE's windows by name, the one in front lit: on a phone only one
@@ -2805,21 +2928,36 @@ impl App {
     }
 
     fn mode_tabs(&mut self, ui: &mut egui::Ui, small: bool, w: f32) {
-        // IDE, Go, Connect, Builds, Packages, Atlas (operator, 2026-10-24:
+        // IDE, Go, Connect, Builds, Atlas (operator, 2026-10-24:
         // "cove should always start in IDE mode (Go can be after IDE now)";
-        // 2026-10-28: Connect, the apps you may open).
+        // 2026-10-28: Connect, the apps you may open; 2026-10-29: Packages
+        // removed, "that is covered in builds mostly").
         let tabs: [(Mode, &str, &str); 6] = [
             (Mode::Ide, "IDE", "the domain you are working in"),
             (Mode::Go, "Go", "on the go: the recap, the agent and Exec, a big record button"),
             (Mode::Connect, "Connect", "every app you may open - yours, shared with you, and public - by what it is built with"),
             (Mode::Builds, "Builds", "the build machines - start and shut them down here - and where every build is, live, with its history"),
-            (Mode::Pkgs, if small { "Pkgs" } else { "Packages" }, "every package set through the cycle, live: the kit, the build machines, S3, this host, the CVMFS module, the sessions loading it"),
             (Mode::Atlas, "Atlas", "the whole stack, kernel to application"),
+            (Mode::Account, "Account", "you: your cell, Claude, your domains and API keys"),
         ];
+        // On a phone every tab is `w` wide, and the widest name must fit in it
+        // with the button's padding: at 14.5 "Account" was wider than its
+        // sixth of a phone, so its button grew and the row ran past the edge
+        // (operator, 2026-11-03: "account goes slightly over in bottom bar").
+        let size = if small {
+            let pad = ui.spacing().button_padding.x * 2.0 + 2.0;
+            let widest = tabs.iter().filter(|t| t.0 != Mode::Go).map(|(_, n, _)| ui.ctx().fonts_mut(|f| f.layout_no_wrap((*n).to_owned(), egui::FontId::proportional(14.5), egui::Color32::WHITE).size().x)).fold(0.0, f32::max);
+            (14.5 * ((w - pad) / widest).min(1.0)).max(9.0)
+        } else {
+            12.5
+        };
         for (m, name, tip) in tabs {
+            if small && m == Mode::Go {
+                continue;
+            }
             let on = m == self.mode;
-            let t = RichText::new(name).size(if small { 14.5 } else { 12.5 }).color(if on { theme::text_strong() } else { theme::muted() });
-            let b = egui::Button::selectable(on, t).min_size(egui::vec2(w, if small { 36.0 } else { 0.0 }));
+            let t = RichText::new(name).size(size).color(if on { theme::text_strong() } else { theme::muted() });
+            let b = egui::Button::selectable(on, t).min_size(egui::vec2(w, if small { 34.0 } else { 0.0 }));
             if ui.add(b).on_hover_text(tip).clicked() && !on {
                 self.mode = m;
                 if m == Mode::Ide {
@@ -3025,18 +3163,17 @@ impl App {
         let mut told: Option<(String, bool)> = None;
         let col = ui.available_width();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("BUILD MACHINES").size(12.0).strong().color(theme::primary()));
+            ui.label(RichText::new("🖥").size(14.0).color(theme::primary())).on_hover_text("build machines");
             let on = bs.iter().filter(|b| b.up).count();
-            ui.label(RichText::new(format!("{on} of {} on", bs.len())).size(12.5).color(theme::text()));
+            ui.label(RichText::new(format!("{on}/{}", bs.len())).size(12.5).color(theme::text())).on_hover_text(format!("{on} of {} build machines on", bs.len()));
         });
-        ui.add_space(4.0);
-        // Tiles, as many to a row as fit at 180 points or more - all five in
-        // one line on a desk, two or three on a phone (operator, 2026-10-28:
-        // "optimize within builds section for viewing improvements mobile and
-        // desktop": a full-width row each left five bars of empty space with
-        // the buttons at the far edge, and pushed the curves off the screen).
-        let gap = 8.0;
-        let per_row = ((col + gap) / (180.0 + gap)).floor().clamp(1.0, bs.len().max(1) as f32) as usize;
+        ui.add_space(2.0);
+        // One line per machine (operator, 2026-11-06: "too much text and white
+        // space ... not enough icons"): dot, name, step, and an icon button that
+        // starts or shuts it down - the words are its hover. As many to a row as
+        // fit at 150 points; five in a line on a desk, two or three on a phone.
+        let gap = 6.0;
+        let per_row = ((col + gap) / (150.0 + gap)).floor().clamp(1.0, bs.len().max(1) as f32) as usize;
         let w = (col - gap * (per_row as f32 - 1.0)) / per_row as f32;
         for row in bs.chunks(per_row) {
             ui.horizontal_top(|ui| {
@@ -3051,49 +3188,53 @@ impl App {
                     egui::Frame::new()
                         .fill(theme::surface().gamma_multiply(if b.up { 1.0 } else { 0.7 }))
                         .stroke(egui::Stroke::new(1.0, if b.up { c.gamma_multiply(0.7) } else { theme::pane_brd() }))
-                        .corner_radius(8)
-                        .inner_margin(egui::Margin::same(10))
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(8, 4))
                         .show(ui, |ui| {
-                            ui.set_width(w - 22.0);
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(if b.up { "●" } else { "○" }).size(14.0).color(c));
-                                    ui.add(egui::Label::new(RichText::new(b.server.trim_start_matches("four-box-")).size(16.0).strong().color(theme::text_strong())).truncate());
-                                });
-                                let step = if b.steps > 0 && !b.step.is_empty() && b.state != "off" { format!(" · {} of {}", b.step_index, b.steps) } else { String::new() };
-                                ui.add(egui::Label::new(RichText::new(format!("{}{step}", b.state)).size(14.0).color(if b.up { c } else { theme::text() })).truncate());
-                                ui.add_space(6.0);
-                                let size = egui::vec2(ui.available_width(), 36.0);
-                                if !matches!(b.state.as_str(), "running" | "starting") && ui.add(theme::primary_button("Start").min_size(size)).clicked() {
-                                    act = Some((b.server.clone(), "up".into()));
+                            ui.set_width(w - 18.0);
+                            ui.horizontal(|ui| {
+                                let step = if b.steps > 0 && !b.step.is_empty() && b.state != "off" { format!("{}/{}", b.step_index, b.steps) } else { String::new() };
+                                ui.label(RichText::new(if b.up { "●" } else { "○" }).size(13.0).color(c)).on_hover_text(&b.state);
+                                ui.add(egui::Label::new(RichText::new(b.server.trim_start_matches("four-box-")).size(14.5).strong().color(theme::text_strong())).truncate())
+                                    .on_hover_text(if step.is_empty() { b.state.clone() } else { format!("{} · step {step}{}", b.state, if b.step.is_empty() { String::new() } else { format!(": {}", b.step) }) });
+                                if !step.is_empty() {
+                                    ui.label(RichText::new(&step).size(12.5).monospace().color(c));
                                 }
-                                if b.up {
-                                    let armed = self.go_confirm.as_deref() == Some(b.server.as_str());
-                                    if ui.add(egui::Button::new(RichText::new(if armed { "Sure? Shut down" } else { "Shut down" }).size(14.0)).min_size(size)).clicked() {
-                                        if armed {
-                                            self.go_confirm = None;
-                                            act = Some((b.server.clone(), "shutdown".into()));
-                                        } else {
-                                            self.go_confirm = Some(b.server.clone());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let size = egui::vec2(30.0, 26.0);
+                                    if !matches!(b.state.as_str(), "running" | "starting") {
+                                        if ui.add(theme::primary_button("▶").min_size(size)).on_hover_text("start it").clicked() {
+                                            act = Some((b.server.clone(), "up".into()));
                                         }
-                                    }
-                                }
-                                if self.go_job_server.as_deref() == Some(b.server.as_str()) {
-                                    if let Some(j) = &job_now {
-                                        let (what, done, failed) = crate::api::start_phase(j, Some(b));
-                                        let secs = (now - self.go_job_since).max(0.0) as u64;
-                                        ui.horizontal(|ui| {
-                                            if !done {
-                                                ui.add(egui::Spinner::new().size(13.0));
+                                    } else if b.up {
+                                        let armed = self.go_confirm.as_deref() == Some(b.server.as_str());
+                                        let icon = RichText::new(if armed { "⏹?" } else { "⏹" }).size(14.0).color(if armed { theme::alt() } else { theme::text_strong() });
+                                        if ui.add(egui::Button::new(icon).min_size(size)).on_hover_text(if armed { "press again to shut it down" } else { "shut down - its disk stays; press twice" }).clicked() {
+                                            if armed {
+                                                self.go_confirm = None;
+                                                act = Some((b.server.clone(), "shutdown".into()));
+                                            } else {
+                                                self.go_confirm = Some(b.server.clone());
                                             }
-                                            let col = if failed { theme::alt() } else if done { theme::ok() } else { theme::amber() };
-                                            ui.add(egui::Label::new(RichText::new(format!("{what} · {}m {:02}s", secs / 60, secs % 60)).size(13.0).color(col)).wrap());
-                                        });
-                                        if done && !self.go_job_told {
-                                            told = Some((format!("{}: {what}", b.server.trim_start_matches("four-box-")), failed));
                                         }
                                     }
-                                }
+                                    if self.go_job_server.as_deref() == Some(b.server.as_str()) {
+                                        if let Some(j) = &job_now {
+                                            let (what, done, failed) = crate::api::start_phase(j, Some(b));
+                                            let secs = (now - self.go_job_since).max(0.0) as u64;
+                                            let col = if failed { theme::alt() } else if done { theme::ok() } else { theme::amber() };
+                                            let r = if done {
+                                                ui.label(RichText::new(if failed { "✕" } else { "✓" }).size(14.0).color(col))
+                                            } else {
+                                                ui.add(egui::Spinner::new().size(13.0).color(col))
+                                            };
+                                            r.on_hover_text(format!("{what} · {}m {:02}s", secs / 60, secs % 60));
+                                            if done && !self.go_job_told {
+                                                told = Some((format!("{}: {what}", b.server.trim_start_matches("four-box-")), failed));
+                                            }
+                                        }
+                                    }
+                                });
                             });
                         });
                 }
@@ -3322,6 +3463,22 @@ impl App {
     /// what it is built with, the same mark the IDE shows beside the project.
     /// Who sees what is host.rs visible_domains, the platform's own levels;
     /// nothing here widens them.
+    /// Account mode: the account pane in one centred column, as Connect lays out.
+    fn account_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        let pad: i8 = if compact(ctx) { 8 } else { 16 };
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.92)).inner_margin(egui::Margin::symmetric(pad, pad.min(12)))).show(root, |ui| {
+            let col = ui.available_width().min(1120.0);
+            let side = ((ui.available_width() - col) / 2.0).max(0.0);
+            ui.horizontal_top(|ui| {
+                ui.add_space(side);
+                ui.vertical(|ui| {
+                    ui.set_width(col);
+                    self.ide.account_pane(ui, ctx);
+                });
+            });
+        });
+    }
+
     fn connect_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         let apps = self.visible_apps(ctx);
         // Who may open each, by host: the registry's level as visible_domains
@@ -3345,8 +3502,13 @@ impl App {
         // search, the title, the tabs with their counts, Filter and Sort,
         // then one row per app (operator, same day: "need one row per
         // content").
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.92)).inner_margin(egui::Margin::symmetric(16, 12))).show(root, |ui| {
+        let pad: i8 = if compact(ctx) { 8 } else { 16 };
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.92)).inner_margin(egui::Margin::symmetric(pad, pad.min(12)))).show(root, |ui| {
             let col = ui.available_width().min(1120.0);
+            // A phone's column (operator, 2026-10-29: "content section should
+            // look better on mobile"): short tab words, the filters wrapped
+            // two to a line, and rows of three short lines with icon buttons.
+            let narrow = col < 640.0;
             let side = ((ui.available_width() - col) / 2.0).max(0.0);
             ui.horizontal_top(|ui| {
                 ui.add_space(side);
@@ -3373,10 +3535,10 @@ impl App {
                         }
                     };
                     ui.add_space(4.0);
-                    ui.add(egui::TextEdit::singleline(&mut self.connect_find).hint_text("Search for content: name, address or owner").desired_width(col).font(egui::FontId::proportional(16.0)).margin(egui::vec2(12.0, 9.0)));
+                    ui.add(egui::TextEdit::singleline(&mut self.connect_find).hint_text(if narrow { "Search name, address or owner" } else { "Search for content: name, address or owner" }).desired_width(col).font(egui::FontId::proportional(16.0)).margin(egui::vec2(12.0, 9.0)));
                     ui.add_space(14.0);
-                    ui.label(RichText::new("Content").size(28.0).color(theme::text_strong()));
-                    ui.add_space(10.0);
+                    ui.label(RichText::new("Content").size(if narrow { 22.0 } else { 28.0 }).color(theme::text_strong()));
+                    ui.add_space(if narrow { 6.0 } else { 10.0 });
                     let level = |d: &crate::api::DomainInfo| levels.get(&d.host).map_or("", String::as_str);
                     let tab_of = |d: &crate::api::DomainInfo, t: u8| match t {
                         1 => !d.path.is_empty(),
@@ -3385,11 +3547,12 @@ impl App {
                         _ => true,
                     };
                     let n = |t: u8| all.iter().filter(|d| tab_of(d, t)).count();
+                    let word = |long: &str, short: &str, c: usize| if narrow { format!("{short} {c}") } else { format!("{long} ({c})") };
                     let tabs = [
-                        (format!("Yours ({})", n(1)), "the apps you own".to_owned(), self.connect_whose == 1, true),
-                        (format!("Shared with you ({})", n(2)), "apps their owners shared with you or a group you are in".to_owned(), self.connect_whose == 2, true),
-                        (format!("Public ({})", n(3)), "open to anyone, signed in or not".to_owned(), self.connect_whose == 3, true),
-                        (format!("All ({})", all.len()), "every app you may open".to_owned(), self.connect_whose == 0, true),
+                        (word("Yours", "Yours", n(1)), "the apps you own".to_owned(), self.connect_whose == 1, true),
+                        (word("Shared with you", "Shared", n(2)), "apps their owners shared with you or a group you are in".to_owned(), self.connect_whose == 2, true),
+                        (word("Public", "Public", n(3)), "open to anyone, signed in or not".to_owned(), self.connect_whose == 3, true),
+                        (word("All", "All", all.len()), "every app you may open".to_owned(), self.connect_whose == 0, true),
                     ];
                     // In a row: the switch lays its parts out the way its parent
                     // does, and this column is vertical.
@@ -3407,8 +3570,29 @@ impl App {
                     // Filter: Type (what it is built with, its mark) and Owner,
                     // each listing only what the tab and the search leave.
                     ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Filter:").size(14.0).color(theme::text_strong()));
+                    // On a phone the three menus wrap, Type and Owner side by
+                    // side and Sort under them, each as wide as its share.
+                    let half = ((col - 8.0) / 2.0).floor();
+                    let (menu_w, sort_w) = if narrow { (half - 8.0, col - 8.0) } else { (190.0, 200.0) };
+                    let sorts = ["Last changed (newest)", "Name (A to Z)", "Created (newest)", "Created (oldest)"];
+                    let sort_menu = |ui: &mut egui::Ui, sort: &mut u8| {
+                        egui::ComboBox::from_id_salt("connect-sort").selected_text(RichText::new(sorts[*sort as usize]).size(14.0)).width(sort_w).show_ui(ui, |ui| {
+                            for (i, w) in sorts.iter().enumerate() {
+                                if ui.selectable_label(*sort == i as u8, *w).clicked() {
+                                    *sort = i as u8;
+                                }
+                            }
+                        });
+                    };
+                    // A row that is as tall as its menus. `with_layout` took the
+                    // column's whole remaining height and centred the menus in
+                    // it, so a phone showed an empty band above them and Sort
+                    // never wrapped onto its own line (operator, 2026-10-29:
+                    // "more wasted white space").
+                    let filters = |ui: &mut egui::Ui| {
+                        if !narrow {
+                            ui.label(RichText::new("Filter:").size(14.0).color(theme::text_strong()));
+                        }
                         let mut types: Vec<(String, usize)> = Vec::new();
                         for d in &base {
                             match types.iter_mut().find(|(k, _)| *k == d.framework) {
@@ -3419,7 +3603,7 @@ impl App {
                         types.sort_by(|a, b| b.1.cmp(&a.1));
                         let type_word = |k: &str| crate::frameworks::mark(k).map_or("Not detected", |m| m.name).to_owned();
                         let shown_type = self.connect_fw.as_deref().map_or("Type: any".to_owned(), |k| format!("Type: {}", type_word(k)));
-                        egui::ComboBox::from_id_salt("connect-type").selected_text(RichText::new(shown_type).size(14.0)).width(190.0).show_ui(ui, |ui| {
+                        egui::ComboBox::from_id_salt("connect-type").selected_text(RichText::new(shown_type).size(14.0)).width(menu_w).show_ui(ui, |ui| {
                             if ui.selectable_label(self.connect_fw.is_none(), "any").clicked() {
                                 self.connect_fw = None;
                             }
@@ -3445,7 +3629,7 @@ impl App {
                         }
                         owners.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
                         let shown_owner = self.connect_owner.as_deref().map_or("Owner: anyone".to_owned(), |o| format!("Owner: {o}"));
-                        egui::ComboBox::from_id_salt("connect-owner").selected_text(RichText::new(shown_owner).size(14.0)).width(190.0).show_ui(ui, |ui| {
+                        egui::ComboBox::from_id_salt("connect-owner").selected_text(RichText::new(shown_owner).size(14.0)).width(menu_w).show_ui(ui, |ui| {
                             if ui.selectable_label(self.connect_owner.is_none(), "anyone").clicked() {
                                 self.connect_owner = None;
                             }
@@ -3455,18 +3639,23 @@ impl App {
                                 }
                             }
                         });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let sorts = ["Last changed (newest)", "Name (A to Z)", "Created (newest)", "Created (oldest)"];
-                            egui::ComboBox::from_id_salt("connect-sort").selected_text(RichText::new(sorts[self.connect_sort as usize]).size(14.0)).width(200.0).show_ui(ui, |ui| {
-                                for (i, w) in sorts.iter().enumerate() {
-                                    if ui.selectable_label(self.connect_sort == i as u8, *w).clicked() {
-                                        self.connect_sort = i as u8;
-                                    }
-                                }
+                        if !narrow {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                sort_menu(ui, &mut self.connect_sort);
+                                ui.label(RichText::new("Sort:").size(14.0).color(theme::text_strong()));
                             });
-                            ui.label(RichText::new("Sort:").size(14.0).color(theme::text_strong()));
-                        });
-                    });
+                        }
+                    };
+                    // A phone's Sort has a line of its own: a full-width menu
+                    // in the wrapped row ran off the screen's edge instead of
+                    // wrapping (measured at 390 px, 2026-10-29).
+                    if narrow {
+                        ui.horizontal(filters);
+                        ui.add_space(4.0);
+                        sort_menu(ui, &mut self.connect_sort);
+                    } else {
+                        ui.horizontal(filters);
+                    }
                     let (fw, who) = (self.connect_fw.clone(), self.connect_owner.clone());
                     let mut shown: Vec<&crate::api::DomainInfo> = base
                         .into_iter()
@@ -3484,10 +3673,10 @@ impl App {
                     ui.add_space(6.0);
                     ui.separator();
                     // Only the rows on screen are drawn: hundreds of apps scroll.
-                    egui::ScrollArea::vertical().id_salt("connect-apps").auto_shrink([false, false]).show_rows(ui, CONNECT_ROW_H, shown.len(), |ui, range| {
+                    egui::ScrollArea::vertical().id_salt("connect-apps").auto_shrink([false, false]).show_rows(ui, if narrow { CONNECT_ROW_H_NARROW } else { CONNECT_ROW_H }, shown.len(), |ui, range| {
                         for i in range {
                             let d = shown[i];
-                            if let Some(o) = connect_row(ui, d, level(d), col, now) {
+                            if let Some(o) = connect_row(ui, d, level(d), col, now, narrow) {
                                 open_ide = Some(o);
                             }
                         }
@@ -3503,6 +3692,29 @@ impl App {
     }
 
     /// The atlas, full screen over the night sky; its answers step into the IDE.
+    /// A star's exact source, fetched into the person's workspace; the answer
+    /// opens it in Files (`poll_source`). The atlas's Source and the project
+    /// menu's Inlet both come here.
+    fn open_source(&mut self, c: &crate::software::Catalog, i: usize, ctx: &egui::Context) {
+        use crate::software::Kind;
+        let s = c.sw(i);
+        let kind = s.kind.key();
+        // An EasyBuild star is one installed module: its name and full version
+        // (2.42-GCCcore-13.3.0) are the module's.
+        let (name, version) = match (s.kind, s.module.split_once('/')) {
+            (Kind::EasyBuild | Kind::Env, Some((n, v))) => (n.to_owned(), v.to_owned()),
+            _ => (s.name.to_owned(), s.versions.last().cloned().unwrap_or_default()),
+        };
+        self.toast(format!("fetching the source of {name} {version}…"), ctx);
+        let slot = self.source_ready.clone();
+        // The project the source becomes works in this session's environment.
+        let env = self.saved_settings().module.clone();
+        let q = Query::SourceOpen { kind: kind.to_owned(), name, version, sets: s.sets.to_vec(), env };
+        self.backend.query(q, ctx, move |r: Result<crate::source::SourceView, String>| {
+            *slot.lock().unwrap() = Some(r);
+        });
+    }
+
     fn atlas_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         let cat = self.ide.software_catalog(ctx);
         let catalog = cat.clone();
@@ -3538,7 +3750,10 @@ impl App {
             }
         }
         self.atlas.set_serving(self.serving.lock().unwrap().clone());
-        let act = egui::CentralPanel::default().frame(egui::Frame::new()).show(root, |ui| self.atlas.ui(ui, ctx, cat, domains, &who, current.as_deref())).inner;
+        // The panel's whole space, read inside it: its response covers only
+        // what the atlas laid out, which is less than it paints.
+        let (act, within) = egui::CentralPanel::default().frame(egui::Frame::new()).show(root, |ui| (self.atlas.ui(ui, ctx, cat, domains, &who, current.as_deref()), ui.max_rect())).inner;
+        self.showcase.within = Some(within);
         self.showcase.bare = self.atlas.immersive;
         if self.atlas.chosen() {
             self.showcase.hold();
@@ -3581,23 +3796,7 @@ impl App {
             // the answer opens it in Files (`poll_source`).
             Some(crate::atlas::Act::Source(i)) => {
                 if let Some(c) = &catalog {
-                    use crate::software::Kind;
-                    let s = c.sw(i);
-                    let kind = s.kind.key();
-                    // An EasyBuild star is one installed module: its name and
-                    // full version (2.42-GCCcore-13.3.0) are the module's.
-                    let (name, version) = match (s.kind, s.module.split_once('/')) {
-                        (Kind::EasyBuild | Kind::Env, Some((n, v))) => (n.to_owned(), v.to_owned()),
-                        _ => (s.name.to_owned(), s.versions.last().cloned().unwrap_or_default()),
-                    };
-                    self.toast(format!("fetching the source of {name} {version}…"), ctx);
-                    let slot = self.source_ready.clone();
-                    // The project the source becomes works in this session's environment.
-                    let env = self.saved_settings().module.clone();
-                    let q = Query::SourceOpen { kind: kind.to_owned(), name, version, sets: s.sets.to_vec(), env };
-                    self.backend.query(q, ctx, move |r: Result<crate::source::SourceView, String>| {
-                        *slot.lock().unwrap() = Some(r);
-                    });
+                    self.open_source(c, i, ctx);
                 }
             }
             None => {}
@@ -3644,15 +3843,43 @@ impl eframe::App for App {
                 self.ide.stop_console(lang, ctx);
             }
         }
+        // The first time: the default window on their own site, not settings
+        // saved from before (operator, 2026-10-30: "all users start at proper
+        // default state in next login"). Saved projects that no longer exist
+        // otherwise show as errors in Files.
+        if let Some(f) = self.ide.start_fresh.take() {
+            self.mode = Mode::Ide;
+            self.saved.zoom_tab = None;
+            self.saved.grid = Grid::default();
+            self.ndexr_due = false;
+            self.folder = Some(f);
+        }
         // The person's own ndexr (ide.rs domain_bar): the folder below, with
         // the agent of all their sites, which is what spans it. A first visit
-        // (nothing saved to step back into) opens it by default.
+        // opens it only when they have no site of their own to open: this used
+        // to win over the site whenever `/` sent no ?folder= (a person with a
+        // session already), so the first question was never asked (2026-10-30).
         if let Some(home) = self.probe.lock().unwrap().as_ref().map(|p| p.home.clone()) {
             if self.ide.home != home {
                 self.ide.home = home.clone();
-                if self.saved.domain.is_none() && self.folder.is_none() && !home.is_empty() {
-                    self.ide.want_folder = Some(format!("{}/ndexr", home.trim_end_matches('/')));
-                }
+                self.ndexr_due = self.saved.domain.is_none() && self.folder.is_none() && !home.is_empty();
+            }
+        }
+        if self.ndexr_due && self.ide.own_site_settled() {
+            self.ndexr_due = false;
+            if self.ide.domain.is_none() {
+                self.ide.want_folder = Some(format!("{}/ndexr", self.ide.home.trim_end_matches('/')));
+            }
+        }
+        // The project menu's Inlet: the newest Inlet module the stack has,
+        // opened as its source like any star (never a typed-in version).
+        if std::mem::take(&mut self.ide.want_inlet) {
+            let cat = self.ide.software_catalog(ctx);
+            let found = cat.as_ref().and_then(|c| (0..c.len()).rev().find(|&i| c.sw(i).kind == crate::software::Kind::EasyBuild && c.sw(i).module.starts_with("Inlet/")));
+            match (cat, found) {
+                (Some(c), Some(i)) => self.open_source(&c, i, ctx),
+                (None, _) => self.toast("the stack's catalog is still loading - try Inlet again in a moment".to_owned(), ctx),
+                (Some(_), None) => self.toast("this stack has no Inlet module".to_owned(), ctx),
             }
         }
         if let Some(f) = self.ide.want_folder.take() {
@@ -3707,15 +3934,34 @@ impl eframe::App for App {
         if let Some(a) = self.walk.update(&seen) {
             self.tour_act(a, ctx);
         }
-        self.header(root, ctx);
+        // No Go on a phone (mode_tabs): one left there, or saved there on a
+        // desk, opens in the IDE.
+        if self.mode == Mode::Go && compact(ctx) {
+            self.mode = Mode::Ide;
+        }
+        // Cove inside Cove's own App pane (operator, 2026-11-01: "nested Cove
+        // headers because Cove is being displayed inside Cove ... the inner
+        // application should minimize or collapse redundant navigation"):
+        // the outer one has the menus; the inner one keeps only its content
+        // and a way out to a tab of its own.
+        if inside_cove() {
+            egui::Area::new(egui::Id::new("own-tab")).order(egui::Order::Foreground).anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0]).show(ctx, |ui| {
+                if ui.add(egui::Button::new(RichText::new("Open in its own tab ↗").size(12.5))).on_hover_text("this Cove is showing inside another Cove's App pane - its menus are there").clicked() {
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(href) = web_sys::window().and_then(|w| w.location().href().ok()) {
+                        ctx.open_url(egui::OpenUrl::new_tab(href));
+                    }
+                }
+            });
+        } else {
+            self.header(root, ctx);
+        }
         match self.mode {
-            Mode::Pkgs => {
-                egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.9)).inner_margin(egui::Margin::symmetric(12, 6))).show(root, |ui| self.pkgs.ui(ui, ctx, &self.backend));
-            }
             Mode::Go => self.go_view(root, ctx),
             Mode::Connect => self.connect_view(root, ctx),
             Mode::Builds => self.builds_view(root, ctx),
             Mode::Atlas => self.atlas_view(root, ctx),
+            Mode::Account => self.account_view(root, ctx),
             Mode::Ide => self.ide_view(root, ctx),
         }
 
@@ -3754,6 +4000,7 @@ impl eframe::App for App {
                 backend: &self.backend,
                 ide: &mut self.ide,
                 theme: &mut self.saved.theme,
+                settings: &self.settings,
                 #[cfg(not(target_arch = "wasm32"))]
                 account: &self.account,
             };
@@ -3815,7 +4062,7 @@ impl eframe::App for App {
         if let Some(top) = ctx.memory(|m| m.top_modal_layer()) {
             ctx.move_to_top(top);
         }
-        let covered = floating || tour_covers || matches!(self.mode, Mode::Atlas | Mode::Builds | Mode::Pkgs | Mode::Connect) || ended || self.setup.covering() || self.drag.tab.is_some() || self.splitting;
+        let covered = floating || tour_covers || matches!(self.mode, Mode::Atlas | Mode::Builds | Mode::Connect | Mode::Account) || ended || self.setup.covering() || self.drag.tab.is_some() || self.splitting;
         crate::ide::viewer_frame_end(covered);
         #[cfg(not(target_arch = "wasm32"))]
         crate::webview::end_frame(ctx, frame, covered);
@@ -3836,7 +4083,12 @@ impl eframe::App for App {
         self.saved.agents_frac = Some(self.ide.agents_frac);
         self.saved.agent_all = self.ide.exec_on;
         self.saved.recent_domains = self.ide.recent_hosts.clone();
+        self.saved.tabs = self.ide.tabs.clone();
         self.saved.tour = self.walk.prefs.clone();
+        self.saved.live_off = self.ide.live_off.clone();
+        self.saved.listen_secs = self.ide.listen_secs;
+        self.saved.listen_minutes = (self.ide.listen_secs / 60).max(1) as u8;
+        self.saved.speak = crate::voice::speak::on();
         eframe::set_value(storage, eframe::APP_KEY, &self.saved);
     }
 }
@@ -3982,8 +4234,10 @@ fn access_words(level: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// Each row's height in Connect, fixed so only the rows on screen are drawn.
+/// Each row's height in Connect, fixed so only the rows on screen are drawn;
+/// a phone's row is three short lines.
 const CONNECT_ROW_H: f32 = 88.0;
+const CONNECT_ROW_H_NARROW: f32 = 84.0;
 
 /// The name an app goes by: its title, else its host's first label.
 fn connect_name(d: &crate::api::DomainInfo) -> &str {
@@ -3997,8 +4251,12 @@ fn connect_name(d: &crate::api::DomainInfo) -> &str {
 /// One app in Connect, one row, as Posit Connect lists content: its mark
 /// large on the left; its name, then Type · Owner · who may open it · Last
 /// changed · its address; Open and, for the person's own, Edit in IDE on the
-/// right. Returns the app when Edit was pressed.
-fn connect_row(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str, w: f32, now: i64) -> Option<crate::api::DomainInfo> {
+/// right. Returns the app when Edit was pressed. `narrow`: a phone's column,
+/// where connect_row_narrow lays the same facts out in three lines.
+fn connect_row(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str, w: f32, now: i64, narrow: bool) -> Option<crate::api::DomainInfo> {
+    if narrow {
+        return connect_row_narrow(ui, d, level, w, now);
+    }
     let mut edit = None;
     let mine = !d.path.is_empty();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, CONNECT_ROW_H), egui::Sense::hover());
@@ -4065,6 +4323,64 @@ fn connect_row(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str, w: f3
         }
         if ui.add(egui::Button::new(RichText::new("Open ↗").size(14.0)).min_size(egui::vec2(0.0, 34.0))).on_hover_text(format!("https://{}/ in a new tab", d.host)).clicked() {
             ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://{}/", d.host)));
+        }
+    });
+    edit
+}
+
+/// One app in Connect on a phone: its mark; its name, then what it is built
+/// with, who may open it and whose it is, then how long since it changed and
+/// its address; Open (↗) and, for the person's own, Edit in IDE (✎) as
+/// thumb-sized buttons on the right.
+fn connect_row_narrow(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str, w: f32, now: i64) -> Option<crate::api::DomainInfo> {
+    let mut edit = None;
+    let mine = !d.path.is_empty();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, CONNECT_ROW_H_NARROW), egui::Sense::hover());
+    ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0, theme::pane_brd()));
+    let mut row = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(6.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    let ui = &mut row;
+    ui.spacing_mut().item_spacing.x = 10.0;
+    if crate::frameworks::icon(ui, &d.framework, 36.0).is_none() {
+        ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+    }
+    let button = egui::vec2(42.0, 42.0);
+    let actions_w = if mine { 2.0 * button.x + 18.0 } else { button.x + 10.0 };
+    let text_w = (ui.available_width() - actions_w).max(80.0);
+    ui.allocate_ui_with_layout(egui::vec2(text_w, CONNECT_ROW_H_NARROW), egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.set_width(text_w);
+        ui.spacing_mut().item_spacing.y = 3.0;
+        ui.add_space(12.0);
+        ui.add(egui::Label::new(RichText::new(connect_name(d)).size(16.5).color(theme::text_strong())).truncate());
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.label(RichText::new(crate::frameworks::mark(&d.framework).map_or("Not detected", |m| m.name)).size(13.5).color(theme::text_strong()));
+            let (word, tip) = access_words(level);
+            if !word.is_empty() {
+                egui::Frame::new().fill(theme::primary().gamma_multiply(0.16)).corner_radius(9).inner_margin(egui::Margin::symmetric(6, 0)).show(ui, |ui| {
+                    ui.label(RichText::new(word).size(12.5).strong().color(theme::primary()));
+                }).response.on_hover_text(tip);
+            }
+            let owner = if mine { "you".to_owned() } else { d.owner.clone() };
+            if !owner.is_empty() {
+                ui.add(egui::Label::new(RichText::new(owner).size(13.5).color(theme::text())).truncate());
+            }
+        });
+        let when = if d.modified > 0 {
+            format!("changed {} ago · ", age_words(now - d.modified as i64))
+        } else if d.created > 0 {
+            format!("created {} · ", date_words(d.created as i64))
+        } else {
+            String::new()
+        };
+        ui.add(egui::Label::new(RichText::new(format!("{when}{}", d.host)).size(12.5).color(theme::text())).truncate());
+    });
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        if ui.add(egui::Button::new(RichText::new("↗").size(18.0)).min_size(button)).on_hover_text(format!("open https://{}/ in a new tab", d.host)).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://{}/", d.host)));
+        }
+        if mine && ui.add(egui::Button::new(RichText::new("✎").size(18.0)).min_size(button)).on_hover_text("edit in the IDE").clicked() {
+            edit = Some(d.clone());
         }
     });
     edit

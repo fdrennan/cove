@@ -12,10 +12,14 @@
 set -euo pipefail
 domain="${1:?domain}" user="${2:?user}" dir="${3:?dir}"
 [[ "$domain" =~ ^[a-z0-9][a-z0-9.-]+\.[a-z]+$ ]] || { echo "not a domain: $domain"; exit 2; }
-[[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "not a user: $user"; exit 2; }
+# A leading digit is a real account here (Google sign-ins made 111011475571bsr1),
+# and the name is only checked, never interpolated into a command below.
+[[ "$user" =~ ^[a-z0-9_][a-z0-9_-]*$ ]] || { echo "not a user: $user"; exit 2; }
 ROOT=/home/ubuntu/ndexr
-env="$dir/app.env"
-[[ -f "$env" ]] || { echo "$domain has no app.env - nothing to route"; exit 2; }
+# .cove/app.env (dotcove.rs), or app.env at the root of a project not moved yet.
+env="$dir/.cove/app.env"
+[[ -f "$env" ]] || env="$dir/app.env"
+[[ -f "$env" ]] || { echo "$domain has no .cove/app.env - nothing to route"; exit 2; }
 val() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*[\"']\{0,1\}\([^\"']*\).*/\1/p" "$env" | tail -n1; }
 kind="$(val APP_KIND)" port="$(val APP_PORT)" health="$(val APP_HEALTH)"
 [[ "$kind" == port ]] || { echo "$domain is served from module.r - it has no port to route"; exit 0; }
@@ -26,6 +30,18 @@ curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:$port${health:-/}" || { ech
 if grep -qE "proxy_pass +http://127\.0\.0\.1:$port[;/]" "$vhost"; then
   echo "https://$domain/ already goes to port $port"
   exit 0
+fi
+# A person's own site is provisioned onto their account cell (conf.d/cell.conf),
+# which target.r will not rewrite. Their app is the site now (operator,
+# 2026-10-30: every username domain starts as a React app): the cell include
+# becomes a plain `location /` for target.r to point at the port, here and in
+# the domain's canonical nginx.conf. /_admin/app/ and the rest of the vhost stay.
+to_location() {
+  sed -i 's|^\([[:space:]]*\)include conf\.d/cell\.conf;|\1location / {\n\1  return 503;\n\1}|' "$1"
+}
+if grep -q 'include conf\.d/cell\.conf;' "$vhost"; then
+  to_location "$vhost"
+  [[ -f "$dir/nginx.conf" ]] && to_location "$dir/nginx.conf"
 fi
 r="$(runuser -u ubuntu -- mktemp -p /home/ubuntu/tmp target.XXXX.R)"
 cat > "$r" <<RS
@@ -40,7 +56,11 @@ cat(x\$message, "\n"); quit(status = if (isTRUE(x\$ok)) 0 else 1)
 RS
 chown ubuntu "$r"
 rc=0
+# pipefail: the grep below took over the pipeline's status, so a refused route
+# (andrei.ndexr.io, 2026-10-30: no site_password.conf for its gate) still said
+# "now goes to port" and exited 0 - to the reset script and to Cove's Up alike.
 runuser -u ubuntu -- bash -c "
+  set -o pipefail
   cd '$ROOT'; set -a; . ./.env; set +a
   case \"\${POSTGRES_HOST:-}\" in postgres|pgbouncer) export POSTGRES_HOST=127.0.0.1 ;; esac
   [[ \"\${POSTGRES_DIRECT_HOST:-}\" == postgres ]] && export POSTGRES_DIRECT_HOST=127.0.0.1

@@ -17,6 +17,10 @@ pub enum Icon {
     Stop,
     /// Send.
     Send,
+    /// Listen: keep the mic open (a point with sound waves either side).
+    Listen,
+    /// Speak: a speaker with its waves - the agent answers aloud.
+    Speak,
 }
 
 /// A round button `d` across: `fill` behind, the icon in `fg`.
@@ -51,6 +55,32 @@ pub fn button(ui: &mut egui::Ui, icon: Icon, d: f32, fill: Color32, fg: Color32,
         }
         Icon::Stop => {
             p.rect_filled(egui::Rect::from_center_size(c, egui::vec2(9.0 * s, 9.0 * s)), 2.0 * s, fg);
+        }
+        Icon::Listen => {
+            p.circle_filled(c, 2.2 * s, fg);
+            for (r, a) in [(6.0 * s, 0.75_f32), (10.5 * s, 0.7)] {
+                for side in [1.0_f32, -1.0] {
+                    let pts: Vec<egui::Pos2> = (0..=8).map(|i| {
+                        let t = -a + 2.0 * a * i as f32 / 8.0;
+                        c + egui::vec2(side * r * t.cos(), r * t.sin())
+                    }).collect();
+                    p.add(egui::Shape::line(pts, st));
+                }
+            }
+        }
+        Icon::Speak => {
+            // The speaker's box and cone, then two waves to its right.
+            let o = c - egui::vec2(3.5 * s, 0.0);
+            let body = [o + egui::vec2(-5.0 * s, -2.8 * s), o + egui::vec2(-2.0 * s, -2.8 * s), o + egui::vec2(2.5 * s, -6.5 * s),
+                        o + egui::vec2(2.5 * s, 6.5 * s), o + egui::vec2(-2.0 * s, 2.8 * s), o + egui::vec2(-5.0 * s, 2.8 * s)];
+            p.add(egui::Shape::convex_polygon(body.to_vec(), fg, Stroke::NONE));
+            for (r, a) in [(5.5 * s, 0.7_f32), (9.5 * s, 0.65)] {
+                let pts: Vec<egui::Pos2> = (0..=8).map(|i| {
+                    let t = -a + 2.0 * a * i as f32 / 8.0;
+                    o + egui::vec2(1.5 * s + r * t.cos(), r * t.sin())
+                }).collect();
+                p.add(egui::Shape::line(pts, st));
+            }
         }
         Icon::Send => {
             // An arrow up.

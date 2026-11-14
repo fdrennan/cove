@@ -36,6 +36,14 @@ fn mem_pct(meminfo: &str) -> Option<f64> {
     (total > 0.0).then(|| (100.0 * (total - avail) / total).clamp(0.0, 100.0))
 }
 
+// libc is a unix-only dependency; Windows is a remote front end and never
+// serves vitals (the Windows build broke on this, 2026-10-30).
+#[cfg(not(unix))]
+fn disk(_path: &str) -> Option<(u64, u64)> {
+    None
+}
+
+#[cfg(unix)]
 fn disk(path: &str) -> Option<(u64, u64)> {
     let c = std::ffi::CString::new(path).ok()?;
     let mut s: libc::statvfs = unsafe { std::mem::zeroed() };

@@ -6,7 +6,7 @@
 # versions of those").
 #
 #   onprem/desktop-push.sh all <release-id>     what run.sh fires after a publish
-#   onprem/desktop-push.sh laptop|neo [id]      one machine, by hand
+#   onprem/desktop-push.sh laptop|neo|cell [id] one machine, by hand
 #   onprem/desktop-push.sh status               where each machine is
 #
 # laptop  Pop!_OS 22.04, x86_64. Built HERE (build-linux.sh: glibc 2.28 via
@@ -15,6 +15,12 @@
 #         user (~/.local, the tarball's install.sh): the laptop has no
 #         password-less sudo. With one, the .deb goes in through apt instead.
 #         The .deb is always left at ~/Downloads/cove_latest_amd64.deb.
+# cell    every account's cell: the WEBVIEW=0 server build (a cell has no
+#         GTK/WebKit), at app/dist-cell/linux-x86_64/cove.tar.gz. ood-sync-users
+#         (each minute, user-provision.sh ndexr_cell_tools_ensure) publishes it
+#         to the cells' /opt/ndexr/cove on change; a cell starts it at boot.
+#         Without it no cell had a Cove server and the desktop app could not
+#         connect (2026-11-02).
 # neo     macOS arm64. Built THERE (neo.svbt.ndexr.io/neo/build-desktop.sh,
 #         Apple silicon only) and installed as /Applications/Cove.app.
 #
@@ -34,7 +40,7 @@ SETTLE="${SETTLE:-120}"
 log() { echo "$(date -u +%FT%TZ) $*" >> "$state/$host.log"; }
 
 status() {
-  for h in laptop neo; do
+  for h in laptop neo cell; do
     if [[ -f "$state/$h.json" ]]; then cat "$state/$h.json"; echo; else echo "{\"host\":\"$h\",\"state\":\"never built\"}"; fi
   done
 }
@@ -46,10 +52,10 @@ mark() {
     mv -f "$state/$host.json.part" "$state/$host.json"
 }
 
-reachable() { ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" true 2>/dev/null; }
+reachable() { [[ "$host" == cell ]] || ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" true 2>/dev/null; }
 
-laptop() {
-  local arch=x86_64 tgz deb
+# Build on this host, in a clean env: build_linux [then-command].
+build_linux() {
   # Cove's own toolchain (Rust 1.96) on a clean PATH: without it build-linux.sh
   # loads the stack's Rust, whose PKG_CONFIG_PATH hides the system GTK/atk the
   # webview links against ("you may need to install atk", 2026-10-18).
@@ -58,14 +64,26 @@ laptop() {
   # rustc, and earlyoom killed it at 2 GB free (2026-10-18). The laptop cannot
   # build it itself (no GTK/WebKit dev packages, Rust 1.88, no root), so: wait
   # for 8 GB, then thin LTO over 4 jobs - a desktop test build.
+  # One build at a time: the cell's and the laptop's start on the same
+  # release, and two fat links at once is the earlyoom kill above.
+  exec 8> "$state/build.lock"; flock 8
   for i in $(seq 1 60); do
     (( $(awk '/MemAvailable/ {print int($2/1048576)}' /proc/meminfo) >= 8 )) && break
     sleep 30
   done
-  ( cd "$app" && env -i HOME="$HOME" USER="$USER" TMPDIR="$HOME/tmp" RUSTUP_HOME="$tc/rustup" CARGO_HOME="$tc/cargo" \
+  ( cd "$app" && env -i WEBVIEW="${WEBVIEW:-1}" HOME="$HOME" USER="$USER" TMPDIR="$HOME/tmp" RUSTUP_HOME="$tc/rustup" CARGO_HOME="$tc/cargo" \
       CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_BUILD_JOBS=4 \
-      PATH="$tc/cargo/bin:/usr/local/bin:/usr/bin:/bin" bash -c 'nice -n 10 ./build-linux.sh && ./build-deb.sh' ) >> "$state/$host.log" 2>&1 ||
-    { echo "the Linux build failed"; return 1; }
+      PATH="$tc/cargo/bin:/usr/local/bin:/usr/bin:/bin" bash -c "nice -n 10 ./build-linux.sh${1:+ && $1}" ) >> "$state/$host.log" 2>&1
+}
+
+cell() {
+  WEBVIEW=0 build_linux || { echo "the cell build failed"; return 1; }
+  echo "built app/dist-cell/linux-x86_64/cove.tar.gz; cells take it within a minute, running ones at their next start"
+}
+
+laptop() {
+  local arch=x86_64 tgz deb
+  build_linux ./build-deb.sh || { echo "the Linux build failed"; return 1; }
   tgz="$app/dist/linux-$arch/cove.tar.gz"
   deb="$(ls -t "$app"/dist/deb/cove_*_amd64.deb 2>/dev/null | head -1)"
   ssh "$host" 'mkdir -p ~/.cache/cove-desktop ~/Downloads' &&
@@ -92,7 +110,10 @@ SH
 }
 
 neo() {
-  NEO_APP=cove.ndexr.io TARGETS=aarch64-apple-darwin NEO_HOST="$host" \
+  # Universal (Apple silicon and Intel): this dist/darwin is also what
+  # publish.sh ships to the download page, and an arm64-only one went there
+  # once a push built after a universal one (2026-11-02).
+  NEO_APP=cove.ndexr.io NEO_HOST="$host" \
     nice -n 10 "$domains/neo.svbt.ndexr.io/neo/build-desktop.sh" --install >> "$state/$host.log" 2>&1 ||
     { echo "the macOS build or install failed"; return 1; }
   echo "installed /Applications/Cove.app"
@@ -131,15 +152,15 @@ run_one() {
 
 case "${1:-}" in
   status) status ;;
-  laptop|neo) SETTLE="${SETTLE_ONE:-0}" run_one "$1" "${2:-}" ;;
+  laptop|neo|cell) SETTLE="${SETTLE_ONE:-0}" run_one "$1" "${2:-}" ;;
   all)
     # Each in a transient unit of its own: started from run.sh, a plain child
     # would die with cove-onprem on its next restart, mid-build.
-    for h in laptop neo; do
+    for h in laptop neo cell; do
       systemd-run --user --quiet --collect --unit="cove-desktop-$h-$(date +%s%N)" \
         --setenv=SETTLE="$SETTLE" "$0" "$h-queued" "${2:-}" 2>/dev/null ||
         setsid "$0" "$h-queued" "${2:-}" < /dev/null > /dev/null 2>&1 &
     done ;;
-  laptop-queued|neo-queued) run_one "${1%-queued}" "${2:-}" ;;
-  *) echo "usage: desktop-push.sh all <release> | laptop|neo [release] | status" >&2; exit 2 ;;
+  laptop-queued|neo-queued|cell-queued) run_one "${1%-queued}" "${2:-}" ;;
+  *) echo "usage: desktop-push.sh all <release> | laptop|neo|cell [release] | status" >&2; exit 2 ;;
 esac

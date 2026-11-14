@@ -1,0 +1,25 @@
+---
+title: "__HOST__"
+output: html_document
+params:
+  points: 200
+  seed: 1
+---
+
+A blank R Markdown report, published as a page. Every save renders it again
+and the page shows the result. Its parameters come from the address: try
+`?points=1000&seed=7`.
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r draws}
+set.seed(params$seed)
+x <- rnorm(params$points)
+summary(x)
+```
+
+```{r histogram, fig.height = 3}
+hist(x, breaks = 30, main = paste(params$points, "draws from a normal distribution"), xlab = "x")
+```

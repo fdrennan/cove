@@ -1,0 +1,11 @@
+{
+  "editor_theme": "My Inlet",
+  "font_size_points": 11,
+  "highlight_selected_line": true,
+  "show_margin": true,
+  "margin_column": 100,
+  "rainbow_parentheses": true,
+  "save_workspace": "never",
+  "load_workspace": false,
+  "always_save_history": false
+}

@@ -37,6 +37,9 @@ src="$(find "$work" -mindepth 1 -maxdepth 1 -type d -name 'cove-*' | head -1)"
 root="$work/root"
 
 install -Dm755 "$src/bin/cove" "$root/usr/bin/cove"
+# Cove's licence and the notices of every crate in it travel with the binary.
+install -Dm644 "$here/../LICENSE" "$root/usr/share/doc/cove/LICENSE"
+install -Dm644 "$here/THIRD-PARTY-NOTICES.txt" "$root/usr/share/doc/cove/THIRD-PARTY-NOTICES.txt"
 [[ -x "$src/lib/cove/bin/ndexr" ]] && install -Dm755 "$src/lib/cove/bin/ndexr" "$root/usr/lib/cove/bin/ndexr"
 mkdir -p "$root/usr/share/cove"
 cp -r "$web" "$root/usr/share/cove/web"
@@ -107,5 +110,8 @@ chmod 755 "$root/DEBIAN/postinst" "$root/DEBIAN/prerm"
 
 mkdir -p "$here/dist/deb"
 deb="$here/dist/deb/cove_${version}_${deb_arch}.deb"
-dpkg-deb --root-owner-group --build "$root" "$deb" >/dev/null
+# Built beside, then renamed: a publish (or a push) reading dist/deb mid-build
+# shipped a 1,282-byte cove_amd64.deb (2026-11-02).
+dpkg-deb --root-owner-group --build "$root" "$deb.part" >/dev/null
+mv -f "$deb.part" "$deb"
 echo "✓ $deb ($(du -h "$deb" | cut -f1))"

@@ -58,6 +58,8 @@ fi
 # tent under the circling sky on Apple's 824-in-1024 grid) with sips + iconutil
 # on a Mac. packaging/linux/io.ndexr.cove.svg embeds the same crop.
 cp "$here/packaging/macos/ndexr.icns" "$app/Contents/Resources/ndexr.icns"
+# Cove's licence and the notices of every crate in it travel with the binary.
+cp "$here/../LICENSE" "$here/THIRD-PARTY-NOTICES.txt" "$app/Contents/Resources/"
 
 # The browser UI, so `cove serve` works from the bundle on a Mac
 # (server.rs looks in Contents/Resources/web). Built by build-web.sh first.

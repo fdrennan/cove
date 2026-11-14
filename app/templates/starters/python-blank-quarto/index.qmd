@@ -1,0 +1,23 @@
+---
+title: "__HOST__"
+format: html
+jupyter: python3
+---
+
+A blank Quarto document with Python. `quarto preview` renders it again on
+every save and the page reloads itself.
+
+```{python}
+import numpy as np
+
+x = np.random.default_rng(1).normal(size=500)
+print(f"mean {x.mean():.3f}, sd {x.std(ddof=1):.3f}")
+```
+
+```{python}
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(7, 3))
+ax.hist(x, bins=30)
+ax.set_title("500 draws from a normal distribution");
+```

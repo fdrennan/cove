@@ -50,8 +50,10 @@ port=""
 # The port the project's own app.env names, when nothing else holds it: the
 # strip reads APP_PORT, and an app served on another one showed as "down"
 # (2026-10-26, ggsdfgg.ndexr.io: app.env 8837, served on 8824).
-if [[ -z "$port" && -f "$dir/app.env" ]]; then
-  p="$(sed -n 's/^[[:space:]]*APP_PORT[[:space:]]*=[[:space:]]*["'\'']\{0,1\}\([0-9]*\).*/\1/p' "$dir/app.env" | tail -n1)"
+appenv="$dir/.cove/app.env"
+[[ -f "$appenv" ]] || appenv="$dir/app.env"
+if [[ -z "$port" && -f "$appenv" ]]; then
+  p="$(sed -n 's/^[[:space:]]*APP_PORT[[:space:]]*=[[:space:]]*["'\'']\{0,1\}\([0-9]*\).*/\1/p' "$appenv" | tail -n1)"
   if [[ -n "$p" ]] && ! grep -rqs "127\.0\.0\.1:$p;" "$ROOT/nginx/sites-enabled" && ! ss -ltn "sport = :$p" | grep -q LISTEN; then
     port=$p
   fi

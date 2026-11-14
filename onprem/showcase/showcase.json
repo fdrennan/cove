@@ -2,9 +2,9 @@
   "slides": [
     {
       "kind": "text",
-      "title": "Traceable scientific control",
-      "secs": 24,
-      "body": "Atlas gives an organisation a model of its scientific software that anyone can inspect, from the platform underneath to the analysis on top. It is there to establish five things: what the organisation has, where each piece came from, what actually runs, who is responsible for it, and why its use is acceptable.\n\nThe promise is simple to say. The organisation can explain the software beneath a result, see where it depends on binaries it did not build, and show the evidence behind accepting those dependencies, or changing them."
+      "title": "From an idea to a running application",
+      "secs": 20,
+      "body": "Say what you want built. Cove's agent builds it beside you, in your project, and it is live on your own domain as it saves - React, Python, Shiny, Julia, Rust, whatever the idea needs.\n\nUnderneath is what these slides tour: scientific software built from source, every binary accounted for, and any result traceable down to the kernel it ran on."
     },
     {
       "kind": "text",
@@ -265,7 +265,7 @@
       "kind": "text",
       "title": "Look around",
       "secs": 14,
-      "body": "Everything here is public: the whole stack in the atlas, every package in Packages, and in Builds how each was built, on which machine, how long it took - and the machines' logs, live.\n\nSign in to open any of it as source, patch it and build your own environment."
+      "body": "Everything here is public: the whole stack in the atlas, every package in Packages, and in Builds how each was built, on which machine, how long it took - and the machines' logs, live.\n\nSign in to build your own application on it - your domain is live from the first minute - or to open any of it as source, patch it and build your own environment."
     }
   ],
   "about": "Captions explain; numbers are live. Counts, build totals and timings come from the catalog (Catalog::live_facts) as the n-boxes report - never write a count into a caption."

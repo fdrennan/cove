@@ -15,7 +15,7 @@
 <meta name="theme-color" content="#15171c">
 <link rel="apple-touch-icon" href="icon.png">
 <title>Cove</title>
-<meta name="description" content="Cove: traceable scientific control. A model of your organisation's scientific software from the platform to the analysis - what you have, where it came from, what actually runs, who is responsible, and why its use is acceptable - built from source, across thousands of users and clusters.">
+<meta name="description" content="Cove: from an idea to a running application. Say what to build and an agent builds it beside you, live on your own domain, on scientific software built from source and traced to the kernel. Open source.">
 <link rel="icon" href="icon.svg">
 <style>
   /* Regolith tokens (src/theme.rs): the same ground, text and teal the app paints. */
@@ -168,6 +168,47 @@
 <body>
 <!-- cove serve: the same UI as the desktop app, compiled to WebAssembly (src/main.rs, wasm32). -->
 <canvas id="ndexr"></canvas>
+<script>
+  // A PHONE'S KEYBOARD MUST NOT COVER WHAT IS BEING TYPED (2026-10-29, the
+  // operator on an iPhone: the Agents composer sat under the keyboard). The
+  // keyboard shrinks only the visual viewport, so a canvas sized to the page
+  // kept drawing its bottom edge - the composer - behind it. The canvas
+  // follows the visible area instead and egui lays out in what is left
+  // (eframe watches the canvas size). Height and top only, and not while
+  // pinch-zoomed, so a desktop window and a zoomed page are as before.
+  //
+  // AND IT MUST GROW BACK (2026-11-03, the operator's iPhone after a Console:
+  // the IDE squeezed into the top third, the mode bar floating mid-screen,
+  // the rest empty). iOS does not always report the viewport growing when
+  // the keyboard goes away, so the canvas kept the keyboard-sized height. Now
+  // it follows the visible area only while something is being typed into -
+  // with nothing focused there is no keyboard, and it fills the page - and it
+  // is re-fitted on focus changes, resizes, a turn of the phone, and every
+  // half second as a backstop for an event iOS never sent.
+  (function () {
+    var vv = window.visualViewport, c = document.getElementById("ndexr");
+    if (!vv || !c) return;
+    function typing() {
+      var a = document.activeElement;
+      return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable);
+    }
+    function fit() {
+      var full = Math.abs(vv.scale - 1) > 0.01 || !typing() || vv.height >= window.innerHeight - 1;
+      var top = full ? "" : vv.pageTop + "px", height = full ? "" : vv.height + "px";
+      if (c.style.top !== top) c.style.top = top;
+      if (c.style.height !== height) c.style.height = height;
+    }
+    function soon() { fit(); setTimeout(fit, 120); setTimeout(fit, 400); }
+    vv.addEventListener("resize", fit);
+    vv.addEventListener("scroll", fit);
+    window.addEventListener("resize", soon);
+    window.addEventListener("orientationchange", soon);
+    document.addEventListener("focusin", soon);
+    document.addEventListener("focusout", soon);
+    setInterval(fit, 500);
+    fit();
+  })();
+</script>
 <div id="splash" role="status" aria-live="polite">
   <div class="stage">
     <div class="copy">
@@ -176,11 +217,11 @@
         <div><h1 class="title">Cove</h1><p class="by">by <b>ndexr</b></p></div>
       </div>
       <div class="lead">
-        <p class="claim">Traceable <em>scientific control</em>.</p>
-        <p class="detail">A model of your organisation's scientific software that anyone can inspect, from the platform underneath to the analysis on top - built from source, and honest about every binary that was not.</p>
+        <p class="claim">From an idea to <em>a running application</em>.</p>
+        <p class="detail">Say what you want. An agent builds it beside you, live on your own domain as it saves - on scientific software built from source and traced down to the kernel.</p>
       </div>
-      <ul class="asks" aria-label="what it establishes">
-        <li>What we have</li><li>Where it came from</li><li>What actually runs</li><li>Who is responsible</li><li>Why its use is acceptable</li>
+      <ul class="asks" aria-label="what you do in Cove">
+        <li>Say what to build</li><li>Watch it run</li><li>Work on it together</li><li>Keep every version</li><li>Trace every binary</li>
       </ul>
       <div class="features" id="features"></div>
       <div class="dots" id="dots" aria-hidden="true"></div>
@@ -193,28 +234,31 @@
   </div>
 </div>
 <script>
-  // What Cove is (operator, 2026-10-15): a system for building and managing
-  // extraordinary amounts of scientific software across thousands of users
-  // and clusters, kernel to user, immutable
-  // over time, customisable without breaking earlier environments, for
-  // regulated and scientific work. Keep in step with ndexr.io's hero copy.
+  // What the splash says (operator, 2026-11-13: "this branding is old sauce
+  // please improve cove.ndexr.io messaging its out of date with the latest
+  // plans"). The plans it follows: lead with what people create, show it
+  // works, then reveal the infrastructure (2026-11-01, as ndexr.io's hero);
+  // the first decision is telling Cove what to build (2026-10-30). The
+  // stack drawing on the right is that reveal. Replaced 2026-10-21's
+  // "Traceable scientific control" and its five audit questions, which now
+  // live in the atlas, not on the door. Every card is something Cove does,
+  // from CONTEXT.md: "First visit", "Listen everywhere", "Blank projects",
+  // "Working on a project together", "Versions, saved for people",
+  // "Open source: the public copy". Keep in step with ndexr.io.
   (function () {
-    // What Cove's atlas establishes (operator, 2026-10-21: "Atlas gives an
-    // organisation a model of its scientific software ... what it has, where
-    // it came from, what actually runs, who is responsible for it, and why
-    // its use is acceptable"). Each card lights the layer of the drawing it
-    // is about (L, indices into LAYERS below). No counts: figures come from
-    // live data only, inside the app.
+    // Each card lights the layers of the drawing it is about (indices into
+    // LAYERS below), from the app people build down to the kernel under it.
+    // No counts: figures come from live data only, inside the app.
     var F = [
-      ["What clean means \u00b7 identity", "Which artifact, exactly", "Every component identifiable down to the exact build it is: name, version, architecture and the file that was produced.", [4]],
-      ["What clean means \u00b7 provenance", "Where it came from", "Source, builder, publication channel and build evidence for each piece - or marked unknown until there is evidence.", [2, 1]],
-      ["What clean means \u00b7 purpose", "Why it is here", "Which environments and applications need it. What nothing needs becomes a candidate for retirement.", [5, 6]],
-      ["What clean means \u00b7 responsibility", "Who answers for it", "Someone accountable for maintaining each component, or for accepting it from a supplier.", [6]],
-      ["What clean means \u00b7 status", "Whether its use is acceptable", "Intended use, approval evidence, exceptions and retirement, visible beside the software itself.", [5]],
-      ["Catching external binaries", "Declared, installed, observed", "What an environment is supposed to use, what is actually on disk, and what an application actually loaded. Where they differ, something needs explaining.", [5, 4, 7]],
-      ["External is not unapproved", "Three findings, kept apart", "External origin, unknown provenance and unapproved use are separate. A downloaded binary may be deliberately approved; a local build may still await review.", [4]],
-      ["For the reviewer", "Software, and the evidence for it", "Identity, intended use, assessment, approval and deployment, connected - so a computational method can be reconstructed and a change controlled.", [7, 6]],
-      ["From the platform up", "Trace a result to the kernel", "Pick a number in a report and follow it down: the package that computed it, the build that made that package, its toolchain, Gentoo Prefix and the kernel - each with its record.", [0, 1, 2, 3, 4, 5, 6, 7]]
+      ["First minute", "What should your site be?", "Your own domain is already live, a moving starter page. Cove's first question is what it should become.", [6]],
+      ["Talk or type", "An agent beside the code", "Describe the change aloud or in the composer. The agent changes this project's app in place, and the page reloads as it saves.", [6, 7]],
+      ["Any language", "Start from what you know", "React, Node, FastAPI, Flask, Streamlit, Shiny, Julia, Rust and WebAssembly - blank or worked examples, most up in seconds.", [3, 6]],
+      ["Together", "Work on it with someone", "Share a project to use or to edit. They open the same files in their own Cove, with their own agent.", [6]],
+      ["Versions", "Nothing is lost", "Every project is saved every 30 minutes. Go back to any version; the history only grows.", [6, 5]],
+      ["Underneath", "Scientific software, built from source", "Compilers, libraries, R, Python, Julia and Rust, built with EasyBuild on Gentoo Prefix and delivered read-only over CernVM-FS.", [1, 2, 3]],
+      ["Honest binaries", "Every binary accounted for", "Anything downloaded rather than built here is marked as such, so a regulated team can see exactly what it runs.", [4, 5]],
+      ["From the platform up", "Trace a result to the kernel", "Pick a number and follow it down: the package that computed it, the build that made it, its toolchain, Gentoo Prefix and the kernel - each with its record.", [0, 1, 2, 3, 4, 5, 6, 7]],
+      ["Yours", "Open source, on your machine too", "MIT licensed, source at gitlab.com/ndexr/cove. A desktop build, and the stack mounts on any Linux machine.", [0, 6]]
     ];
     // The stack, bottom up: each layer's name, its part, its colour (the
     // atlas's own, src/atlas.rs Layer::color) and its ring's half-width.
@@ -225,7 +269,7 @@
       ["Runtimes", "R, Python, Rust, Julia", "#9fd36b", 92],
       ["Packages", "each one a binary", "#c79bf0", 104],
       ["Environments", "a choice of binaries", "#5ec4c0", 96],
-      ["Applications", "what people use", "#e8a75d", 82],
+      ["Applications", "what you build", "#e8a75d", 82],
       ["Executions", "what actually ran", "#ffffff", 62]
     ];
     var NS = "http://www.w3.org/2000/svg", svg = document.getElementById("stack"), rings = [];
@@ -373,6 +417,8 @@
     }
     st.start = function () {
       st.result = null;
+      // You talk, Cove stops talking (Speak, src/voice.rs).
+      if (window.covePlay) window.covePlay.stop();
       if (!navigator.mediaDevices || !window.MediaRecorder) { st.result = "ERROR:this browser cannot record"; return; }
       st.state = "starting";
       navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
@@ -448,9 +494,14 @@
     }
     st.start = function (secs) {
       if (st.state !== "off") return;
+      if (window.covePlay) window.covePlay.stop();
       if (!navigator.mediaDevices || !window.MediaRecorder) { st.err = "this browser cannot record"; return; }
       st.state = "starting"; fullChunks = []; st.full = null;
-      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      // Listen hears the room, speakers included: echo cancellation removes
+      // audio the browser itself plays (a video in another tab), and noise
+      // suppression flattens speech from a speaker, so Whisper got near-silence
+      // and made text up (2026-10-31). Gain control stays, for quiet sources.
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true } }).then(function (s) {
         stream = s; type = pick();
         full = rec();
         full.ondataavailable = function (e) { if (e.data && e.data.size) fullChunks.push(e.data); };
@@ -470,6 +521,13 @@
         url(new Blob(fullChunks, { type: full.mimeType || type }), function (u) { st.full = u; st.state = "off"; });
       };
       full.stop();
+    };
+    // The minutes field changed while listening: the piece being heard runs
+    // on, and is cut `secs` from now, then every `secs`.
+    st.every = function (secs) {
+      if (st.state !== "on") return;
+      clearInterval(timer);
+      timer = setInterval(function () { if (seg && seg.state !== "inactive") seg.stop(); piece(); }, Math.max(15, secs || 60) * 1000);
     };
     st.status = function () { return st.state; };
     st.seg = function () { return st.segs.length ? st.segs.shift() : null; };

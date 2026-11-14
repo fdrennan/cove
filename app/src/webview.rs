@@ -5,8 +5,9 @@
 //! A native webview - WKWebView on macOS, WebKitGTK 4.1 on Linux - laid over
 //! the panel's rectangle, the way the browser build lays an iframe there
 //! (ide.rs site_frame). It is a top-level page, not a frame, so X-Frame-Options
-//! and a site password's form do not stand in its way; it keeps its own
-//! cookies, so the ndexr sign-in happens once inside it.
+//! and a site password's form do not stand in its way. Every webview shares
+//! one context whose cookies are kept on disk (`CONTEXT`), so the ndexr
+//! sign-in happens once, for every panel and every launch.
 //!
 //! Per frame: the App panel (and the Viewer, `place_in`) asks for a rectangle,
 //! and after the frame `end_frame` creates, moves, reloads or hides each
@@ -36,7 +37,7 @@ mod imp {
     use std::cell::RefCell;
 
     use wry::dpi::{LogicalPosition, LogicalSize};
-    use wry::{Rect, WebView, WebViewBuilder};
+    use wry::{Rect, WebContext, WebView, WebViewBuilder};
 
     pub struct Shown {
         pub view: WebView,
@@ -49,6 +50,25 @@ mod imp {
         pub static VIEW: RefCell<Vec<(&'static str, Shown)>> = const { RefCell::new(Vec::new()) };
         /// Could not be made here (Wayland, no WebKitGTK): fall back for good.
         pub static BROKEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// One context for every webview, its cookies kept on disk. wry
+        /// gives a webview built without one a context of its own, and
+        /// WebKitGTK keeps that context's cookies in memory only: each App
+        /// or Viewer webview Cove made started signed out, so every reload
+        /// was the console.ndexr.io sign-in again (operator, 2026-11-03: "I
+        /// keep having to sign in through ndexr-console in the gui in local
+        /// cove every time it refreshes"). WKWebView keeps its own on disk.
+        static CONTEXT: RefCell<Option<WebContext>> = const { RefCell::new(None) };
+    }
+
+    /// $XDG_DATA_HOME/cove/webview, else ~/.local/share/cove/webview.
+    fn data_dir() -> Option<std::path::PathBuf> {
+        let base = std::env::var_os("XDG_DATA_HOME")
+            .filter(|v| !v.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+        let dir = base.join("cove/webview");
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir)
     }
 
     pub fn supported() -> bool {
@@ -86,19 +106,25 @@ mod imp {
         }
         // Marked, so a Cove opened in it knows it is not the main one
         // (release.rs `embedded`: no update bar of its own).
-        match WebViewBuilder::new().with_url(url).with_initialization_script("window.__coveEmbedded = true;").with_bounds(b).build_as_child(frame) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                eprintln!("webview: {e}");
-                None
+        CONTEXT.with_borrow_mut(|c| {
+            let ctx = c.get_or_insert_with(|| WebContext::new(data_dir()));
+            match WebViewBuilder::new_with_web_context(ctx).with_url(url).with_initialization_script("window.__coveEmbedded = true;").with_bounds(b).build_as_child(frame) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    eprintln!("webview: {e}");
+                    None
+                }
             }
-        }
+        })
     }
 
-    /// Linux: WebKitGTK paints and takes input through GTK's loop.
+    /// Linux: WebKitGTK paints and takes input through GTK's loop. Only once
+    /// a webview has started GTK: before that, every frame panicked with "GTK
+    /// has not been initialized" (the laptop, 2026-11-02, once WebKitGTK was
+    /// installed and the binary could load).
     pub fn pump() {
         #[cfg(target_os = "linux")]
-        while gtk::events_pending() {
+        while gtk::is_initialized_main_thread() && gtk::events_pending() {
             gtk::main_iteration_do(false);
         }
     }

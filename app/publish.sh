@@ -18,6 +18,12 @@
 # Order matters: versioned copies, then latest files, then release.json, then
 # manifest.json — a reader never sees a pointer to something not yet uploaded.
 set -euo pipefail
+# Never while a build writes dist/: onprem/desktop-push.sh builds the Linux
+# tarballs and .debs under this lock, and a publish beside one uploaded a
+# half-written .deb (2026-11-02).
+lockdir="${XDG_STATE_HOME:-$HOME/.local/state}/cove-desktop"; mkdir -p "$lockdir"
+exec 8> "$lockdir/build.lock"
+flock -n 8 || { echo "▸ a build is writing dist/ - waiting for it"; flock 8; }
 
 here="$(cd "$(dirname "$0")" && pwd)"
 bucket="${NDEXR_DIST_BUCKET:-s3://ndexr/ndexr/cove}"

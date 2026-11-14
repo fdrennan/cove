@@ -24,6 +24,15 @@
 //!            subscription (Cove runs `claude setup-token` in the Terminal and
 //!            picks the token off the screen), or a pasted key. Or not now:
 //!            the free weekly commands on ndexr's shared Claude.
+//!   Stack    where R, Python and every module come from (operator,
+//!            2026-11-13: "cove.ndexr.io desktop version and server version
+//!            should go through inital setup of installing the stack
+//!            themselves or consuming it through cvmfs"): CernVM-FS
+//!            (`ndexr install cvmfs`), a build here from source (`ndexr stack
+//!            up` into ~/.ndexr/stack), or airgapped - a copy brought to this
+//!            machine, and Cove asks nothing of the network (operator, the
+//!            same day: "cove.ndexr.io should have airgap mode"). The server
+//!            version answers for its own machine, through the same queries.
 //!   Ready    what was set, and where to start.
 //!
 //! The credential goes where every ndexr surface reads it: the person's
@@ -36,9 +45,7 @@ use std::sync::{Arc, Mutex};
 use eframe::egui::{self, Align, Color32, CornerRadius, Layout, RichText, Sense, Stroke};
 use serde::{Deserialize, Serialize};
 
-use crate::api::ClaudeView;
-#[cfg(target_arch = "wasm32")]
-use crate::api::Query;
+use crate::api::{ClaudeView, JobView, Query, SettingsView};
 use crate::backend::Backend;
 use crate::theme;
 
@@ -120,6 +127,7 @@ pub fn follow_theme(pref: ThemePref, ctx: &egui::Context) {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Step {
     Look,
+    Stack,
     Account,
     Claude,
     Ready,
@@ -130,14 +138,15 @@ impl Step {
         // No Claude step at first start: the free commands come first, and
         // the step opens on its own when they run out.
         if cfg!(target_arch = "wasm32") {
-            &[Step::Look, Step::Ready]
+            &[Step::Look, Step::Stack, Step::Ready]
         } else {
-            &[Step::Look, Step::Account, Step::Ready]
+            &[Step::Look, Step::Stack, Step::Account, Step::Ready]
         }
     }
     fn name(self) -> &'static str {
         match self {
             Step::Look => "Look",
+            Step::Stack => "Stack",
             Step::Account => "Account",
             Step::Claude => "Claude",
             Step::Ready => "Ready",
@@ -222,6 +231,17 @@ pub struct Setup {
     #[cfg(not(target_arch = "wasm32"))]
     found: Option<Vec<crate::account::FoundClaude>>,
     helper: Helper,
+    /// The Stack step: its setup or build job as the machine last told it,
+    /// and when it and the settings were last asked.
+    job: Arc<Mutex<JobView>>,
+    job_busy: Arc<AtomicBool>,
+    job_asked: f64,
+    stack_asked: f64,
+    /// The airgapped copy's folder, as typed; and what saving it said.
+    airgap_dir: Option<String>,
+    airgap_note: Slot<Result<String, String>>,
+    /// They allowed the experimental build to send its errors to ndexr.io.
+    report_build: bool,
 }
 
 impl Default for Setup {
@@ -240,6 +260,13 @@ impl Default for Setup {
             #[cfg(not(target_arch = "wasm32"))]
             found: None,
             helper: Helper::default(),
+            job: Default::default(),
+            job_busy: Default::default(),
+            job_asked: f64::NEG_INFINITY,
+            stack_asked: f64::NEG_INFINITY,
+            airgap_dir: None,
+            airgap_note: Default::default(),
+            report_build: false,
         }
     }
 }
@@ -249,6 +276,9 @@ pub struct Env<'a> {
     pub backend: &'a Backend,
     pub ide: &'a mut crate::ide::Ide,
     pub theme: &'a mut ThemePref,
+    /// The app's own copy of the machine's settings and stack: what the Stack
+    /// step reads, and where its saves land, so Global Options sees them.
+    pub settings: &'a Slot<SettingsView>,
     #[cfg(not(target_arch = "wasm32"))]
     pub account: &'a crate::account::Shared,
 }
@@ -259,6 +289,15 @@ impl Setup {
         self.open = true;
         self.step = Step::Look;
         self.helper = Helper::default();
+        self.stack_asked = f64::NEG_INFINITY;
+        self.job_asked = f64::NEG_INFINITY;
+    }
+
+    /// Straight to the Stack step: a browser's first visit to a server with
+    /// no stack (app.rs), where the rest of first start is skipped.
+    pub fn start_stack(&mut self) {
+        self.start();
+        self.step = Step::Stack;
     }
 
     /// Straight to the Claude step (the toolbar chip, an agent's refusal).
@@ -378,6 +417,7 @@ impl Setup {
             let room = (ctx.content_rect().height() - 190.0).max(120.0);
             egui::ScrollArea::vertical().id_salt("setup-step").max_height(room).auto_shrink([false, true]).show(ui, |ui| match self.step {
                 Step::Look => self.look(ui, ctx, env.theme),
+                Step::Stack => self.stack(ui, ctx, &mut env),
                 Step::Account => self.account(ui, ctx, &mut env),
                 Step::Claude => self.claude(ui, ctx, &mut env),
                 Step::Ready => self.ready(ui, &env),
@@ -493,9 +533,214 @@ impl Setup {
         ui.label(RichText::new("Change it any time under View › Theme. The terminal stays dark in every look, so programs like claude and vim draw their colours right.").size(12.0).color(theme::hush()));
     }
 
+    // ── Stack ───────────────────────────────────────────────────────────────
+    fn stack(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
+        self.stack_refresh(ctx, env);
+        Self::title(ui, "The ndexr stack", "R, Python and every tool Cove runs come from the ndexr stack, built kernel to user and the same on every machine. Bring it to this one.");
+        let Some(v) = env.settings.lock().unwrap().clone() else {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Looking for the stack on this machine");
+            });
+            return;
+        };
+        let s = &v.stack;
+        let job = self.job.lock().unwrap().clone();
+        if !s.unsupported.is_empty() {
+            status_card(ui, theme::alt(), "i", "The stack runs on Linux", &s.unsupported);
+            return;
+        }
+        let air = v.settings.airgap;
+        if s.ok {
+            let rev = if s.revision.is_empty() { String::new() } else { format!(", revision {}", s.revision) };
+            status_card(ui, theme::ok(), "✓", "The stack is on this machine", &format!("{}{rev}", s.root));
+        } else if air {
+            status_card(ui, theme::warn(), "!", "Airgap mode is on, but no stack is here yet", &format!("{} has no use.sh with this machine's modules ({}). Copy the stack there, then Check again.", s.root, s.mine));
+        } else if s.building {
+            status_card(ui, theme::primary(), "…", "A build of the stack is under way here", &format!("Cove uses it once it is there. Follow it in a terminal: ndexr stack logs --dir {} -f", s.build_dir));
+        }
+        ui.add_space(4.0);
+        let running = job.running;
+        if !s.ok && !air {
+            choice(ui, "Use it over CernVM-FS", "Our prebuilt stack, mounted read-only at /opt/ndexr/stack and fetched as it is used. Recommended. Needs root once.", |ui| {
+                if s.root_by.is_empty() {
+                    ui.label(RichText::new("No root here without a prompt Cove can show. Run this once in a terminal, then Check again:").size(12.5).color(theme::text_strong()));
+                    code_line(ui, &s.setup_cmd);
+                } else if ui.add_enabled(!running, theme::primary_button("Set up CernVM-FS")).clicked() {
+                    self.stack_job(Query::StackSetup, "Setting up the ndexr stack", ctx, env);
+                }
+            });
+            let mut report = self.report_build;
+            let mut start = false;
+            choice(ui, "Experimental: let Cove build it for you", &format!("Cove runs the whole build here from upstream sources into {}: no root, no ndexr servers. Plan for 150-250 GB of disk and most of a day; Cove uses it as soon as it is built. This build is experimental and some steps may fail.", s.build_dir), |ui| {
+                ui.checkbox(&mut report, RichText::new("Send build errors to ndexr.io. We fix them in Cove and the stack, and your build reruns on the release that has the fix.").size(12.5).color(theme::text_strong()))
+                    .on_hover_text("Only failures, and only once each: the step and recipe that failed, its exit code and error excerpt, and the machine's shape (OS, arch, kernel, glibc, cores, memory). User, host and domain names, paths, emails and IP addresses are scrubbed first. Untick to keep everything on this machine.");
+                if ui.add_enabled(!running && !s.building, egui::Button::new("Allow the experimental build")).clicked() {
+                    start = true;
+                }
+            });
+            self.report_build = report;
+            if start {
+                self.stack_job(Query::StackBuild { report }, if report { "Building the ndexr stack here (errors go to ndexr.io)" } else { "Building the ndexr stack here" }, ctx, env);
+            }
+        }
+        let dir = self.airgap_dir.get_or_insert_with(|| if v.settings.stack_dir.trim().is_empty() { s.build_dir.clone() } else { v.settings.stack_dir.clone() });
+        let mut save: Option<(bool, Option<String>)> = None;
+        choice(
+            ui,
+            "Airgapped",
+            "No network at all: no update checks, no software catalog, no ndexr sign-in. Cove uses a copy of the stack you bring to this machine - a folder with use.sh, from `ndexr stack clone` on a connected machine of the same platform. The agent still needs a Claude it can reach.",
+            |ui| {
+                if air {
+                    ui.label(RichText::new(format!("On. The stack is read from {}.", s.root)).size(12.5).color(theme::text_strong()));
+                    if ui.add(egui::Button::new("Turn airgap off")).clicked() {
+                        save = Some((false, None));
+                    }
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(dir).font(egui::TextStyle::Monospace).hint_text("/path/with/use.sh").desired_width((ui.available_width() - 190.0).max(120.0)));
+                        if ui.add_enabled(dir.trim().starts_with('/'), egui::Button::new("Use this copy, airgapped")).clicked() {
+                            save = Some((true, Some(dir.trim().to_owned())));
+                        }
+                    });
+                }
+            },
+        );
+        if let Some((on, d)) = save {
+            self.save_airgap(on, d, ctx, env);
+        }
+        if let Some(n) = self.airgap_note.lock().unwrap().clone() {
+            let (c, t) = match n {
+                Ok(t) => (theme::ok(), t),
+                Err(e) => (theme::warn(), e),
+            };
+            ui.label(RichText::new(t).size(12.5).color(c));
+        }
+        if !job.what.is_empty() {
+            ui.add_space(4.0);
+            egui::Frame::new().fill(theme::surface()).stroke(Stroke::new(1.0, theme::pane_brd())).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    match job.ok {
+                        _ if job.running => {
+                            ui.spinner();
+                        }
+                        Some(true) => {
+                            ui.label(RichText::new("✓").color(theme::ok()));
+                        }
+                        _ => {
+                            ui.label(RichText::new("✗").color(theme::warn()));
+                        }
+                    }
+                    ui.label(RichText::new(&job.what).strong().color(theme::text_strong()));
+                });
+                let from = job.lines.len().saturating_sub(10);
+                for l in &job.lines[from..] {
+                    ui.label(RichText::new(l).font(egui::FontId::monospace(11.5)).color(theme::text_strong()));
+                }
+            });
+        }
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!running, egui::Button::new("Check again")).clicked() {
+                self.stack_asked = f64::NEG_INFINITY;
+            }
+            if !s.ok {
+                ui.label(RichText::new("Or skip: R, Python and the shell then come from this computer's PATH, and Global Options › Environment brings the stack later.").size(12.5).color(theme::text_strong()));
+            }
+        });
+    }
+
+    /// The settings (and the stack in them) when the step opens or Check
+    /// again is pressed; the job at once, then every second while it runs,
+    /// and the settings again when it ends.
+    fn stack_refresh(&mut self, ctx: &egui::Context, env: &Env<'_>) {
+        let now = ctx.input(|i| i.time);
+        if self.stack_asked == f64::NEG_INFINITY {
+            self.stack_asked = now;
+            let slot = env.settings.clone();
+            env.backend.query(Query::Settings, ctx, move |r: Result<SettingsView, String>| {
+                if let Ok(v) = r {
+                    *slot.lock().unwrap() = Some(v);
+                }
+            });
+        }
+        let running = self.job.lock().unwrap().running;
+        if running {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
+        if !(running || self.job_asked == f64::NEG_INFINITY) || now - self.job_asked < 1.0 || self.job_busy.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        self.job_asked = now;
+        let (job, busy, slot, backend, ctx2) = (self.job.clone(), self.job_busy.clone(), env.settings.clone(), env.backend.clone(), ctx.clone());
+        env.backend.query(Query::StackJob, ctx, move |r: Result<JobView, String>| {
+            if let Ok(v) = r {
+                let ended = !v.running && job.lock().unwrap().running;
+                *job.lock().unwrap() = v;
+                if ended {
+                    backend.query(Query::Settings, &ctx2, move |r: Result<SettingsView, String>| {
+                        if let Ok(v) = r {
+                            *slot.lock().unwrap() = Some(v);
+                        }
+                    });
+                }
+            }
+            busy.store(false, Ordering::Relaxed);
+        });
+    }
+
+    /// Start a stack setup or build on the machine; its progress is polled.
+    fn stack_job(&mut self, q: Query, what: &str, ctx: &egui::Context, env: &Env<'_>) {
+        *self.job.lock().unwrap() = JobView { what: what.into(), running: true, ..Default::default() };
+        // A poll already out may answer from before the start: let it land first.
+        self.job_asked = ctx.input(|i| i.time);
+        let job = self.job.clone();
+        env.backend.query(q, ctx, move |r: Result<JobView, String>| match r {
+            Ok(v) => *job.lock().unwrap() = v,
+            Err(e) => {
+                let mut j = job.lock().unwrap();
+                j.running = false;
+                j.ok = Some(false);
+                j.lines.push(e);
+            }
+        });
+    }
+
+    /// Turn airgap mode on with the stack copy at `dir`, or off. The machine
+    /// says afterwards whether a stack is really there.
+    fn save_airgap(&mut self, on: bool, dir: Option<String>, ctx: &egui::Context, env: &Env<'_>) {
+        let Some(mut s) = env.settings.lock().unwrap().as_ref().map(|v| v.settings.clone()) else {
+            *self.airgap_note.lock().unwrap() = Some(Err("still reading this machine's settings - try again in a moment".into()));
+            return;
+        };
+        s.airgap = on;
+        if let Some(d) = dir {
+            s.stack_dir = d;
+        }
+        let (slot, note) = (env.settings.clone(), self.airgap_note.clone());
+        *note.lock().unwrap() = None;
+        env.backend.query(Query::SaveSettings { settings: s }, ctx, move |r: Result<SettingsView, String>| {
+            let n = match &r {
+                Ok(v) if !v.settings.airgap => Ok("Airgap mode is off.".to_owned()),
+                Ok(v) if v.stack.ok => Ok(format!("Airgapped, with the stack at {}.", v.stack.root)),
+                Ok(v) => Err(format!("Airgap mode is on, but {} has no use.sh with {}'s modules yet.", v.stack.root, v.stack.mine)),
+                Err(e) => Err(format!("not saved: {e}")),
+            };
+            *note.lock().unwrap() = Some(n);
+            if let Ok(v) = r {
+                *slot.lock().unwrap() = Some(v);
+            }
+        });
+    }
+
     // ── Account (desktop) ───────────────────────────────────────────────────
     #[cfg(not(target_arch = "wasm32"))]
     fn account(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
+        if airgapped(env) {
+            Self::title(ui, "Your ndexr account", "Signing in connects this app to your cell and keeps your Claude with your account.");
+            status_card(ui, theme::alt(), "i", "Airgap mode: no sign-in", "Cove talks to no ndexr server. Turn airgap off on the Stack step (Back) to sign in.");
+            return;
+        }
         let a = env.account.lock().unwrap().clone();
         Self::title(ui, "Your ndexr account", "Signing in connects this app to your cell - every environment in the ndexr stack - and keeps your Claude with your account, so it works the same on every machine.");
         match (&a.email, &a.waiting) {
@@ -666,6 +911,15 @@ impl Setup {
             _ => (theme::primary(), "Free agent commands on ndexr's Claude - connect your own when they run out".to_owned()),
         };
         summary_row(ui, theme::ok(), "Look", env.theme.label());
+        let stack = match env.settings.lock().unwrap().as_ref() {
+            Some(v) if v.settings.airgap && v.stack.ok => (theme::ok(), format!("airgapped - {}", v.stack.root)),
+            Some(v) if v.settings.airgap => (theme::warn(), format!("airgapped - no stack at {}", v.stack.root)),
+            Some(v) if v.stack.ok => (theme::ok(), v.stack.root.clone()),
+            Some(v) if !v.stack.unsupported.is_empty() => (theme::alt(), "Linux only - this computer's own R, Python and shell".to_owned()),
+            Some(v) if v.stack.building || self.job.lock().unwrap().running => (theme::primary(), "on its way - Cove uses it once it is there".to_owned()),
+            _ => (theme::warn(), "not set up - R, Python and the shell from this computer's PATH".to_owned()),
+        };
+        summary_row(ui, stack.0, "Stack", &stack.1);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let a = env.account.lock().unwrap().clone();
@@ -856,6 +1110,18 @@ fn short_date(iso: &str) -> String {
 fn capitalise(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// Whether the machine is in airgap mode (as the app last heard).
+#[cfg(not(target_arch = "wasm32"))]
+fn airgapped(env: &Env<'_>) -> bool {
+    env.settings.lock().unwrap().as_ref().is_some_and(|v| v.settings.airgap)
+}
+
+/// A command to run by hand, selectable.
+fn code_line(ui: &mut egui::Ui, cmd: &str) {
+    let mut c = cmd.to_owned();
+    ui.add(egui::TextEdit::singleline(&mut c).font(egui::TextStyle::Monospace).desired_width(ui.available_width()));
 }
 
 /// A card saying where something stands: a coloured mark, a line, a detail.

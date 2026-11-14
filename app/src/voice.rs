@@ -34,6 +34,23 @@ pub struct Mic {
     done: Arc<Mutex<Option<Result<String, String>>>>,
     /// Why the last try failed, until the next one.
     error: Option<String>,
+    /// The domain folder the mic works for. Set by its box each frame: every
+    /// recording is kept in <keep>/supporting_docs/ with its transcript beside
+    /// it (operator, 2026-11-01: "all uploaded audio should get stored in
+    /// supporting docs ... voice overs, game sounds"); None keeps nothing.
+    pub keep: Option<String>,
+    /// The recording just kept, waiting for its transcript: (folder, name).
+    kept: Option<(String, String)>,
+}
+
+/// A recording's extension, from its data URL's type.
+fn clip_ext(data_url: &str) -> &'static str {
+    match data_url.split(';').next().unwrap_or("").trim_start_matches("data:") {
+        m if m.contains("mp4") || m.contains("m4a") => "m4a",
+        m if m.contains("ogg") => "ogg",
+        m if m.contains("wav") => "wav",
+        _ => "webm",
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -108,6 +125,20 @@ impl Mic {
                     }
                     None => {
                         self.phase = Phase::Transcribing;
+                        self.kept = None;
+                        if let Some(dir) = self.keep.clone().filter(|d| !d.is_empty()) {
+                            if let Some(bytes) = clip.split_once(";base64,").and_then(|(_, b)| crate::api::b64_decode(b)) {
+                                let stamp = crate::shots::name("voice", "");
+                                let name = format!("{}.{}", stamp.rsplit_once('.').map_or(stamp.as_str(), |x| x.0), clip_ext(&clip));
+                                let docs = format!("{dir}/supporting_docs");
+                                backend.upload(&docs, &name, bytes, ctx, |r| {
+                                    if let Err(e) = r {
+                                        eprintln!("cove: recording not kept: {e}");
+                                    }
+                                });
+                                self.kept = Some((docs, name));
+                            }
+                        }
                         let done = self.done.clone();
                         backend.transcribe(ctx, clip, move |r| *done.lock().unwrap() = Some(r));
                     }
@@ -117,6 +148,13 @@ impl Mic {
         }
         if let Some(r) = self.done.lock().unwrap().take() {
             self.phase = Phase::Idle;
+            // The transcript goes beside the kept recording, as <name>.md.
+            if let (Some((docs, name)), Ok(t)) = (self.kept.take(), &r) {
+                if !t.trim().is_empty() {
+                    let md = format!("# {name}\n\nTranscript of {name}, recorded with the mic in Cove.\n\n{}\n", t.trim());
+                    backend.upload(&docs, &format!("{name}.md"), md.into_bytes(), ctx, |_| {});
+                }
+            }
             match r {
                 Ok(t) if !t.trim().is_empty() => {
                     let t = t.trim();
@@ -183,18 +221,97 @@ impl Mic {
     }
 }
 
+/// What the one Listen button shows (operator, 2026-10-31: "a nice clean
+/// single icon button, no text ... hover over to explain it ... to the right
+/// of the mic", in the IDE's console and in Go). A click moves Off → Listen →
+/// Act as I talk → Off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ListenMode {
+    #[default]
+    Off,
+    /// The mic is open; each minute is transcribed and kept.
+    Listen,
+    /// The mic is open; each piece goes to the agent as it is heard.
+    Act,
+}
+
+/// The Listen button, `d` across: quiet when off, filled and slowly pulsing
+/// while it listens (green to keep, blue to act). `enabled` is false while a
+/// stopped recording is still being transcribed.
+pub fn listen_button(ui: &mut egui::Ui, mode: ListenMode, enabled: bool, tip: &str, d: f32) -> egui::Response {
+    let now = ui.input(|i| i.time);
+    let pulse = |c: egui::Color32| if (now * 1.5).floor() as i64 % 2 == 0 { c } else { c.gamma_multiply(0.75) };
+    let r = match mode {
+        ListenMode::Off if enabled => crate::icons::quiet(ui, crate::icons::Icon::Listen, d),
+        ListenMode::Off => crate::icons::button(ui, crate::icons::Icon::Listen, d, theme::surface_hi(), theme::muted(), false),
+        ListenMode::Listen => crate::icons::button(ui, crate::icons::Icon::Listen, d, pulse(theme::ok()), theme::bg(), true),
+        ListenMode::Act => crate::icons::button(ui, crate::icons::Icon::Listen, d, pulse(theme::primary()), theme::bg(), true),
+    };
+    if mode != ListenMode::Off {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+    }
+    r.on_hover_text(tip)
+}
+
+/// Speak: the agent answers aloud, beside Listen in every composer (operator,
+/// 2026-11-05: a "voice toggle like speak out loud ... and maybe a stop
+/// speaking button that shows up while it's talking"). One switch for every
+/// agent pane, kept across restarts (app.rs Saved). What is said, and whether
+/// anything is, is brief.rs `spoken`'s.
+pub mod speak {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static ON: AtomicBool = AtomicBool::new(false);
+    pub fn on() -> bool {
+        ON.load(Ordering::Relaxed)
+    }
+    pub fn set(v: bool) {
+        ON.store(v, Ordering::Relaxed);
+    }
+    /// Only where there is a player to say it (the browser).
+    pub fn shown() -> bool {
+        super::play::supported()
+    }
+}
+
+/// The Speak button: off (quiet), on (lit), or Stop while it is talking.
+pub fn speak_button(ui: &mut egui::Ui, d: f32) {
+    use crate::icons::{button, quiet, Icon};
+    if !speak::shown() {
+        return;
+    }
+    if play::playing() {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
+        if button(ui, Icon::Stop, d, theme::primary(), theme::bg(), true).on_hover_text("stop talking - what it said is in the chat").clicked() {
+            play::stop();
+        }
+        return;
+    }
+    let on = speak::on();
+    let r = if on { button(ui, Icon::Speak, d, theme::primary(), theme::bg(), true) } else { quiet(ui, Icon::Speak, d) };
+    let tip = if on {
+        "Speak is on - the agent says its answer aloud when you asked it something or it needs you; the rest stays in the chat.\nClick: quiet"
+    } else {
+        "Speak - the agent answers aloud when you asked it something or it needs you; the full reply stays in the chat"
+    };
+    if r.on_hover_text(tip).clicked() {
+        speak::set(!on);
+    }
+}
+
 /// Go mode's Listen (operator, 2026-10-18: "set it up so that it's listening
 /// and it's continuously taking information from that stream ... take chunks
 /// of that audio and act on it if it's confident enough ... but then also
 /// submit the final audio, so have it transcribed and ultimately stored ...
 /// only within the Go mode"). The page keeps the mic open
-/// (web/index.html `window.coveListen`); every CHUNK_SECS a piece is
+/// (web/index.html `window.coveListen`); every 30 s, 1 min or 5 min (PIECES) a piece is
 /// transcribed and handed back as a `Heard::Chunk`; Stop hands back the whole
 /// recording and its transcript as `Heard::Whole`. What is done with them -
 /// the agent, supporting_docs/ - is ide.rs go_agent's.
 #[derive(Default)]
 pub struct Listen {
     since: f64,
+    /// Seconds per piece, as started.
+    secs: u32,
     /// Pieces at the transcriber, and the whole once it is there.
     out: Arc<Mutex<Vec<Heard>>>,
     pending: usize,
@@ -210,8 +327,57 @@ pub enum Heard {
     Error(String),
 }
 
-/// Seconds of talk in each piece transcribed as it goes.
-pub const CHUNK_SECS: u32 = 60;
+/// How often Listen cuts a piece, transcribes it and - acting as I talk -
+/// hands it to the agent, in seconds: three choices and nothing to type
+/// (operator, 2026-11-13: "whenever I push one minute ... it wants me to put
+/// in a numeric input ... I think it should be simpler ... 30 second, one
+/// minute, or five minutes, as the only options"). It replaced a minutes
+/// field, 1 to 10 (2026-11-11), which replaced the Steady / In batches /
+/// Presenting paces (2026-11-08).
+pub const PIECES: [u32; 3] = [30, 60, 300];
+
+/// The choice nearest `secs` - what a saved or older value becomes.
+pub fn piece(secs: u32) -> u32 {
+    *PIECES.iter().min_by_key(|p| p.abs_diff(secs)).unwrap_or(&60)
+}
+
+/// "30 s", "1 min", "5 min".
+pub fn piece_words(secs: u32) -> String {
+    if secs < 60 { format!("{secs} s") } else { format!("{} min", secs / 60) }
+}
+
+/// The same span in a sentence: "30 seconds", "minute", "5 minutes" (as in
+/// "the last minute").
+pub fn piece_span(secs: u32) -> String {
+    match secs {
+        s if s < 60 => format!("{s} seconds"),
+        60 => "minute".to_owned(),
+        s => format!("{} minutes", s / 60),
+    }
+}
+
+/// The three choices, the one in use filled. Left of them, while Listen is
+/// on, the time until the piece being heard is cut.
+pub fn piece_field(ui: &mut egui::Ui, secs: &mut u32, left: Option<u32>) {
+    if let Some(s) = left {
+        ui.label(RichText::new(format!("{}:{:02}", s / 60, s % 60)).monospace().size(11.0).color(theme::hush()))
+            .on_hover_text("until Listen transcribes what it is hearing and, acting as you talk, the agent gets it");
+    }
+    for p in PIECES {
+        if ui.selectable_label(*secs == p, RichText::new(piece_words(p)).size(12.0))
+            .on_hover_text(format!("Listen transcribes what you said every {} and, acting as you talk, hands it to the agent", piece_words(p)))
+            .clicked()
+        {
+            *secs = p;
+        }
+    }
+}
+
+/// The model a Presenting turn runs on: Sonnet, on the same plan
+/// (subscription or API) as the agent's own pick.
+pub fn present_model(current: &str) -> String {
+    if current.starts_with("sub-") { "sub-sonnet" } else { "sonnet" }.to_owned()
+}
 
 #[cfg(target_arch = "wasm32")]
 mod listen_js {
@@ -263,9 +429,27 @@ impl Listen {
         self.state() != "off" || self.pending > 0 || self.whole
     }
 
-    pub fn start(&mut self, now: f64) {
+    /// Open the mic, cutting a piece every `secs` seconds.
+    pub fn start(&mut self, now: f64, secs: u32) {
         self.since = now;
-        listen_js::call("start", Some(CHUNK_SECS as f64));
+        self.secs = secs;
+        listen_js::call("start", Some(secs as f64));
+    }
+
+    /// Cut a piece every `secs` from now on, keeping the one being heard: a
+    /// change to the minutes field reaches a running Listen.
+    pub fn every(&mut self, now: f64, secs: u32) {
+        if self.secs != secs {
+            self.since = now;
+            self.secs = secs;
+            listen_js::call("every", Some(secs as f64));
+        }
+    }
+
+    /// Seconds until the piece being recorded is cut and transcribed.
+    pub fn next_piece_in(&self, now: f64) -> u32 {
+        let secs = self.secs.max(1);
+        secs - ((now - self.since).max(0.0) as u32 % secs)
     }
 
     pub fn stop(&mut self) {
@@ -367,5 +551,21 @@ pub mod play {
         return call("clock", None).and_then(|v| v.as_string()).unwrap_or_default();
         #[cfg(not(target_arch = "wasm32"))]
         String::new()
+    }
+}
+
+#[cfg(test)]
+mod minutes_tests {
+    const PIECES_WORDS: [&str; 3] = ["30 s", "1 min", "5 min"];
+
+    #[test]
+    fn minutes() {
+        assert_eq!(super::PIECES, [30, 60, 300]);
+        // Saved minutes from before (1 to 10) land on the nearest choice.
+        assert_eq!([0, 30, 45, 60, 120, 179, 181, 600].map(super::piece), [30, 30, 30, 60, 60, 60, 300, 300]);
+        assert_eq!(PIECES_WORDS, [super::piece_words(30), super::piece_words(60), super::piece_words(300)]);
+        assert_eq!([super::piece_span(30), super::piece_span(60), super::piece_span(300)], ["30 seconds", "minute", "5 minutes"]);
+        assert_eq!(super::present_model("sub-opus"), "sub-sonnet");
+        assert_eq!(super::present_model("opus"), "sonnet");
     }
 }

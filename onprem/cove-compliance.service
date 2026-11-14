@@ -1,0 +1,13 @@
+# Licence compliance for Cove and Inlet, every day (onprem/compliance.sh):
+# the full report - Cove's code-side gate plus Inlet's live AGPL checks and
+# Cove's served notices - into docs/compliance/, committed by path so the record
+# of having been compliant accumulates in git. A failure is a failed unit:
+#   systemctl --user status cove-compliance; docs/compliance/latest.md
+[Unit]
+Description=cove.ndexr.io licence compliance report (Cove + Inlet)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/ndexr/src/domains/drennanfreddy/cove.ndexr.io
+ExecStart=/usr/bin/env bash -c 'rc=0; onprem/compliance.sh || rc=$?; git commit -q -m "compliance: daily report $(date -u +%%F) (exit $rc)" -- docs/compliance/ >/dev/null 2>&1 || true; exit $rc'

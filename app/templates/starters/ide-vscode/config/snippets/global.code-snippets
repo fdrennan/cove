@@ -1,0 +1,7 @@
+{
+  "Section": {
+    "prefix": "section",
+    "body": ["# ---- ${1:name} ----", "$0"],
+    "description": "A section comment"
+  }
+}

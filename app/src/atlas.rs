@@ -3932,10 +3932,10 @@ impl Atlas {
                         for r in &records {
                             built_from(ui, r, patched_with.iter().find(|p| p.version == r.version), &built);
                         }
-                        // Inlet runs as a session of its own (rstudio.ndexr.io); until 2026-10-28
+                        // Inlet runs as a session of its own (inlet.ndexr.io, 2026-10-29; until 2026-10-28
                         // its module was pimp-my-rstudio, which the stack may still carry.
                         if matches!(nd.label.as_str(), "Inlet" | "pimp-my-rstudio") {
-                            ui.hyperlink_to(RichText::new("Open Inlet  ↗").size(12.5).strong(), "https://rstudio.ndexr.io/")
+                            ui.hyperlink_to(RichText::new("Open Inlet  ↗").size(12.5).strong(), "https://inlet.ndexr.io/")
                                 .on_hover_text("start or reopen an Inlet session - ndexr's modified RStudio Server, built from the files above");
                         }
                         // Patched: every patch, whose, its size; why on hover.

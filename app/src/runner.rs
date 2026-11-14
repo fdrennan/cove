@@ -52,11 +52,21 @@ pub fn login_shell() -> String {
         .unwrap_or_else(|| if cfg!(target_os = "macos") { "/bin/zsh".into() } else { "/bin/bash".into() })
 }
 
+/// `cmd` for a login shell. The bundled CLI goes first: it ships with this
+/// Cove, and the laptop's own /usr/local/bin/ndexr was 0.0.49 against the
+/// bundle's 0.0.142 and won (2026-11-02). What the shell's /etc/profile drops
+/// goes back at the end: NDEXR_SHELL_PATH, the PATH a cell (cell-entry.sh) or
+/// code.ndexr.io started with, which its terminals restore the same way
+/// (ndexr-shell.sh). Without it a cell's Cove server found no `ndexr` or
+/// `claude` in /opt/ndexr/bin, and glimpse and the manifests said "the ndexr
+/// CLI is not on this machine".
 pub fn with_path(cmd: &str) -> String {
-    match bundled_bin_dir() {
-        Some(dir) => format!("export PATH=\"$PATH:{}\"; {cmd}", dir.display()),
-        None => cmd.to_owned(),
+    let first = bundled_bin_dir().map(|d| format!("{}:", d.display())).unwrap_or_default();
+    let last = std::env::var("NDEXR_SHELL_PATH").ok().filter(|p| !p.is_empty()).map(|p| format!(":{p}")).unwrap_or_default();
+    if first.is_empty() && last.is_empty() {
+        return cmd.to_owned();
     }
+    format!("export PATH=\"{first}$PATH{last}\"; {cmd}")
 }
 
 /// Lmod's record of what is loaded, as inherited from whatever started this

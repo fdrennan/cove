@@ -1,0 +1,20 @@
+---
+title: "__HOST__"
+output: html_document
+runtime: shiny
+---
+
+A blank interactive document: R Markdown whose output reacts. Prose and
+code as in any report, with Shiny inputs and outputs inside it. A save
+shows on the next load of the page.
+
+```{r, echo = FALSE}
+sliderInput("n", "Points", min = 10, max = 1000, value = 200, step = 10)
+```
+
+```{r, echo = FALSE}
+renderPlot({
+  set.seed(1)
+  hist(rnorm(input$n), breaks = 30, main = paste(input$n, "draws from a normal distribution"), xlab = "x")
+}, height = 300)
+```

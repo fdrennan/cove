@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#07090d">
+<title>Last Signal · __HOST__</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">LAST SIGNAL <small>__HOST__</small></div>
+    <div class="clock"><span id="phase">DAY 1</span><b id="until">1:35</b><small id="until-what">to nightfall</small></div>
+  </header>
+  <main>
+    <div class="stage" id="stage">
+      <canvas id="map" width="1152" height="720"></canvas>
+      <div class="note" id="note"></div>
+      <div class="overlay" id="overlay">
+        <div class="dialog">
+          <h2 id="headline">The machines woke up.</h2>
+          <p id="message">Hold the Haven through the nights. Salvage scrap by day, take in survivors, and burn out both AI Cores in the east. The Grid they grow makes their machines faster - Jammers push it back, Hackers turn their machines to your side.</p>
+          <form class="save hidden" id="save">
+            <input id="name" maxlength="16" placeholder="Your name">
+            <button type="submit">Save score</button>
+          </form>
+          <p class="saved hidden" id="saved"></p>
+          <button id="start">Hold the line</button>
+          <div class="board hidden" id="board"><h3>Longest holdouts on this site</h3><ol id="rows"></ol></div>
+        </div>
+      </div>
+    </div>
+    <aside class="panel">
+      <section class="hud">
+        <div><small>Scrap</small><strong id="scrap">0</strong></div>
+        <div><small>Waiting</small><strong id="waiting">0</strong></div>
+        <div><small>People</small><strong id="people">0 / 6</strong></div>
+        <div><small>Nights held</small><strong id="nights">0</strong></div>
+        <div><small>Cores</small><strong id="cores">2</strong></div>
+        <div><small>Score</small><strong id="score">0</strong></div>
+      </section>
+      <section class="group">
+        <h4>Build</h4>
+        <div class="buttons" id="build"></div>
+      </section>
+      <section class="group">
+        <h4>Train</h4>
+        <div class="buttons" id="train"></div>
+      </section>
+      <section class="group sel">
+        <h4>Selected</h4>
+        <div id="selected">nothing</div>
+        <div class="buttons tools">
+          <button id="fight" title="units fight what they meet on the way (F)">Fight move</button>
+          <button id="stop" title="stop (S)">Stop</button>
+          <button id="salvage" title="take the selected building down for half its scrap">Salvage</button>
+          <button id="pause" title="pause (Space)">Pause</button>
+        </div>
+      </section>
+      <section class="group sound">
+        <h4>Sound</h4>
+        <div class="row">
+          <button id="mute" title="sound on or off (M)">On</button>
+          <input id="volume" type="range" min="0" max="100" value="70" aria-label="volume">
+        </div>
+      </section>
+      <section class="keys">
+        <span><kbd>click</kbd> select · drag a box</span>
+        <span><kbd>right-click</kbd> or tap: move, attack, salvage, hack</span>
+        <span><kbd>shift</kbd> right-click: fight on the way</span>
+        <span><kbd>1</kbd>-<kbd>7</kbd> build · <kbd>space</kbd> pause · <kbd>M</kbd> sound</span>
+      </section>
+      <details class="env" id="env">
+        <summary>Environment</summary>
+        <div id="env-rows"></div>
+      </details>
+    </aside>
+  </main>
+</div>
+<script src="/static/main.js"></script>
+</body>
+</html>

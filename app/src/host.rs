@@ -45,6 +45,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
             serde_json::to_value(kernel::poll(*lang, usize::MAX))
         }
         Query::Complete { lang, line, cursor } => serde_json::to_value(kernel::complete(*lang, line, *cursor)?),
+        Query::CodeComplete { path, lang, line, col, text, row } => serde_json::to_value(code_complete(path, lang, line, *col, text, *row)?),
         Query::Assist { lang, ask, context } => serde_json::to_value(assist(*lang, ask, context)?),
         Query::Interrupt { lang } => serde_json::to_value(kernel::interrupt(*lang)?),
         Query::Restart { lang } => {
@@ -58,6 +59,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
             serde_json::to_value(kernel::poll(*lang, usize::MAX))
         }
         Query::StackSetup => serde_json::to_value(stack::setup(&saved_settings().cvmfs)?),
+        Query::StackBuild { report } => serde_json::to_value(stack::build(*report)?),
         Query::StackApply { cvmfs } => serde_json::to_value(stack::apply(cvmfs)?),
         Query::StackTest { proxy } => serde_json::to_value(stack::test(proxy)?),
         Query::StackJob => serde_json::to_value(stack::jobs::view("stack")),
@@ -66,14 +68,19 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::ListDomains => serde_json::to_value(list_domains()),
         Query::Inbox { all, chat, find } => serde_json::to_value(crate::messages::inbox(&session_owner(), *all, chat, find)?),
         Query::InboxAct { act } => Ok(crate::messages::act(&session_owner(), act)?),
+        Query::ProjectNames { names } => serde_json::to_value(crate::messages::project_names(&session_owner(), names)?),
         Query::DeployApp { .. } | Query::DeployJob { .. } | Query::AppRoute { .. } | Query::ProjectRelease { .. } | Query::AppAccess { .. } => return Err("apps are routed from cove.ndexr.io, where they are served".into()),
         // Build / Up / Down (apps.rs): the project's own scripts, run here as
         // the person - in a cove.ndexr.io session and on a desktop alike.
         Query::AppStatus { host } => serde_json::to_value(crate::apps::status(Path::new(&app_dir(host)?))),
         Query::AppAction { host, verb } => serde_json::to_value(crate::apps::action(host, Path::new(&app_dir(host)?), verb)?),
+        Query::AppType { host, language } => serde_json::to_value(app_type(Path::new(&app_dir(host)?), language)?),
         Query::AppJob { host } => serde_json::to_value(crate::apps::job(host)),
         Query::Versions { host } => serde_json::to_value(versions_at(Path::new(&app_dir(host)?))?),
         Query::VersionRestore { host, sha } => serde_json::to_value(version_restore_at(Path::new(&app_dir(host)?), sha, &session_owner())?),
+        Query::Image { host, verb } => serde_json::to_value(image_at(&session_owner(), Path::new(&app_dir(host)?), host, verb)?),
+        Query::GitChanges { host, sha } => serde_json::to_value(git_changes_at(Path::new(&app_dir(host)?), sha)?),
+        Query::GitDiff { host, sha, path, old } => serde_json::to_value(git_diff_at(Path::new(&app_dir(host)?), sha, path, old)?),
         Query::Easyconfig { name, version } => serde_json::to_value(easyconfig(name, version)?),
         Query::DmFile { id } => serde_json::to_value(crate::messages::dm_file(&session_owner(), *id)?),
         Query::Serving { apexes, targets } => {
@@ -97,6 +104,8 @@ pub fn answer(q: &Query) -> Result<Value, String> {
             }
             serde_json::to_value(crate::recap::recap(*minutes))
         }
+        Query::Spoken { asked, reply } => serde_json::to_value(crate::brief::spoken(asked, reply)?),
+        Query::ReadAloud { text } => serde_json::to_value(crate::brief::read_aloud(text)?),
         Query::RecapBrief { minutes, fresh } => {
             if !ndexr_admin(&session_owner()) {
                 return Err("the briefing is for ndexr admins".into());
@@ -106,7 +115,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::CreateDomain { host, parent, rust, starter } => {
             let starter = match starter.as_str() {
                 "" if *rust => crate::starters::RUST_APP,
-                "" => crate::starters::SHINY_BLANK,
+                "" => crate::starters::SHINY_CHAOS,
                 s => s,
             };
             let parent = own_domains().map(|p| p.display().to_string()).unwrap_or_else(|| parent.clone());
@@ -136,7 +145,9 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::SendRequest { domain, what, trying, blocked, files } => serde_json::to_value(send_request(domain, what, trying, *blocked, files)?),
         Query::ListDir { path } => serde_json::to_value(list_dir(path)?),
         Query::Grep { root, query, case, regex } => serde_json::to_value(grep(root, query, *case, *regex)?),
+        Query::Glimpse { path } => serde_json::to_value(glimpse(path)?),
         Query::ReadFile { path } => serde_json::to_value(read_file(path)?),
+        Query::AppLog { path, build } => serde_json::to_value(app_log(path, *build)?),
         Query::Stamps { paths } => serde_json::to_value(paths.iter().take(500).map(|p| stamp(p)).collect::<Vec<String>>()),
         Query::SiteStamp { path } => serde_json::to_value(site_stamp(path)?),
         Query::SourceOpen { kind, name, version, sets, env } => serde_json::to_value(crate::source::open(kind, name, version, sets, env)?),
@@ -192,6 +203,9 @@ pub fn software_catalog() -> Result<Vec<u8>, String> {
         return Ok(b);
     }
     let cache = crate::kernel::cache_dir().join("catalog.json");
+    if saved_settings().airgap {
+        return std::fs::read(&cache).map_err(|_| "airgap mode: no software catalog on this machine - the atlas and Packages stay empty".to_owned());
+    }
     let age = std::fs::metadata(&cache).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
     if age.is_some_and(|a| a < std::time::Duration::from_secs(120)) {
         if let Ok(b) = std::fs::read(&cache) {
@@ -1925,7 +1939,7 @@ pub fn is_host_name(n: &str) -> bool {
 pub(crate) fn domain_at(p: &Path) -> Option<crate::api::DomainInfo> {
     let host = p.file_name()?.to_str()?.to_owned();
     let module = p.join("module.r").is_file();
-    if !is_host_name(&host) || !(module || p.join("nginx.conf").is_file() || p.join("CONTEXT.md").is_file() || p.join("run.sh").is_file()) {
+    if !is_host_name(&host) || !(module || p.join("nginx.conf").is_file() || p.join("CONTEXT.md").is_file() || p.join("run.sh").is_file() || p.join(".cove/app.env").is_file()) {
         return None;
     }
     // "# Blog · blog.ndexr.io" -> "Blog"
@@ -2119,6 +2133,14 @@ fn list_domains() -> Vec<crate::api::DomainInfo> {
             break;
         }
     }
+    // Domains shared with this person to work on (shares.rs), at ~/shared.
+    #[cfg(unix)]
+    for (_, p, owner) in crate::shares::granted(Path::new(&home())) {
+        if let Some(mut d) = domain_at(Path::new(&p)) {
+            d.owner = owner;
+            out.push(d);
+        }
+    }
     let mut out = one_per_host(out);
     out.sort_by(|a, b| a.host.cmp(&b.host));
     out.truncate(5000);
@@ -2177,27 +2199,38 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
     if !is_host_name(&host) || !host.contains('.') || host.ends_with('.') {
         return Err(format!("{host}: not a domain name - like mysite.ndexr.io"));
     }
+    if let Some(m) = crate::api::posit_mark(&host) {
+        return Err(crate::api::posit_mark_words(&host, m));
+    }
     crate::storage::refuse_growth()?;
     let parent = resolve(parent)?;
     if !parent.is_dir() {
         return Err(format!("{}: no such folder", parent.display()));
     }
-    if list_domains().iter().any(|d| d.host == host) {
-        return Err(format!("{host} already exists - pick it from the list"));
-    }
-    // Someone else's already, on this machine: refused before any file is
-    // made. A taken name used to be created anyway, fail at publish ("belongs
-    // to someone else"), and leave a scaffold at src/domains/<host> that
-    // shadowed the owner's own src/domains/<owner>/<host> (2026-10-23,
-    // meet.ndexr.io). The registry still has the last word at publish.
-    if let Some(other) = held_elsewhere(&host, &parent) {
-        return Err(format!("{host} is taken (it is {}) - choose another name", other));
-    }
     let dir = parent.join(&host);
-    std::fs::create_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let replacing = new_signup_page(&dir, &host);
+    if !replacing {
+        if list_domains().iter().any(|d| d.host == host) {
+            return Err(format!("{host} already exists - pick it from the list"));
+        }
+        // Someone else's already, on this machine: refused before any file is
+        // made. A taken name used to be created anyway, fail at publish ("belongs
+        // to someone else"), and leave a scaffold at src/domains/<host> that
+        // shadowed the owner's own src/domains/<owner>/<host> (2026-10-23,
+        // meet.ndexr.io). The registry still has the last word at publish.
+        if let Some(other) = held_elsewhere(&host, &parent) {
+            return Err(format!("{host} is taken (it is {}) - choose another name", other));
+        }
+        std::fs::create_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
     let laid = starter_layout(&host, starter)?;
     if !laid.is_empty() {
         write_laid(&dir, laid)?;
+        // Left behind if it cannot go (a folder only its owner may delete
+        // from): app.env now says what the project is, and it wins.
+        if replacing {
+            let _ = std::fs::remove_file(dir.join("module.r"));
+        }
         // Compiled already where Cove has a seed for this starter, so Up
         // starts at once; then a Build of its own, in the background, which
         // the strip shows as compiling (apps.rs `compiling`).
@@ -2236,18 +2269,20 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
     let context = format!("# {host} · {host}\nOne-paragraph purpose.\n\n## Files\n- module.r\n\n## Auth\nLogin-gated.\n\n## Open\n- Publish it at route.ndexr.io (DNS, certificate, vhost).\n");
     let mut files: Vec<(String, String)> = vec![("module.r".into(), module), ("CONTEXT.md".into(), context), (".gitignore".into(), ".Rhistory\n.RData\n*.log\n".into())];
     app_contract(&mut files, "r", "module", "")?;
-    for (name, body) in &files {
-        let p = dir.join(name);
-        std::fs::write(&p, body).map_err(|e| format!("{name}: {e}"))?;
-        #[cfg(unix)]
-        if name.ends_with(".sh") {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o775));
-        }
-    }
+    crate::dotcove::write(&dir, &crate::dotcove::lay(&host, files, &starter_files))?;
     // Each domain is its own repo; `ndexr push` / Push all gives it a remote.
     let _ = capture_within(&format!("cd {} && git init -q && git add -A", shell_quote(&dir.display().to_string())), Duration::from_secs(20));
     domain_at(&dir).ok_or_else(|| "created, but it does not read back as a domain".into())
+}
+
+/// A folder made in the last week that holds the page signup laid
+/// (site_provision.r `.module_skeleton`), byte for byte: nobody has written
+/// anything there, so a first project may take its place. Older untouched
+/// pages stay: they are sites people already have (five on 2026-10-30).
+fn new_signup_page(dir: &Path, host: &str) -> bool {
+    const WEEK: Duration = Duration::from_secs(7 * 24 * 3600);
+    let new = std::fs::metadata(dir).and_then(|m| m.created()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < WEEK);
+    new && std::fs::read_to_string(dir.join("module.r")).is_ok_and(|m| m.trim_end() == SHINY_CHAOS_MODULE.replace("__HOST__", host).trim_end())
 }
 
 /// A starter's files for `host`, the app contract's with them: the Rust app
@@ -2272,9 +2307,11 @@ fn starter_layout(host: &str, starter: &str) -> Result<Vec<(String, String)>, St
     // created, did not read back, and the chooser closed on nothing
     // (operator, 2026-10-25).
     if !laid.iter().any(|(n, _)| n == "CONTEXT.md") {
-        laid.push(("CONTEXT.md".to_owned(), format!("# {host} · {host}\nA project started in Cove ({starter}).\n\n## Files\n- run.sh\n\n## Auth\nLogin-gated.\n")));
+        laid.push(("CONTEXT.md".to_owned(), format!("# {host} · {host}\nA project started in Cove ({starter}).\n\n## Files\n- .cove/ - how Cove builds, starts and stops it\n\n## Auth\nLogin-gated.\n")));
     }
-    Ok(laid)
+    // The contract and every type's scripts in .cove/ (dotcove.rs): the
+    // person's folder starts with their app and nothing else.
+    Ok(crate::dotcove::lay(host, laid, &starter_files))
 }
 
 fn write_laid(dir: &Path, laid: Vec<(String, String)>) -> Result<(), String> {
@@ -2323,7 +2360,7 @@ const SEED_HOST: &str = "seed.ndexr.io";
 /// built, and its seed would claim a build of other code.
 fn seed_stamp(starter: &str) -> Result<String, String> {
     let mut laid = starter_layout(SEED_HOST, starter)?;
-    laid.retain(|(n, _)| n != "app.env");
+    laid.retain(|(n, _)| n != ".cove/app.env");
     laid.sort();
     // FNV-1a: the same number from every build of Cove, which a std hasher
     // does not promise.
@@ -2353,8 +2390,16 @@ fn seed_into(dir: &Path, starter: &str) -> bool {
     if seed_stamp(starter).ok().as_deref() != Some(stamp.trim()) {
         return false;
     }
-    let parts: Vec<String> = ["target", "dist", "Cargo.lock"].iter().filter(|p| seed.join(p).exists()).map(|p| shell_quote(&seed.join(p).display().to_string())).collect();
-    !parts.is_empty() && capture_within(&format!("cp -a {} {} && echo seeded", parts.join(" "), shell_quote(&dir.display().to_string())), Duration::from_secs(180)).is_some_and(|o| o.trim() == "seeded")
+    let names: Vec<&str> = ["target", "dist", "Cargo.lock"].into_iter().filter(|p| seed.join(p).exists()).collect();
+    let parts: Vec<String> = names.iter().map(|p| shell_quote(&seed.join(p).display().to_string())).collect();
+    let laid: Vec<String> = names.iter().map(|p| shell_quote(&dir.join(p).display().to_string())).collect();
+    // `cp -a` keeps the mtimes cargo's fingerprints need, and the seed's
+    // mode 755 with them, which on the project's ACL'd folder sets the mask to
+    // r-x: the agent (the platform account) could not write target/ or dist/
+    // and built into a temp directory instead (request #170, 2026-11-01).
+    // g+w lifts the mask back; the mtimes stay.
+    !parts.is_empty()
+        && capture_within(&format!("cp -a {} {} && chmod -R g+w {} && echo seeded", parts.join(" "), shell_quote(&dir.display().to_string()), laid.join(" ")), Duration::from_secs(180)).is_some_and(|o| o.trim() == "seeded")
 }
 
 /// `cove seed list | stamp <starter> | lay <starter> <dir>` - for
@@ -2368,7 +2413,12 @@ pub fn seed_cli(args: &[String]) -> i32 {
             let dir = Path::new(a(2));
             std::fs::create_dir(dir).map_err(|e| format!("{}: {e}", dir.display())).and_then(|_| starter_layout(SEED_HOST, a(1))).and_then(|l| if l.is_empty() { Err(format!("{}: not a starter Cove lays out", a(1))) } else { write_laid(dir, l) }).and_then(|_| seed_stamp(a(1)))
         }
-        _ => Err("cove seed list | stamp <starter> | lay <starter> <new dir>".into()),
+        // A person's own site, laid into a folder that exists (scripts/reset-user-sites.py).
+        "site" if !a(2).is_empty() => {
+            let host = a(1).trim().to_ascii_lowercase();
+            starter_layout(&host, crate::starters::NODE_SITE).and_then(|l| write_laid(Path::new(a(2)), l)).map(|_| format!("{host}: laid in {}", a(2)))
+        }
+        _ => Err("cove seed list | stamp <starter> | lay <starter> <new dir> | site <host> <dir>".into()),
     };
     match r {
         Ok(out) => {
@@ -2465,10 +2515,20 @@ fn app_contract(laid: &mut Vec<(String, String)>, language: &str, kind: &str, he
         }
     };
     if kind == "port" {
-        let port = free_app_port()?;
+        // Each `__<NAME>PORT__` gets a port of its own: APP_PORT's, and a
+        // second one where the app runs two servers (Unreal's game talks to
+        // its signalling server on APP_STREAMER_PORT).
+        let mut given: Vec<u16> = Vec::new();
         for (n, body) in laid.iter_mut() {
-            if n == "app.env" {
-                *body = body.replace("__PORT__", &port.to_string());
+            if n != "app.env" {
+                continue;
+            }
+            let mut marks: Vec<String> = body.split("__").skip(1).step_by(2).filter(|m| m.ends_with("PORT") && m.chars().all(|c| c.is_ascii_uppercase() || c == '_')).map(|m| format!("__{m}__")).collect();
+            marks.dedup();
+            for mark in marks {
+                let port = free_app_port_except(&given)?;
+                given.push(port);
+                *body = body.replace(&mark, &port.to_string());
             }
         }
     }
@@ -2488,18 +2548,57 @@ fn app_contract(laid: &mut Vec<(String, String)>, language: &str, kind: &str, he
 /// (APP-CONTRACT.md section 6). Every starter used to default to 8800, so a
 /// second project brought up collided with the first.
 fn free_app_port() -> Result<u16, String> {
+    free_app_port_except(&[])
+}
+
+/// free_app_port, passing over `also` (ports just given to the same project).
+fn free_app_port_except(also: &[u16]) -> Result<u16, String> {
+    let mut taken = taken_ports();
+    taken.extend(also);
+    // What `cove multiuser` (root) saw: a person's session cannot enter
+    // /home/ubuntu (750), so its own scan finds only that person's projects
+    // and no vhost at all - asdfasdf.fdrennan.ndexr.io got 8848, which an
+    // orphaned vhost (dddxxcgg.ndexr.io) still proxied to, and routing it
+    // failed (2026-11-01).
+    if let Ok(t) = std::fs::read_to_string(ports_file()) {
+        taken.extend(t.split_whitespace().filter_map(|p| p.parse::<u16>().ok()));
+    }
+    (8830..=8999)
+        .find(|p| !taken.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+        .ok_or_else(|| "no free app port in 8830-8999".to_owned())
+}
+
+/// Where `cove multiuser` writes the ports every app.env and vhost on the
+/// machine holds, one per line, readable by every session.
+pub fn ports_file() -> PathBuf {
+    PathBuf::from(std::env::var("COVE_STATE_DIR").unwrap_or_else(|_| "/var/lib/cove".into())).join("ports.taken")
+}
+
+/// The app ports this process can see in use: every project's app.env
+/// APP_PORT and every vhost's proxy_pass to 127.0.0.1 (APP-CONTRACT.md
+/// section 6).
+pub fn taken_ports() -> std::collections::HashSet<u16> {
     let mut taken = std::collections::HashSet::new();
-    let mut envs: Vec<PathBuf> = list_domains().iter().map(|d| Path::new(&d.path).join("app.env")).collect();
+    // Each project's, in .cove/ or (not adopted yet) at its root.
+    let both = |p: PathBuf| [p.join(".cove/app.env"), p.join("app.env")];
+    let mut envs: Vec<PathBuf> = list_domains().iter().flat_map(|d| both(PathBuf::from(&d.path))).collect();
     for top in std::fs::read_dir(PLATFORM_DOMAINS).into_iter().flatten().flatten() {
-        envs.push(top.path().join("app.env"));
+        envs.extend(both(top.path()));
         for sub in std::fs::read_dir(top.path()).into_iter().flatten().flatten() {
-            envs.push(sub.path().join("app.env"));
+            envs.extend(both(sub.path()));
         }
     }
     for f in envs {
         if let Ok(t) = std::fs::read_to_string(&f) {
-            if let Some(p) = t.lines().find_map(|l| l.trim().strip_prefix("APP_PORT=")?.trim().parse::<u16>().ok()) {
-                taken.insert(p);
+            // APP_PORT and any other APP_*PORT the app listens on (APP_STREAMER_PORT).
+            for l in t.lines() {
+                if let Some((k, v)) = l.trim().split_once('=') {
+                    if k.starts_with("APP_") && k.ends_with("PORT") {
+                        if let Ok(p) = v.trim().trim_matches(|c| c == '"' || c == '\'').parse::<u16>() {
+                            taken.insert(p);
+                        }
+                    }
+                }
             }
         }
     }
@@ -2513,14 +2612,37 @@ fn free_app_port() -> Result<u16, String> {
             }
         }
     }
-    (8830..=8999)
-        .find(|p| !taken.contains(p) && std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
-        .ok_or_else(|| "no free app port in 8830-8999".to_owned())
+    taken
+}
+
+/// Settings › Info's Type menu (dotcove.rs set_type): the project
+/// becomes `language`, given a port of its own when it needs one.
+fn app_type(dir: &Path, language: &str) -> Result<String, String> {
+    crate::dotcove::adopt(dir, &starter_files)?;
+    let running = crate::apps::status(dir).running;
+    crate::dotcove::set_type(dir, language, running, &free_app_port)
+}
+
+/// `cove dotcove <dir>...`: each project folder moved into .cove/
+/// (dotcove.rs adopt), saying what it did; 1 when any failed.
+pub fn dotcove_cli(dirs: &[String]) -> i32 {
+    let mut code = 0;
+    for d in dirs {
+        match crate::dotcove::adopt(Path::new(d), &starter_files) {
+            Ok(true) => println!("moved   {d}"),
+            Ok(false) => println!("skipped {d}"),
+            Err(e) => {
+                eprintln!("failed  {d}: {e}");
+                code = 1;
+            }
+        }
+    }
+    code
 }
 
 /// A starter folder's files, (path, template), in path order; empty for an
 /// id with no folder.
-fn starter_files(id: &str) -> Vec<(&'static str, &'static str)> {
+pub(crate) fn starter_files(id: &str) -> Vec<(&'static str, &'static str)> {
     STARTER_FILES.iter().filter(|(s, _, _)| *s == id).map(|(_, p, b)| (*p, *b)).collect()
 }
 
@@ -2631,6 +2753,9 @@ out(list(claimed = done))
 /// it so (operator directive, 2026-09-04; ndexr-provision-child's default).
 const PUBLISH_R: &str = r#"
 args <- commandArgs(TRUE); owner <- args[[length(args)]]; h <- tolower(args[[1]])
+# Who may open it, from the project's .cove/app.env APP_ACCESS (multiuser.rs
+# PublishDomain): "login" unless the project asks for stricter or wider.
+access <- if (length(args) >= 3 && args[[2]] %in% c("public", "login", "owner")) args[[2]] else "login"
 out <- function(x) { cat(jsonlite::toJSON(x, auto_unbox = TRUE, null = "null")); quit(status = 0) }
 options(box.path = Sys.getenv("NDEXR_SRC"))
 box::use(ud = r/users/user_domains, reg = r/domains/registry, pg = r/connections/postgres, sp = r/users/site_provision)
@@ -2654,17 +2779,31 @@ if (length(parts) > 3) for (i in 2:(length(parts) - 2)) {
   o <- tryCatch(reg$domain_owner(up), error = function(e) "")
   if (length(o) && nzchar(o[[1]]) && tolower(o[[1]]) != tolower(email)) out(list(error = paste0(h, " is under ", up, ", which belongs to someone else")))
 }
-res <- tryCatch(sp$provision_start(h, email, access = "login", category = "Cove"), error = function(e) e)
+res <- tryCatch(sp$provision_start(h, email, access = access, category = "Cove"), error = function(e) e)
 if (inherits(res, "error")) out(list(error = conditionMessage(res)))
 out(list(host = h, run = if (is.list(res) && !is.null(res$id)) as.character(res$id) else ""))
 "#;
 
 pub fn publish_as(owner: &str, host: &str) -> Result<String, String> {
+    publish_with(owner, host, "login")
+}
+
+/// Publish `host` with `access` (public, login or owner) as the level nginx
+/// gates it at from its first request: an Inlet starter runs as its owner
+/// with no login of its own, so it must never be open to anyone signed in.
+pub fn publish_with(owner: &str, host: &str, access: &str) -> Result<String, String> {
+    if !["public", "login", "owner"].contains(&access) {
+        return Err(format!("{access}: not an access level"));
+    }
     let h = host.trim().to_ascii_lowercase();
     if !is_host_name(&h) || !h.contains('.') {
         return Err(format!("{h}: not a domain name"));
     }
-    let v = platform_r_as(owner, "publish.R", PUBLISH_R, &[&h], 120)?;
+    // On the web is where the mark would be served: never.
+    if let Some(m) = crate::api::posit_mark(&h) {
+        return Err(crate::api::posit_mark_words(&h, m));
+    }
+    let v = platform_r_as(owner, "publish.R", PUBLISH_R, &[&h, access], 120)?;
     Ok(v["host"].as_str().unwrap_or(&h).to_owned())
 }
 
@@ -2793,6 +2932,197 @@ pub fn versions_at(dir: &Path) -> Result<Vec<crate::api::Version>, String> {
         .collect())
 }
 
+/// The editor's completion (Query::CodeComplete): in the session of the
+/// code's language - what it has loaded, argument names inside a call
+/// included - or, for Rust, from rust-analyzer (lsp.rs).
+pub fn code_complete(path: &str, lang: &str, line: &str, col: usize, text: &str, row: usize) -> Result<crate::api::Completion, String> {
+    let session = match lang {
+        "r" => Lang::R,
+        "python" => Lang::Python,
+        "julia" => Lang::Julia,
+        "shell" => Lang::Shell,
+        "rust" => return crate::lsp::complete_rust(path, text, row, col),
+        _ => return Err("this kind of file completes from its own words only".into()),
+    };
+    kernel::complete(session, line, col)
+}
+
+/// A project's container image through the ndexr CLI (`ndexr image`,
+/// docs/container-images.md), run as the platform account: its ndexr, and
+/// its AWS profile, which people's sessions do not have. Cove builds and
+/// pushes nothing itself. A CLI without `image` says so, and nothing is
+/// pretended.
+pub fn image_at(owner: &str, dir: &Path, host: &str, verb: &str) -> Result<Value, String> {
+    if owner.is_empty() || !owner.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-.".contains(c)) || owner.starts_with('.') {
+        return Err(format!("{owner}: not an ndexr username"));
+    }
+    let kind = image_kind(host);
+    if verb == "job" {
+        return serde_json::to_value(stack::jobs::view(kind)).map_err(|e| e.to_string());
+    }
+    let (d, o) = (shell_quote(&dir.display().to_string()), shell_quote(owner));
+    let has = "ndexr image --help >/dev/null 2>&1 || { echo 'ndexr has no image command yet - asked of ndexr.ndexr.io (referral #727)' >&2; exit 3; }; ";
+    match verb {
+        "build" => {
+            let job = stack::jobs::start(kind, format!("image build ({host})"), as_platform(&format!("{has}ndexr image build {d} --owner {o}"))?, None)?;
+            serde_json::to_value(job).map_err(|e| e.to_string())
+        }
+        "status" | "pull" => {
+            let sub = if verb == "status" { "status" } else { "pull-login" };
+            let out = Command::new("bash").args(["-c", &as_platform(&format!("{has}ndexr image {sub} {d} --owner {o} --json"))?]).output().map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                return Err(err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("ndexr image failed").trim().to_owned());
+            }
+            serde_json::from_slice(&out.stdout).map_err(|e| format!("ndexr image {sub} answered oddly: {e}"))
+        }
+        other => Err(format!("{other}: not something an image does")),
+    }
+}
+
+/// One image build at a time per project. Leaked once per project, as
+/// push_kind does per person.
+fn image_kind(host: &str) -> &'static str {
+    static KINDS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, &'static str>>> = std::sync::OnceLock::new();
+    let mut k = KINDS.get_or_init(Default::default).lock().unwrap();
+    k.entry(host.to_owned()).or_insert_with(|| Box::leak(format!("image:{host}").into_boxed_str()))
+}
+
+/// The tree every repository starts from: what a first version is compared with.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/// A version id as git takes it, or "" for the changes not saved yet.
+fn git_rev_ok(sha: &str) -> bool {
+    sha.is_empty() || ((7..=40).contains(&sha.len()) && sha.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// A path inside the project: relative, no way up or out, never an option.
+fn git_path_ok(p: &str) -> bool {
+    !p.is_empty() && !p.starts_with('/') && !p.starts_with('-') && !p.contains('\0') && !p.split('/').any(|c| c == "..")
+}
+
+/// Shell that sets `$a` and `$b` for `git diff $a $b`: a version against its
+/// first parent (the empty tree for a first version), or for "" the last
+/// saved version against the files as they are.
+fn git_pair(sha: &str) -> String {
+    if sha.is_empty() {
+        format!("a=$($g rev-parse -q --verify HEAD || echo {EMPTY_TREE}); b=")
+    } else {
+        format!("$g cat-file -e {sha}^{{commit}} || {{ echo 'no such version' >&2; exit 1; }}; a=$($g rev-parse -q --verify {sha}^1 || echo {EMPTY_TREE}); b={sha}")
+    }
+}
+
+const GIT: &str = "g='git -c safe.directory=* -c core.quotepath=off'; ";
+
+/// The files version `sha` changed (Query::GitChanges), as the Git window
+/// lists them; "" the changes not saved yet, files git does not track
+/// included. A project without a repository has none.
+pub fn git_changes_at(dir: &Path, sha: &str) -> Result<Vec<crate::api::GitFile>, String> {
+    if !git_rev_ok(sha) {
+        return Err("not a version".into());
+    }
+    if !dir.join(".git").exists() {
+        return Ok(Vec::new());
+    }
+    let pair = git_pair(sha);
+    let names = platform_git(dir, &format!("{GIT}{pair}; $g diff --no-color --no-ext-diff -M --name-status -z $a $b"), &[])?;
+    let counts = git_numstat(&platform_git(dir, &format!("{GIT}{pair}; $g diff --no-color --no-ext-diff -M --numstat -z $a $b"), &[])?);
+    let mut files = git_name_status(&names);
+    for f in &mut files {
+        if let Some(&(a, r)) = counts.get(&f.path) {
+            (f.added, f.removed) = (a, r);
+        }
+    }
+    if sha.is_empty() {
+        let new = platform_git(dir, &format!("{GIT}$g ls-files --others --exclude-standard -z"), &[])?;
+        for p in new.split('\0').filter(|p| !p.is_empty()) {
+            // All its lines are new; a binary (or a huge) file has no count.
+            let lines = std::fs::read(dir.join(p))
+                .ok()
+                .filter(|b| b.len() < 4 << 20 && !b.contains(&0))
+                .map_or(-1, |b| b.iter().filter(|c| **c == b'\n').count() as i64 + i64::from(b.last().is_some_and(|c| *c != b'\n')));
+            files.push(crate::api::GitFile { path: p.to_owned(), status: "?".into(), added: lines, removed: if lines < 0 { -1 } else { 0 }, ..Default::default() });
+        }
+    }
+    files.truncate(5000);
+    Ok(files)
+}
+
+/// `git diff --name-status -z`: a letter, then one path - two for a rename
+/// or copy (old, new).
+fn git_name_status(z: &str) -> Vec<crate::api::GitFile> {
+    let mut out = Vec::new();
+    let mut t = z.split('\0').filter(|s| !s.is_empty());
+    while let Some(st) = t.next() {
+        let status = st.chars().next().unwrap_or('M').to_string();
+        let f = if matches!(status.as_str(), "R" | "C") {
+            let (Some(old), Some(new)) = (t.next(), t.next()) else { break };
+            crate::api::GitFile { path: new.to_owned(), old: old.to_owned(), status, ..Default::default() }
+        } else {
+            let Some(p) = t.next() else { break };
+            crate::api::GitFile { path: p.to_owned(), status, ..Default::default() }
+        };
+        out.push(f);
+    }
+    out
+}
+
+/// `git diff --numstat -z`: "added TAB removed TAB path", or for a rename
+/// "added TAB removed TAB" then old and new as their own fields; "-" counts
+/// are a binary file's (-1 here). Keyed by the path as it is now.
+fn git_numstat(z: &str) -> std::collections::HashMap<String, (i64, i64)> {
+    let mut out = std::collections::HashMap::new();
+    let mut t = z.split('\0');
+    while let Some(rec) = t.next() {
+        let mut f = rec.splitn(3, '\t');
+        let (Some(a), Some(r), Some(p)) = (f.next(), f.next(), f.next()) else { continue };
+        let path = if p.is_empty() {
+            let _old = t.next();
+            match t.next() {
+                Some(new) => new.to_owned(),
+                None => break,
+            }
+        } else {
+            p.to_owned()
+        };
+        let n = |x: &str| x.parse::<i64>().unwrap_or(-1);
+        out.insert(path, (n(a), n(r)));
+    }
+    out
+}
+
+/// One file's unified diff in version `sha` (Query::GitDiff); "" against the
+/// last saved version, where a file git does not track yet is all new.
+/// `old` is its name before a rename. Cut at 1 MB.
+pub fn git_diff_at(dir: &Path, sha: &str, path: &str, old: &str) -> Result<String, String> {
+    if !git_rev_ok(sha) {
+        return Err("not a version".into());
+    }
+    if !git_path_ok(path) || !(old.is_empty() || git_path_ok(old)) {
+        return Err("not a file of this project".into());
+    }
+    if !dir.join(".git").exists() {
+        return Err("this project has no versions yet".into());
+    }
+    let (p, o) = (shell_quote(path), if old.is_empty() { String::new() } else { shell_quote(old) });
+    // git diff --no-index exits 1 when the files differ, which they do.
+    let untracked = if sha.is_empty() {
+        format!("if [ -e {p} ] && ! $g ls-files --error-unmatch -- {p} >/dev/null 2>&1; then $g diff --no-color --no-ext-diff --no-index -- /dev/null {p}; [ $? -le 1 ]; exit; fi; ")
+    } else {
+        String::new()
+    };
+    let mut out = platform_git(dir, &format!("{GIT}{untracked}{}; $g diff --no-color --no-ext-diff -M $a $b -- {o} {p}", git_pair(sha)), &[])?;
+    if out.len() > 1 << 20 {
+        let mut cut = 1 << 20;
+        while !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        out.push_str("\n\\ cut at 1 MB\n");
+    }
+    Ok(out)
+}
+
 /// Put version `sha` back in `dir`, losing nothing: what is there now is
 /// saved as a version first, then the files become that version's and that is
 /// saved as the newest - history only ever grows. `owner` authors both.
@@ -2915,7 +3245,13 @@ if (identical(domain, "exec.ndexr.io") && !admin) {
   # 2026-10-16: "all users should be able to create any subdomain of
   # theirs") - suno.nancydrennan1.ndexr.io under nancydrennan1.ndexr.io -
   # recorded on first use. A bare apex (ndexr.io) never counts.
-  if (!admin && !isTRUE(ud$user_domains_owns(email, domain))) {
+  # Shared with them to work on (people_sharing.sql share_editors): the
+  # domain's own thread and agent, beside its owner's.
+  shared <- !admin && tryCatch({
+    con <- pg$connection_postgres_direct(); on.exit(pool::poolReturn(con), add = TRUE)
+    nrow(DBI::dbGetQuery(con, "SELECT 1 FROM share_editors WHERE email = lower($1) AND domain = lower($2) LIMIT 1", params = list(email, domain))) > 0
+  }, error = function(e) FALSE)
+  if (!admin && !shared && !isTRUE(ud$user_domains_owns(email, domain))) {
     labels <- strsplit(domain, ".", fixed = TRUE)[[1]]
     ups <- if (length(labels) > 3) vapply(2:(length(labels) - 2), function(k) paste(labels[k:length(labels)], collapse = "."), "") else character()
     mine <- any(vapply(ups, function(u) isTRUE(ud$user_domains_owns(email, u)), logical(1)))
@@ -2980,6 +3316,8 @@ pub(crate) fn session_owner() -> String {
 /// `/home/<owner>/domains/...` in `text` as the platform's own path to the
 /// same files, `<PLATFORM_DOMAINS>/<owner>/...`, when that folder is there.
 pub(crate) fn platform_paths(owner: &str, text: &str) -> String {
+    let text = shared_platform_paths(owner, text);
+    let text = text.as_str();
     let ours = Path::new(PLATFORM_DOMAINS).join(owner);
     if owner.is_empty() || owner.contains('/') || !ours.is_dir() {
         return text.to_owned();
@@ -2989,8 +3327,74 @@ pub(crate) fn platform_paths(owner: &str, text: &str) -> String {
     // The platform account cannot enter /home/<owner> (0750): Versions, run
     // as that account, failed with "cd: /home/fdrennan/ndexr/src/domains/
     // fdrennan/fdrennan.ndexr.io: Permission denied" (2026-10-26).
+    // And the cell's: it mounts that same folder at /root/src/domains/<owner>
+    // (user-provision.sh), and a desktop Cove on a cell sends its agent runs
+    // here (backend.rs platform_query) with the cell's paths in them -
+    // "/root/src/domains/drennanfreddy/drennanfreddy.ndexr.io/static: not a
+    // folder of drennanfreddy.ndexr.io" (request #185, 2026-11-03).
     let to = format!("{}/", ours.display());
-    text.replace(&format!("/home/{owner}/ndexr/src/domains/{owner}/"), &to).replace(&format!("/home/{owner}/domains/"), &to)
+    text.replace(&format!("/home/{owner}/ndexr/src/domains/{owner}/"), &to)
+        .replace(&format!("/home/{owner}/domains/"), &to)
+        .replace(&format!("/root/src/domains/{owner}/"), &to)
+}
+
+/// `/home/<owner>/shared/<host>/...` (a domain shared with them to work on,
+/// shares.rs) as the platform's own path to it.
+#[cfg(unix)]
+fn shared_platform_paths(owner: &str, text: &str) -> String {
+    let home = Path::new("/home").join(owner);
+    let lead = format!("{}/", home.join("shared").display());
+    if owner.is_empty() || owner.contains('/') || !text.contains(&lead) {
+        return text.to_owned();
+    }
+    let mut out = text.to_owned();
+    for (host, _, _) in crate::shares::granted(&home) {
+        if let Some(to) = crate::shares::platform_path_of(&home, &host) {
+            let at = format!("{lead}{host}");
+            out = if out == at { to.display().to_string() } else { out.replace(&format!("{at}/"), &format!("{}/", to.display())) };
+        }
+    }
+    out
+}
+
+#[cfg(not(unix))]
+fn shared_platform_paths(_owner: &str, text: &str) -> String {
+    text.to_owned()
+}
+
+/// What every agent turn in a Cove project is told first: the project's app
+/// is the one in its folder, and the work changes it in place. None for a
+/// folder with no `.cove/app.env` (Exec, a platform domain).
+fn project_brief(owner: &str, domain: &str) -> Option<String> {
+    let dir = [Path::new(PLATFORM_DOMAINS).join(owner).join(domain), Path::new(PLATFORM_DOMAINS).join(domain)]
+        .into_iter()
+        .find(|d| d.join(crate::dotcove::DIR).join("app.env").is_file())?;
+    let env = std::fs::read_to_string(dir.join(crate::dotcove::DIR).join("app.env")).ok()?;
+    Some(brief_text(domain, &env))
+}
+
+fn brief_text(domain: &str, env: &str) -> String {
+    let field = |k: &str| env.lines().find_map(|l| l.trim().strip_prefix(&format!("{k}=")).map(|v| v.trim().trim_matches('"').to_owned())).unwrap_or_default();
+    let live = if field("APP_KIND") == "port" {
+        format!(
+            "It is served at https://{domain}/ from 127.0.0.1:{port} (.cove/app.env). Making a change live is yours: \
+             .cove/build.sh, then .cove/down.sh and .cove/up.sh, from the project's root - Cove's Build, Down and Up run the same files. \
+             No referral, deploy script, service or new port is needed, ever.",
+            port = field("APP_PORT")
+        )
+    } else {
+        format!("It is a module the platform serves at https://{domain}/: a saved change is live.")
+    };
+    format!(
+        "[This project - from Cove, not typed by the person]\n\
+         {domain}'s app is the one in this folder. Whatever the person asks you to build here, build it by changing THAT app in place: \
+         the new app replaces what is there. Never keep the old app beside it (no /old, /net or /v1 sub-path for it), never start a second app, \
+         and never send going live to another agent. {live} \
+         If CONTEXT.md or CLAUDE.md says otherwise (scripts/new-rust-app.sh, an app-<host>.service, a deploy through exec), \
+         that note is out of date: do this, and correct the note. \
+         For icons or pictures run ndexr-media (icon \"<what>\", generate \"<prompt>\" --name <file>, fetch <url>): \
+         files land in images/ with their source and licence in images/SOURCES.md.\n---\n"
+    )
 }
 
 pub fn agent_run_as(owner: &str, domain: &str, prompt: &str, model: &str, cwd: Option<&str>, mode: Option<&str>) -> Result<String, String> {
@@ -3013,12 +3417,15 @@ pub fn agent_run_as(owner: &str, domain: &str, prompt: &str, model: &str, cwd: O
     let cwd = match cwd.map(str::trim).filter(|c| !c.is_empty()) {
         None => String::new(),
         Some(c) => {
-            let p = Path::new(c);
-            let ok = p.is_absolute() && p.is_dir() && !c.split('/').any(|s| s == "..") && p.components().any(|s| s.as_os_str() == domain.as_str());
+            // As this machine names it first: the folder came from a home or
+            // a cell (platform_paths), and is checked where it will be used.
+            let here = platform_paths(owner, c);
+            let p = Path::new(&here);
+            let ok = p.is_absolute() && p.is_dir() && !here.split('/').any(|s| s == "..") && p.components().any(|s| s.as_os_str() == domain.as_str());
             if !ok {
                 return Err(format!("{c}: not a folder of {domain}"));
             }
-            c.to_owned()
+            here
         }
     };
     // The person's ~/domains is a bind of the platform's owner folder
@@ -3027,6 +3434,16 @@ pub fn agent_run_as(owner: &str, domain: &str, prompt: &str, model: &str, cwd: O
     // person sees them came back EACCES (2026-10-23, a screenshot pasted into
     // Exec): name the platform's copy of the same file instead.
     let prompt = platform_paths(owner, prompt);
+    // Every turn in a project is about that project's one app, changed in
+    // place (operator, 2026-11-07, after du.ndexr.io's agent built a Disk
+    // Observatory beside the Network Observatory it started as, moved the old
+    // one to /net/ and referred "going live" to exec through an old deploy
+    // script: "agents when working on their projects must ALWAYS work on the
+    // application in place of the one there").
+    let prompt = match project_brief(owner, &domain) {
+        Some(brief) => format!("{brief}{prompt}"),
+        None => prompt,
+    };
     // Over the free storage cap, every turn is about getting back under it.
     let prompt = match crate::storage::agent_brief_for(owner) {
         Some(brief) => format!("{brief}{prompt}"),
@@ -3043,7 +3460,14 @@ pub fn agent_run_as(owner: &str, domain: &str, prompt: &str, model: &str, cwd: O
         let why = v["spawn_output"].as_str().map(str::trim).filter(|w| !w.is_empty() && w.len() < 600);
         return Err(why.map(str::to_owned).unwrap_or_else(|| format!("ndexr-claude-run did not start (status {})", v["spawn_status"])));
     }
-    v["id"].as_str().map(str::to_owned).ok_or_else(|| "no run id".into())
+    let id = v["id"].as_str().map(str::to_owned).ok_or_else(|| "no run id".to_owned())?;
+    // Who sent it, beside its prompt, so the thread can say so to anyone
+    // else who sees it (agent_history_as). Best effort: a turn without it is
+    // shown as before.
+    if let Ok(td) = thread_dir_as(owner, &domain) {
+        let _ = std::fs::write(td.join(format!("{id}.by")), owner);
+    }
+    Ok(id)
 }
 
 /// The env the platform's own R runs in - the one Cove gives every person and
@@ -3256,7 +3680,7 @@ pub(crate) fn platform_r_with_file(owner: &str, name: &str, script: &str, a: &st
 
 /// `platform_r` for a named owner - for `cove multiuser`, which asks on a
 /// person's behalf before their session exists.
-fn platform_r_as(owner: &str, name: &str, script: &str, args: &[&str], secs: u64) -> Result<Value, String> {
+pub(crate) fn platform_r_as(owner: &str, name: &str, script: &str, args: &[&str], secs: u64) -> Result<Value, String> {
     let root = Path::new(PLATFORM_DOMAINS).ancestors().nth(2).ok_or("no platform checkout")?.to_path_buf();
     if !root.join("src/r/host.r").is_file() {
         return Err("this needs the platform checked out on this machine (src/r/host.r)".into());
@@ -3629,6 +4053,9 @@ email <- tryCatch({
 }, error = function(e) "")
 hint <- tryCatch(vocab$vocab_hint(email), error = function(e) "")
 r <- tr$transcribe_audio_status(path, hint = hint)
+# Nothing said (silence, or only what transcribe.r drops as made up): no text,
+# not an error - a Listen piece with no speech in it is skipped quietly.
+if (!isTRUE(r$ok) && identical(r$text, "empty transcript")) out(list(text = ""))
 if (!isTRUE(r$ok)) out(list(error = paste("could not transcribe:", r$text)))
 out(list(text = tryCatch(vocab$vocab_apply(r$text, email), error = function(e) r$text)))
 "#;
@@ -3903,7 +4330,15 @@ pub fn agent_history_as(owner: &str, domain: &str) -> Result<Vec<crate::api::Age
         .map(|id| {
             let prompt = std::fs::read_to_string(td.join(format!("{id}.prompt"))).unwrap_or_default();
             let chunk = agent_poll(id, 0).unwrap_or_default();
-            crate::api::AgentTurn { id: id.clone(), prompt, events: chunk.events, done: chunk.done }
+            // Named only for someone else's turn: the viewer's own stay unmarked.
+            let by = std::fs::read_to_string(td.join(format!("{id}.by"))).map(|b| b.trim().to_owned()).unwrap_or_default();
+            let by = if by.is_empty() || by == owner { String::new() } else { by };
+            let at = std::fs::metadata(td.join(format!("{id}.prompt")))
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs() as i64);
+            crate::api::AgentTurn { id: id.clone(), prompt, events: chunk.events, done: chunk.done, by, at }
         })
         .collect())
 }
@@ -3984,11 +4419,12 @@ pub fn archive_cmd(host: &str) -> Result<String, String> {
 fn list_dir(path: &str) -> Result<Listing, String> {
     let p = resolve(path)?.canonicalize().map_err(|e| format!("{path}: {e}"))?;
     let rd = std::fs::read_dir(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    let ignored = ignored_names(&p);
     let mut entries: Vec<DirEntry> = rd
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
+            if name.starts_with('.') || ignored.contains(&name) {
                 return None;
             }
             let m = e.metadata().ok()?;
@@ -3998,6 +4434,39 @@ fn list_dir(path: &str) -> Result<Listing, String> {
         .collect();
     entries.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     Ok(Listing { path: p.display().to_string(), entries })
+}
+
+/// `ndexr glimpse <path>`: the folder's tree with each file's text, the block
+/// a person pastes into another chat to give it the code (request #164,
+/// 2026-11-01: "push button to immediately copy ndexr glimpse output from
+/// Files section for the directory you are in"). Run as the person, so it
+/// reads what they may read. A folder whose glimpse passes 4 MB is refused:
+/// no chat takes that, and the clipboard holds it badly.
+fn glimpse(path: &str) -> Result<String, String> {
+    let p = resolve(path)?.canonicalize().map_err(|e| format!("{path}: {e}"))?;
+    if !p.is_dir() {
+        return Err(format!("{} is not a folder", p.display()));
+    }
+    let out = capture_within(&format!("ndexr glimpse {}", shell_quote(&p.display().to_string())), Duration::from_secs(30))
+        .ok_or_else(|| format!("ndexr glimpse gave nothing for {} (is the ndexr CLI on this machine?)", p.display()))?;
+    if out.len() > 4 << 20 {
+        return Err(format!("the glimpse of {} is {} MB - open a smaller folder", p.display(), out.len() >> 20));
+    }
+    Ok(out)
+}
+
+/// The names the folder's own .gitignore lists outright - `target/`,
+/// `dist/`, `node_modules` - which the Files pane leaves out: build output
+/// and caches, no one's source (operator, 2026-11-01: "all projects need to
+/// have a clean top level directory"). A pattern (`*.log`, `a/b`) hides
+/// nothing; only a plain name does.
+fn ignored_names(dir: &Path) -> std::collections::HashSet<String> {
+    let Ok(text) = std::fs::read_to_string(dir.join(".gitignore")) else { return Default::default() };
+    text.lines()
+        .map(|l| l.trim().trim_start_matches('/').trim_end_matches('/'))
+        .filter(|l| !l.is_empty() && !l.starts_with(['#', '!']) && !l.contains(['/', '*', '?', '[']))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// A file's or folder's fingerprint: modified time (ns) and size; "" when it
@@ -4014,12 +4483,25 @@ fn stamp(path: &str) -> String {
 /// of (.r, styles, scripts, markup, config); never .git, build output, uploads
 /// or dependency trees, and at most 20,000 entries, so a big domain costs the
 /// same as a small one.
+/// When App reloads (operator, 2026-11-06: an agent building a site while a
+/// podcast plays "needs a place that it can build without triggering the cove
+/// refresh ... so we can only update when it actually matters"). Two rules,
+/// for every project:
+///   - `.cove/` never counts. Build in `.cove/stage/`, move the finished files
+///     into place, and App reloads once; Cove's own run state and logs in
+///     `.cove/` stop reloading it too.
+///   - A project with a `.cove/reload` file reloads only when that file is
+///     touched: the agent says when the content is ready, every save is quiet.
 fn site_stamp(path: &str) -> Result<String, String> {
-    const SKIP: [&str; 14] = [".git", "node_modules", "renv", "dist", "logs", "supporting_docs", "__pycache__", ".venv", "venv", "packrat", "library", "site-library", ".cache", ".Rproj.user"];
+    const SKIP: [&str; 15] = [".git", ".cove", "node_modules", "renv", "dist", "logs", "supporting_docs", "__pycache__", ".venv", "venv", "packrat", "library", "site-library", ".cache", ".Rproj.user"];
     const EXT: [&str; 12] = ["r", "R", "css", "scss", "js", "html", "htm", "json", "yml", "yaml", "md", "qmd"];
     let Ok(root) = resolve(path) else { return Ok(String::new()) };
     if !root.is_dir() {
         return Ok(String::new());
+    }
+    if let Ok(m) = std::fs::metadata(root.join(".cove").join("reload")) {
+        let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+        return Ok(format!("reload:{t}:{}", m.len()));
     }
     let (mut newest, mut count, mut size, mut seen) = (0u128, 0u64, 0u64, 0usize);
     let mut stack = vec![root];
@@ -4052,6 +4534,60 @@ fn site_stamp(path: &str) -> Result<String, String> {
     Ok(format!("{newest}:{count}:{size}"))
 }
 
+/// The last 64 KB of a project's app log: `.cove/run/app.log`, where up.sh
+/// sends run.sh's stdout and stderr, or `.run/app.log` in a project from
+/// before .cove/ (operator, 2026-11-08: "the stdout of the app needs to be
+/// seen in the cove project under logs after app"). An empty path: no log.
+fn app_log(dir: &str, build: bool) -> Result<FileText, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const KEEP: u64 = 64 * 1024;
+    let root = resolve(dir)?;
+    // Build's output (.cove/build.sh tees it there, 2026-11-08) or the app's.
+    let names: &[&str] = if build { &[".cove/run/build.log"] } else { &[".cove/run/app.log", ".run/app.log"] };
+    let Some(p) = names.iter().map(|f| root.join(f)).find(|p| p.is_file()) else {
+        return Ok(FileText { path: String::new(), text: String::new() });
+    };
+    let mut f = std::fs::File::open(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let from = len.saturating_sub(KEEP);
+    f.seek(SeekFrom::Start(from)).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    // Cut mid-file: start at a whole line.
+    if from > 0 {
+        if let Some(i) = text.find('\n') {
+            text.drain(..=i);
+        }
+    }
+    Ok(FileText { path: p.display().to_string(), text: strip_ansi(&text) })
+}
+
+/// Terminal colour and cursor codes (ESC [ ... letter) out of a log: apps
+/// colour their output for a terminal, and the Logs tab is not one.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\u{1b}' {
+            if it.peek() == Some(&'[') {
+                it.next();
+                while let Some(&n) = it.peek() {
+                    it.next();
+                    if n.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if c != '\r' {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn read_file(path: &str) -> Result<FileText, String> {
     let p = resolve(path)?;
     let m = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -4082,6 +4618,113 @@ fn write_file(path: &str, text: &str) -> Result<FileText, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The Logs tab reads .cove/run/app.log (else .run/app.log), from a whole
+    /// line, without terminal colour codes; no log is an empty path.
+    #[test]
+    fn app_log_tails_the_run_log_without_colour() {
+        let d = std::env::temp_dir().join(format!("cove-applog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(".cove/run")).unwrap();
+        let p = d.to_str().unwrap();
+        assert_eq!(super::app_log(p, false).unwrap().path, "");
+        std::fs::write(d.join(".cove/run/build.log"), "build: ok\n").unwrap();
+        assert_eq!(super::app_log(p, true).unwrap().text, "build: ok\n");
+        std::fs::write(d.join(".cove/run/app.log"), "\u{1b}[32mlistening\u{1b}[0m on 8080\r\nGET / 200\n").unwrap();
+        let t = super::app_log(p, false).unwrap();
+        assert!(t.path.ends_with(".cove/run/app.log"));
+        assert_eq!(t.text, "listening on 8080\nGET / 200\n");
+        let big = "x".repeat(100) + "\n";
+        std::fs::write(d.join(".cove/run/app.log"), big.repeat(1000) + "last line\n").unwrap();
+        let t = super::app_log(p, false).unwrap();
+        assert!(t.text.len() <= 64 * 1024 && t.text.ends_with("last line\n") && t.text.starts_with('x'));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// App reloads for the project's own files, never for .cove/ (stage
+    /// there), and only for .cove/reload once a project has one.
+    #[test]
+    fn site_stamp_ignores_cove_and_honours_the_reload_file() {
+        let d = std::env::temp_dir().join(format!("cove-stamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(".cove/stage")).unwrap();
+        let p = d.to_str().unwrap();
+        std::fs::write(d.join("index.html"), "one").unwrap();
+        let a = super::site_stamp(p).unwrap();
+        std::fs::write(d.join(".cove/stage/index.html"), "draft").unwrap();
+        std::fs::write(d.join(".cove/run.log"), "noise").unwrap();
+        assert_eq!(super::site_stamp(p).unwrap(), a, "a write under .cove/ reloaded App");
+        std::fs::write(d.join("index.html"), "two!").unwrap();
+        let b = super::site_stamp(p).unwrap();
+        assert_ne!(b, a, "a change to the site did not reload App");
+        std::fs::write(d.join(".cove/reload"), "").unwrap();
+        let c = super::site_stamp(p).unwrap();
+        std::fs::write(d.join("index.html"), "three").unwrap();
+        assert_eq!(super::site_stamp(p).unwrap(), c, "with .cove/reload, a save still reloaded App");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(d.join(".cove/reload"), "go").unwrap();
+        assert_ne!(super::site_stamp(p).unwrap(), c, "touching .cove/reload did not reload App");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A cell's path to the owner's folder is the platform's folder (#185).
+    /// Needs the platform checkout, so it says nothing on a machine without one.
+    #[test]
+    fn a_cells_paths_are_the_platforms() {
+        let owner = "drennanfreddy";
+        let ours = std::path::Path::new(super::PLATFORM_DOMAINS).join(owner);
+        if !ours.is_dir() {
+            return;
+        }
+        let got = super::platform_paths(owner, "/root/src/domains/drennanfreddy/drennanfreddy.ndexr.io/static");
+        assert_eq!(got, format!("{}/drennanfreddy.ndexr.io/static", ours.display()));
+        assert_eq!(super::platform_paths(owner, "/home/drennanfreddy/domains/x.ndexr.io/a"), format!("{}/x.ndexr.io/a", ours.display()));
+        // Someone else's cell path is not this owner's folder.
+        assert_eq!(super::platform_paths(owner, "/root/src/domains/adam/a.ndexr.io"), "/root/src/domains/adam/a.ndexr.io");
+    }
+
+    /// The Git window's server half on a real repository: a first version
+    /// against the empty tree, the unsaved changes with a file git does not
+    /// track yet, a rename, and what it refuses.
+    #[test]
+    fn git_window_reads_versions_files_and_diffs() {
+        use std::process::Command;
+        let d = std::env::temp_dir().join(format!("cove-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let git = |args: &[&str]| assert!(Command::new("git").current_dir(&d).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success(), "git {args:?}");
+        git(&["init", "-q"]);
+        std::fs::write(d.join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(d.join("old name.txt"), "same\nlines\nhere\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "first"]);
+        let sha = super::versions_at(&d).unwrap()[0].sha.clone();
+        let first = super::git_changes_at(&d, &sha).unwrap();
+        assert!(first.iter().any(|f| f.path == "a.txt" && f.status == "A" && (f.added, f.removed) == (2, 0)), "{first:?}");
+
+        std::fs::write(d.join("a.txt"), "one\nTWO\n").unwrap();
+        std::fs::write(d.join("b.txt"), "hello\n").unwrap();
+        git(&["mv", "old name.txt", "new name.txt"]);
+        let now = super::git_changes_at(&d, "").unwrap();
+        assert!(now.iter().any(|f| f.path == "a.txt" && f.status == "M" && (f.added, f.removed) == (1, 1)), "{now:?}");
+        assert!(now.iter().any(|f| f.path == "b.txt" && f.status == "?" && f.added == 1), "{now:?}");
+        assert!(now.iter().any(|f| f.path == "new name.txt" && f.old == "old name.txt" && f.status == "R"), "{now:?}");
+
+        let a = super::git_diff_at(&d, "", "a.txt", "").unwrap();
+        assert!(a.contains("\n-two") && a.contains("\n+TWO"), "{a}");
+        let b = super::git_diff_at(&d, "", "b.txt", "").unwrap();
+        assert!(b.contains("+hello"), "{b}");
+        let r = super::git_diff_at(&d, "", "new name.txt", "old name.txt").unwrap();
+        assert!(r.contains("rename from old name.txt"), "{r}");
+        let f = super::git_diff_at(&d, &sha, "a.txt", "").unwrap();
+        assert!(f.contains("+one") && f.contains("+two"), "{f}");
+
+        assert!(super::git_diff_at(&d, "", "../etc/passwd", "").is_err());
+        assert!(super::git_diff_at(&d, "", "-p", "").is_err());
+        assert!(super::git_changes_at(&d, "zz; rm -rf /").is_err());
+        assert!(super::git_changes_at(&d, "0000000").is_err(), "no such version");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
 
     #[test]
     fn a_runs_progress_names_its_set_and_masks_its_tail() {
@@ -4148,6 +4791,22 @@ mod tests {
     use super::absent;
 
     #[test]
+    fn only_a_new_untouched_signup_page_may_be_replaced() {
+        let dir = std::env::temp_dir().join(format!("cove-signup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let host = "ada.ndexr.io";
+        assert!(!super::new_signup_page(&dir, host), "no module.r: nothing to replace");
+        // writeLines adds a newline to a text that already ends in one.
+        let laid = format!("{}\n", super::SHINY_CHAOS_MODULE.replace("__HOST__", host));
+        std::fs::write(dir.join("module.r"), &laid).unwrap();
+        assert!(super::new_signup_page(&dir, host), "as signup laid it");
+        assert!(!super::new_signup_page(&dir, "other.ndexr.io"), "another site's page");
+        std::fs::write(dir.join("module.r"), format!("{laid}# mine\n")).unwrap();
+        assert!(!super::new_signup_page(&dir, host), "edited: it is theirs");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_port_starter_gets_a_port_of_its_own_and_the_verbs() {
         let mut laid: Vec<(String, String)> = super::starter_files("python-ml").into_iter().map(|(n, b)| (n.to_owned(), b.to_owned())).collect();
         super::app_contract(&mut laid, "r", "module", "/health").unwrap();
@@ -4159,12 +4818,57 @@ mod tests {
         for v in ["build.sh", "up.sh", "down.sh", "env.sh", "run.sh"] {
             assert!(get(v).is_some(), "python-ml lacks {v}");
         }
+        // Unreal's signalling server listens on three: each its own, all in the range.
+        let mut ue: Vec<(String, String)> = super::starter_files("unreal-pixelstream").into_iter().map(|(n, b)| (n.to_owned(), b.to_owned())).collect();
+        super::app_contract(&mut ue, "r", "module", "/health").unwrap();
+        let env = ue.iter().find(|(p, _)| p == "app.env").unwrap().1.clone();
+        let num = |k: &str| env.lines().find_map(|l| l.strip_prefix(k)).and_then(|v| v.parse::<u16>().ok()).unwrap_or_else(|| panic!("{k} {env}"));
+        let ports = [num("APP_PORT="), num("APP_STREAMER_PORT="), num("APP_SFU_PORT=")];
+        assert!(ports.iter().all(|p| (8830..=8999).contains(p)), "{env}");
+        assert!(ports[0] != ports[1] && ports[1] != ports[2] && ports[0] != ports[2], "{env}");
+        assert!(env.contains("APP_LANGUAGE=unreal") && !env.contains("__"), "{env}");
         // A Shiny module: app.env says module, no port; build.sh only.
         let mut shiny: Vec<(String, String)> = super::starter_files("shiny-trial").into_iter().map(|(n, b)| (n.to_owned(), b.to_owned())).collect();
         super::app_contract(&mut shiny, "r", "module", "").unwrap();
         let env = shiny.iter().find(|(p, _)| p == "app.env").unwrap().1.clone();
         assert!(env.contains("APP_KIND=module") && !env.contains("APP_PORT"), "{env}");
         assert!(shiny.iter().any(|(p, _)| p == "build.sh") && !shiny.iter().any(|(p, _)| p == "up.sh"));
+    }
+
+    #[test]
+    fn files_leaves_out_what_gitignore_names() {
+        let d = std::env::temp_dir().join(format!("cove-ign-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for sub in ["target", "dist", "src", "logs"] {
+            std::fs::create_dir_all(d.join(sub)).unwrap();
+        }
+        std::fs::write(d.join(".gitignore"), "target/\n/dist\n*.log\nsrc/gen/\n# logs\n").unwrap();
+        let names: Vec<String> = super::list_dir(&d.display().to_string()).unwrap().entries.into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["logs", "src"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn every_project_turn_says_change_the_app_in_place() {
+        let port = super::brief_text("du.ndexr.io", "APP_LANGUAGE=rust\nAPP_KIND=port\nAPP_PORT=8941\nAPP_HEALTH=/health\n");
+        for want in ["du.ndexr.io's app is the one in this folder", "in place", "replaces what is there", "127.0.0.1:8941", ".cove/build.sh, then .cove/down.sh and .cove/up.sh", "never send going live to another agent"] {
+            assert!(port.contains(want), "missing {want:?} in {port}");
+        }
+        let module = super::brief_text("x.ndexr.io", "APP_LANGUAGE=r\nAPP_KIND=module\n");
+        assert!(module.contains("a saved change is live") && !module.contains("down.sh"), "{module}");
+        assert!(super::project_brief("nobody-here", "no-such-project.ndexr.io").is_none());
+    }
+
+    #[test]
+    fn a_new_project_is_laid_out_with_cove() {
+        for id in ["python-ml", "shiny-trial", "node-site", crate::starters::RUST_APP] {
+            let laid = super::starter_layout("x.ndexr.io", id).unwrap();
+            let has = |n: &str| laid.iter().any(|(p, _)| p == n);
+            assert!(has(".cove/app.env") && has(".cove/build.sh") && has(".cove/up.sh") && has(".cove/r/build.sh") && has(".cove/rust/run.sh"), "{id}");
+            for root in ["app.env", "build.sh", "up.sh", "down.sh", "run.sh", "env.sh", "build-web.sh"] {
+                assert!(!has(root), "{id}: {root} still at the root");
+            }
+        }
     }
 
     #[test]
@@ -4223,11 +4927,19 @@ mod tests {
             // (2026-10-25, referral from tester.ndexr.io).
             let runs = match id.split('-').next().unwrap_or("") {
                 "julia" => has("server.jl") && has("static/index.html"),
-                "python" => has("app.py"),
+                "python" => has("app.py") || has("index.qmd"),
+                "r" => has("run.sh") && has("env.sh") && ["plumber.R", "model.R", "report.Rmd", "index.Rmd", "index.qmd", "recipe.sh"].iter().any(|f| has(f)),
+                "ide" => has("run.sh") && has("env.sh"),
                 "rust" => has("Cargo.toml") && has("src/main.rs"),
                 "node" => has("server.js") && has("static/index.html"),
+                "unreal" => has("CoveGame.uproject") && has("Source/CoveGame/CoveGameMode.cpp") && has("Source/CoveGame/CoveGame.Build.cs"),
                 _ => has("module.r"),
             };
+            // An IDE starter is rebuilt from its own recipe: both scripts, at
+            // the project's root where a person runs them.
+            if has("recipe.sh") || id.starts_with("ide-") {
+                assert!(has("recipe.sh") && has("rebuild.sh"), "{id}: an IDE starter needs recipe.sh and rebuild.sh");
+            }
             assert!(runs, "{id}: the program run.sh starts is missing");
             if id.starts_with("shiny-") {
                 let m = files.iter().find(|(p, _)| *p == "module.r").unwrap().1;
@@ -4235,6 +4947,107 @@ mod tests {
             }
         }
         assert_eq!(super::crate_name("2fast.ndexr.io"), "site-2fast-ndexr-io");
+    }
+
+    /// The language sets a starter's env.sh loads: env/r4.6_py3.13-release
+    /// joins these two (manifests/combos.txt), env/Julia/1.11.7 the third.
+    const NEEDS_SETS: &[(&str, &str)] = &[("python", "Python/3.13.15"), ("r", "R/4.6.1-bioc3.23"), ("julia", "Julia/1.11.7")];
+
+    /// Needs that come into the sets only as another record's dependency, not
+    /// as records of their own: present today, but nothing keeps them there.
+    /// Each waits on the referral named; when it lands, this test says to
+    /// drop the line.
+    const NEEDS_NOT_YET_RECORDS: &[(&str, &str, &str)] = &[];
+
+    fn manifest_records(set: &str) -> Option<Vec<(String, bool)>> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../ndexr.ndexr.io/crate/assets/stack-kit/manifest/manifests");
+        let text = std::fs::read_to_string(dir.join(set).join("manifest.dcf")).ok()?;
+        let mut out: Vec<(String, bool)> = Vec::new();
+        for l in text.lines() {
+            if let Some(p) = l.strip_prefix("Package: ") {
+                out.push((p.trim().to_owned(), false));
+            } else if l.trim() == "SiteLibrary: yes" {
+                if let Some(last) = out.last_mut() {
+                    last.1 = true;
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// PyPI names compare without case, `_`, `-` or `.` (PEP 503).
+    fn same_package(kind: &str, a: &str, b: &str) -> bool {
+        let norm = |s: &str| if kind == "python" { s.to_lowercase().replace(['_', '.'], "-") } else { s.to_owned() };
+        norm(a) == norm(b)
+    }
+
+    fn starter_needs() -> Vec<(&'static str, &'static str, &'static str)> {
+        let mut out = Vec::new();
+        for id in crate::starters::FOLDER_STARTERS {
+            if let Some((_, env)) = super::starter_files(id).into_iter().find(|(p, _)| *p == "app.env") {
+                for (k, n) in crate::starters::needs(env) {
+                    out.push((*id, k, n));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_starter_need_is_built_by_the_stack() {
+        // A ready starter names what it needs, and each is a record of the
+        // language set its env.sh loads (built on the n-boxes, published by
+        // ndexr.ndexr.io) or a module in the CVMFS stack (EasyBuild). Skipped
+        // where ndexr.ndexr.io's manifests or the stack are not on disk (a
+        // desktop build).
+        for id in crate::starters::FOLDER_STARTERS {
+            let files = super::starter_files(id);
+            if let Some((_, env)) = files.iter().find(|(p, _)| *p == "app.env") {
+                assert!(env.contains("APP_NEEDS="), "{id}: app.env has no APP_NEEDS");
+            }
+        }
+        let modules = std::path::Path::new("/opt/ndexr/stack/x86_64-pc-linux-gnu/eb/modules/all");
+        let mut wrong = Vec::new();
+        for (id, kind, name) in starter_needs() {
+            if kind == "module" {
+                if modules.is_dir() && !modules.join(name).is_dir() {
+                    wrong.push(format!("{id}: module {name} is not in the CVMFS stack"));
+                }
+                continue;
+            }
+            let Some(set) = NEEDS_SETS.iter().find(|(k, _)| *k == kind).map(|x| x.1) else {
+                wrong.push(format!("{id}: {kind}:{name} - no language set for {kind}"));
+                continue;
+            };
+            let Some(records) = manifest_records(set) else { continue };
+            let known = records.iter().any(|(p, _)| same_package(kind, p, name));
+            let pending = NEEDS_NOT_YET_RECORDS.iter().find(|(k, n, _)| *k == kind && *n == name);
+            match (known, pending) {
+                (false, None) => wrong.push(format!("{id}: {kind}:{name} is not a record of {set} - ask ndexr.ndexr.io to add it (ndexr refer)")),
+                (true, Some((_, _, r))) => wrong.push(format!("{kind}:{name} is a record of {set} now ({r} landed): drop it from NEEDS_NOT_YET_RECORDS")),
+                _ => {}
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    /// What a box without this host's full site library is missing: needs
+    /// whose records are not marked `SiteLibrary: yes` are built and kept on
+    /// S3 but not synced to every box (ndexr pkgs, 2026-10-31). The evidence
+    /// for ndexr.ndexr.io, #756 (`cargo test needs_on_every_box -- --ignored`).
+    #[test]
+    #[ignore]
+    fn needs_on_every_box() {
+        let mut off = std::collections::BTreeMap::<String, Vec<&str>>::new();
+        for (id, kind, name) in starter_needs() {
+            let Some(set) = NEEDS_SETS.iter().find(|(k, _)| *k == kind).map(|x| x.1) else { continue };
+            let Some(records) = manifest_records(set) else { continue };
+            if !records.iter().any(|(p, synced)| *synced && same_package(kind, p, name)) {
+                off.entry(format!("{set} {name}")).or_default().push(id);
+            }
+        }
+        let report: Vec<String> = off.iter().map(|(k, ids)| format!("{k}: {}", ids.join(", "))).collect();
+        assert!(off.is_empty(), "not on every box:\n{}", report.join("\n"));
     }
 
     #[test]
@@ -4622,7 +5435,8 @@ mod mask_secrets_multibyte {
             return;
         }
         let r = super::easyconfig("env/R", "4.6.1-bioc3.24").expect("env/R from the kit");
-        assert!(r.path.ends_with("env-R/env-R-4.6.1-bioc3.24.eb") && r.text.contains("modaltsoftname = 'env/R'"), "{}", r.path);
+        // The installed recipe once the stack has built it, else the kit's.
+        assert!(r.path.ends_with("/env-R-4.6.1-bioc3.24.eb") && r.text.contains("modaltsoftname = 'env/R'"), "{}", r.path);
         assert!(super::easyconfig("env/Python", "3.13.15").is_ok());
         assert!(super::easyconfig("../etc", "passwd").is_err());
         assert!(super::easyconfig("env", "../../x").is_err());

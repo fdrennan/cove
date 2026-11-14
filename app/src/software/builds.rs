@@ -180,6 +180,9 @@ pub type BoxesSlot = Arc<std::sync::Mutex<Option<Result<Vec<crate::api::BoxView>
 /// was building and what that cost.
 struct BoxCurve {
     name: String,
+    /// Its value of the dimension the lines are split by: a click on its
+    /// name focuses it (branches::State::branch).
+    code: u16,
     color: Color32,
     /// The machine, when the lines are machines.
     machine: Option<usize>,
@@ -225,6 +228,64 @@ fn merged(mut v: Vec<(i64, i64)>, gap: i64) -> Vec<(i64, i64)> {
         }
     }
     out
+}
+
+/// The x axis. On the calendar every second counts; in building time only the
+/// stretches when some machine was building do (each line's `active`, merged),
+/// so a day the boxes sat off takes no width and the distance across is hours
+/// of compiling. Values are always read at real moments: `fwd` places a moment
+/// on the axis, `back` finds the moment at an axis position.
+struct Axis {
+    /// (from, to, axis position of `from`), in order, when building time.
+    segs: Vec<(f64, f64, f64)>,
+}
+
+impl Axis {
+    fn new(cv: &Curves, calendar: bool) -> Axis {
+        if calendar {
+            return Axis { segs: Vec::new() };
+        }
+        let mut at = 0.0;
+        let segs = merged(cv.boxes.iter().flat_map(|c| c.active.iter().copied()).collect(), 0)
+            .into_iter()
+            .map(|(a, b)| {
+                let s = (a as f64, b as f64, at);
+                at += (b - a) as f64;
+                s
+            })
+            .collect();
+        Axis { segs }
+    }
+
+    fn compressed(&self) -> bool {
+        !self.segs.is_empty()
+    }
+
+    /// A moment's place on the axis (in a cut gap: where the gap was cut).
+    fn fwd(&self, t: f64) -> f64 {
+        let Some(last) = self.segs.last() else { return t };
+        let i = self.segs.partition_point(|s| s.1 < t);
+        match self.segs.get(i) {
+            Some(s) if t >= s.0 => s.2 + (t - s.0),
+            Some(s) => s.2,
+            None => last.2 + (last.1 - last.0) + (t - last.1).min(0.0),
+        }
+    }
+
+    /// The moment at an axis place; past the last stretch, real time runs on.
+    fn back(&self, c: f64) -> f64 {
+        let Some(last) = self.segs.last() else { return c };
+        let i = self.segs.partition_point(|s| s.2 + (s.1 - s.0) < c);
+        match self.segs.get(i) {
+            Some(s) => s.0 + (c - s.2).max(0.0),
+            None => last.1 + (c - last.2 - (last.1 - last.0)),
+        }
+    }
+
+    /// Where a gap was cut: the axis place and the moment building resumed.
+    fn cuts(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.segs.iter().skip(1).map(|s| (s.2, s.0))
+    }
 }
 
 impl BoxCurve {
@@ -365,7 +426,7 @@ fn curves(cat: &Catalog, dims: &Dims, prices: Option<&HashMap<String, f64>>, spl
             let last = en.last().copied().into_iter().chain(spans.iter().map(|s| s.1)).max().unwrap_or(first);
             let name = dims.name(split, b as u16).to_owned();
             let active = merged(st.iter().map(|s| (s.0, s.1)).chain(spans.iter().map(|s| (s.0, s.1))).collect(), ON_GAP);
-            BoxCurve { name, color: dims.color(split, b as u16), machine: by_machine.then_some(b), steps: st, ends: en, secs, failed: failed[b], spans, cum, itype, per_h, first, last, active }
+            BoxCurve { name, code: b as u16, color: dims.color(split, b as u16), machine: by_machine.then_some(b), steps: st, ends: en, secs, failed: failed[b], spans, cum, itype, per_h, first, last, active }
         })
         .filter(|c| !c.ends.is_empty())
         .collect();
@@ -494,18 +555,27 @@ impl SoftwarePane {
         machines.retain(|m| !gone.iter().any(|g| std::ptr::eq(*g, *m)));
         let on = machines.iter().filter(|m| live.machine_live(m)).count();
         let building = machines.iter().filter(|m| live.machine_live(m) && m.running.is_some()).count();
+        let total = machines.len();
+        // On, with nothing compiling and nothing queued, is one name on a
+        // line too: a card that can never change (operator, 2026-10-29: "this
+        // seems to always be here and never goes anywhere" - this host's
+        // desktop/pkgs, kept fresh by the package promote timer, suite all
+        // done). It gets its card back the moment it has work.
+        let idle: Vec<&Machine> = machines.iter().copied().filter(|m| live.machine_live(m) && m.running.is_none() && m.pending.is_empty()).collect();
+        machines.retain(|m| !idle.iter().any(|i| std::ptr::eq(*i, *m)));
         // Wrapped: on a phone the line is wider than the screen, and one
         // over-wide line widened every card under it past the edge.
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("WHERE BUILDS ARE").size(12.0).color(theme::primary()));
-            ui.label(RichText::new(format!("{building} compiling · {on} on · {} machines · as of {} ago", machines.len(), fmt_dur(since as i64))).size(12.5).color(theme::text()));
+            ui.label(RichText::new("⚙").size(14.0).color(theme::primary())).on_hover_text("where builds are");
+            ui.label(RichText::new(format!("{building} compiling · {on}/{total} on · {} ago", fmt_dur(since as i64))).size(12.5).color(theme::text()))
+                .on_hover_text(format!("{building} compiling, {on} of {total} machines on, as of {} ago", fmt_dur(since as i64)));
         });
-        if machines.is_empty() && gone.is_empty() {
+        if total == 0 && gone.is_empty() {
             ui.label(RichText::new("No build machine has reported.").size(13.0).color(theme::text()));
             return;
         }
         let gap = 8.0;
-        let per_row = ((ui.available_width() + gap) / 300.0).floor().clamp(1.0, machines.len() as f32) as usize;
+        let per_row = ((ui.available_width() + gap) / 300.0).floor().clamp(1.0, machines.len().max(1) as f32) as usize;
         let w = (ui.available_width() - gap * (per_row as f32 - 1.0)) / per_row as f32;
         let bar = |ui: &mut egui::Ui, f: f32, c: Color32| {
             let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 5.0), Sense::hover());
@@ -521,11 +591,12 @@ impl SoftwarePane {
                     egui::Frame::new()
                         .fill(theme::surface().gamma_multiply(if up { 1.0 } else { 0.6 }))
                         .stroke(Stroke::new(1.0, if m.running.is_some() && up { theme::amber().gamma_multiply(0.7) } else { theme::pane_brd() }))
-                        .corner_radius(8)
-                        .inner_margin(egui::Margin::same(10))
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(8, 6))
                         .show(ui, |ui| {
                             // A card's lines stack; the row it sits in lays out sideways.
-                            ui.set_width(w - 26.0);
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.set_width(w - 18.0);
                             ui.vertical(|ui| {
                             ui.horizontal(|ui| {
                                 let (dot, c) = if !up { ("○", theme::hush()) } else if m.running.is_some() { ("●", theme::amber()) } else { ("●", theme::ok()) };
@@ -539,7 +610,7 @@ impl SoftwarePane {
                                 });
                             });
                             if !up {
-                                ui.label(RichText::new(format!("last heard {} ago", fmt_dur(m.mirror_age_s.unwrap_or(0) + since as i64))).size(12.5).color(theme::text()));
+                                ui.label(RichText::new(format!("⟲ {} ago", fmt_dur(m.mirror_age_s.unwrap_or(0) + since as i64))).size(12.5).color(theme::text())).on_hover_text("last heard from");
                                 return;
                             }
                             // A package from the set's lane, not an EasyBuild entry: no
@@ -556,40 +627,46 @@ impl SoftwarePane {
                                     Some(est) => {
                                         bar(ui, (elapsed / est) as f32, theme::amber());
                                         let left = est - elapsed;
-                                        let words = if left > 0.0 { format!("{} of ~{} · ~{} left", fmt_dur(elapsed as i64), fmt_dur(est as i64), fmt_dur(left as i64)) } else { format!("{} - past its ~{} estimate", fmt_dur(elapsed as i64), fmt_dur(est as i64)) };
-                                        ui.label(RichText::new(words).size(12.5).color(theme::text()));
+                                        let (words, hover) = if left > 0.0 {
+                                            (format!("⏱ {} / ~{}", fmt_dur(elapsed as i64), fmt_dur(est as i64)), format!("{} of an estimated ~{} · ~{} left", fmt_dur(elapsed as i64), fmt_dur(est as i64), fmt_dur(left as i64)))
+                                        } else {
+                                            (format!("⏱ {} / ~{} ⚠", fmt_dur(elapsed as i64), fmt_dur(est as i64)), format!("{} - past its ~{} estimate", fmt_dur(elapsed as i64), fmt_dur(est as i64)))
+                                        };
+                                        ui.label(RichText::new(words).size(12.5).color(if left > 0.0 { theme::text() } else { theme::amber() })).on_hover_text(hover);
                                     }
                                     None => {
-                                        ui.label(RichText::new(format!("{} so far · no estimate yet", fmt_dur(elapsed as i64))).size(12.5).color(theme::text()));
+                                        ui.label(RichText::new(format!("⏱ {}", fmt_dur(elapsed as i64))).size(12.5).color(theme::text())).on_hover_text("so far - no estimate yet");
                                     }
                                 }
                                 if let Some(t) = r.target.as_deref().filter(|t| !t.is_empty() && !pkg_now) {
                                     // Past its estimate, no "~0s to it": only the target.
                                     let left = r.target_remaining_s.map(|s| s - since).filter(|s| *s >= 1.0).map(|s| format!(" · ~{} to it", fmt_dur(s as i64))).unwrap_or_default();
-                                    ui.add(egui::Label::new(RichText::new(format!("for {t}{left}")).size(12.5).color(theme::text())).truncate());
+                                    ui.add(egui::Label::new(RichText::new(format!("◎ {}{left}", t.trim_end_matches(".eb"))).size(12.5).color(theme::text())).truncate()).on_hover_text(format!("built for {t}"));
                                 }
                             }
                             if let Some(l) = lane.filter(|l| l.of > 0) {
                                 let now = l.now.as_deref().unwrap_or("");
-                                ui.add(egui::Label::new(RichText::new(format!("{} packages · {} of {}{}", l.kind.as_deref().unwrap_or(""), l.n, l.of, if now.is_empty() { String::new() } else { format!(" · {now}") })).size(12.5).color(theme::text())).truncate());
+                                ui.add(egui::Label::new(RichText::new(format!("◆ {}/{}{}", l.n, l.of, if now.is_empty() { String::new() } else { format!(" · {now}") })).size(12.5).color(theme::text())).truncate())
+                                    .on_hover_text(format!("{} packages · {} of {}", l.kind.as_deref().unwrap_or(""), l.n, l.of));
                                 bar(ui, l.n as f32 / l.of as f32, theme::primary());
                             }
                             let c = &m.counts;
                             if c.total > 0 {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("EasyBuild suite · {} of {} done", c.done, c.total)).size(12.5).color(theme::text()));
+                                    ui.label(RichText::new(format!("🛠 {}/{}", c.done, c.total)).size(12.5).color(theme::text())).on_hover_text(format!("EasyBuild suite: {} of {} done", c.done, c.total));
                                     if c.failed > 0 {
-                                        ui.label(RichText::new(format!("{} failed", c.failed)).size(12.5).color(theme::alt()));
+                                        ui.label(RichText::new(format!("✕ {}", c.failed)).size(12.5).color(theme::alt())).on_hover_text(format!("{} failed", c.failed));
                                     }
                                     if let Some(rem) = m.remaining_s.filter(|r| *r > 0.0 && !pkg_now) {
-                                        ui.label(RichText::new(format!("~{} to go", fmt_dur((rem - since).max(0.0) as i64))).size(12.5).color(theme::text()));
+                                        ui.label(RichText::new(format!("⏱ ~{}", fmt_dur((rem - since).max(0.0) as i64))).size(12.5).color(theme::text())).on_hover_text("left in the suite");
                                     }
                                 });
                                 bar(ui, c.done as f32 / c.total as f32, theme::ok());
                             }
                             let next: Vec<&str> = m.pending.iter().take(3).map(|p| p.entry.trim_end_matches(".eb")).collect();
                             if !next.is_empty() {
-                                ui.add(egui::Label::new(RichText::new(format!("suite next: {}{}", next.join(", "), if m.pending.len() > 3 { format!(" +{}", m.pending.len() - 3) } else { String::new() })).size(12.5).color(theme::text())).truncate());
+                                ui.add(egui::Label::new(RichText::new(format!("⏭ {}{}", next.join(", "), if m.pending.len() > 3 { format!(" +{}", m.pending.len() - 3) } else { String::new() })).size(12.5).color(theme::text())).truncate())
+                                    .on_hover_text(format!("next in the suite: {}", m.pending.iter().map(|p| p.entry.trim_end_matches(".eb")).collect::<Vec<_>>().join(", ")));
                             }
                             });
                         });
@@ -597,8 +674,16 @@ impl SoftwarePane {
             });
             ui.add_space(gap);
         }
-        if !gone.is_empty() {
-            ui.label(RichText::new(format!("off for over a day: {}", off_names(&gone).join(", "))).size(13.0).color(theme::text()));
+        // The quiet machines on one line: an icon for each kind of quiet.
+        if !idle.is_empty() || !gone.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                if !idle.is_empty() {
+                    ui.label(RichText::new(format!("○ {}", off_names(&idle).join(", "))).size(12.5).color(theme::text())).on_hover_text("on, nothing to build");
+                }
+                if !gone.is_empty() {
+                    ui.label(RichText::new(format!("○ {}", off_names(&gone).join(", "))).size(12.5).color(theme::hush())).on_hover_text("off for over a day");
+                }
+            });
         }
     }
 
@@ -715,6 +800,7 @@ impl SoftwarePane {
         // To now: the gap after the last finish says the machines are idle.
         let now = (now_secs() - cat.t0) as f64;
         let full = (cv.lo as f64, (cv.hi as f64).max(now));
+        let ax = Axis::new(&cv, self.calendar);
         let (x0, x1) = self.cwin.unwrap_or(full);
         let mut fit = false;
         let mut window: Option<(f64, f64)> = None;
@@ -754,23 +840,36 @@ impl SoftwarePane {
             fit = theme::tool(ui, "Fit", "everything built").clicked();
             for (name, secs) in [("24 h", 86400.0), ("6 h", 6.0 * 3600.0), ("1 h", 3600.0)] {
                 if theme::tool(ui, name, &format!("the last {name} of building")).clicked() {
-                    window = Some((full.1 - secs, full.1));
+                    window = Some((ax.back(ax.fwd(full.1) - secs), full.1));
                 }
             }
             // Moving through time without Shift+drag (a phone has none,
             // operator 2026-10-18: "there's no scroll left or right"): a half
             // window back or on, and the same width ending now.
             theme::tool_sep(ui);
-            let w = (x1 - x0).max(60.0);
+            let (c0, c1, cf) = (ax.fwd(x0), ax.fwd(x1), ax.fwd(full.1));
+            let w = (c1 - c0).max(60.0);
             if theme::tool(ui, "◀", "earlier: half a window back").clicked() {
-                window = Some((x0 - w / 2.0, x1 - w / 2.0));
+                window = Some((ax.back(c0 - w / 2.0), ax.back(c1 - w / 2.0)));
             }
             if theme::tool(ui, "▶", "later: half a window on").clicked() {
-                let to = (x1 + w / 2.0).min(full.1);
-                window = Some((to - w, to));
+                let to = (c1 + w / 2.0).min(cf);
+                window = Some((ax.back(to - w), ax.back(to)));
             }
             if theme::tool(ui, "Now", "this width, ending now").clicked() {
-                window = Some((full.1 - w, full.1));
+                window = Some((ax.back(cf - w), full.1));
+            }
+            theme::tool_sep(ui);
+            // Across building time (the default) or across the calendar.
+            for (cal, name, tip) in [
+                (false, "building time", "only the hours some machine was building: the days the boxes sat off are cut out"),
+                (true, "calendar", "every hour of the calendar, idle days included"),
+            ] {
+                let on = self.calendar == cal;
+                let t = RichText::new(name).size(11.5).color(if on { theme::text_strong() } else { theme::muted() });
+                if ui.add(egui::Button::new(t).fill(if on { theme::surface_hi() } else { Color32::TRANSPARENT }).corner_radius(4)).on_hover_text(tip).clicked() && !on {
+                    self.calendar = cal;
+                }
             }
         });
         if fit {
@@ -790,16 +889,19 @@ impl SoftwarePane {
         let chart_h = (avail.height() * if self.pinned.is_some() { 0.55 } else { 0.62 }).max(160.0);
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(avail.width(), chart_h), Sense::click_and_drag());
         let plot = Rect::from_min_max(rect.min + egui::vec2(52.0, 10.0), rect.max - egui::vec2(if self.overlay.is_some() { 52.0 } else { 14.0 }, 22.0));
-        let to_x = |t: f64| plot.left() + ((t - x0) / (x1 - x0).max(1.0)) as f32 * plot.width();
-        let from_x = |px: f32| x0 + ((px - plot.left()) / plot.width().max(1.0)) as f64 * (x1 - x0);
+        // Across the axis (building time or the calendar), values at real moments.
+        let (c0, c1) = (ax.fwd(x0), ax.fwd(x1).max(ax.fwd(x0) + 1.0));
+        let to_x = |t: f64| plot.left() + ((ax.fwd(t) - c0) / (c1 - c0)) as f32 * plot.width();
+        let from_x = |px: f32| ax.back(c0 + ((px - plot.left()) / plot.width().max(1.0)) as f64 * (c1 - c0));
         let cols = (plot.width() / 2.0).max(10.0) as usize;
         // A column where the line's machine was off is a gap, not a flat run.
-        let half = (x1 - x0) / cols.max(1) as f64 / 2.0;
+        let half = (c1 - c0) / cols.max(1) as f64 / 2.0;
         let sample = |m: Measure, c: &BoxCurve| -> Vec<Option<f64>> {
             (0..=cols)
                 .map(|i| {
-                    let x = x0 + (x1 - x0) * i as f64 / cols as f64;
-                    if c.on(x - half, x + half) { m.value(c, x) } else { None }
+                    let xc = c0 + (c1 - c0) * i as f64 / cols as f64;
+                    let x = ax.back(xc);
+                    if c.on(ax.back(xc - half), ax.back(xc + half)) { m.value(c, x) } else { None }
                 })
                 .collect()
         };
@@ -817,14 +919,38 @@ impl SoftwarePane {
         let p = ui.painter_at(rect);
         p.rect_filled(rect, 0.0, theme::bg());
         // Grid: time across, four steps up, each side its own measure.
-        let step = tick_step((x1 - x0) / (plot.width() / 110.0).max(1.0) as f64);
-        let mut t = ((x0 + cat.t0 as f64) / step).ceil() * step - cat.t0 as f64;
-        while t <= x1 {
-            let x = to_x(t);
-            p.vline(x, plot.y_range(), Stroke::new(1.0, theme::pane_brd().gamma_multiply(0.5)));
-            let abs = t as i64 + cat.t0;
-            p.text(egui::pos2(x + 2.0, plot.bottom() + 4.0), Align2::LEFT_TOP, if step >= 86400.0 { super::fmt_day(abs) } else { fmt_date(abs) }, FontId::proportional(10.0), theme::hush());
-            t += step;
+        let step = tick_step((c1 - c0) / (plot.width() / 110.0).max(1.0) as f64);
+        let cx = |c: f64| plot.left() + ((c - c0) / (c1 - c0)) as f32 * plot.width();
+        if ax.compressed() {
+            // Hours of building along the bottom; where a gap was cut, a
+            // dashed line and the day building took up again along the top.
+            let mut c = (c0 / step).ceil() * step;
+            while c <= c1 {
+                let x = cx(c);
+                p.vline(x, plot.y_range(), Stroke::new(1.0, theme::pane_brd().gamma_multiply(0.5)));
+                let h = c / 3600.0;
+                let label = if step >= 3600.0 { format!("{h:.0} h") } else { format!("{h:.1} h") };
+                p.text(egui::pos2(x + 2.0, plot.bottom() + 4.0), Align2::LEFT_TOP, label, FontId::proportional(10.0), theme::hush());
+                c += step;
+            }
+            let mut last_label = f32::NEG_INFINITY;
+            for (c, resumed) in ax.cuts().filter(|(c, _)| *c >= c0 && *c <= c1) {
+                let x = cx(c);
+                p.extend(Shape::dashed_line(&[egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())], Stroke::new(1.0, theme::muted().gamma_multiply(0.5)), 3.0, 4.0));
+                if x - last_label > 64.0 {
+                    p.text(egui::pos2(x + 2.0, plot.top() + 14.0), Align2::LEFT_TOP, super::fmt_day(resumed as i64 + cat.t0), FontId::proportional(10.0), theme::muted());
+                    last_label = x;
+                }
+            }
+        } else {
+            let mut t = ((x0 + cat.t0 as f64) / step).ceil() * step - cat.t0 as f64;
+            while t <= x1 {
+                let x = to_x(t);
+                p.vline(x, plot.y_range(), Stroke::new(1.0, theme::pane_brd().gamma_multiply(0.5)));
+                let abs = t as i64 + cat.t0;
+                p.text(egui::pos2(x + 2.0, plot.bottom() + 4.0), Align2::LEFT_TOP, if step >= 86400.0 { super::fmt_day(abs) } else { fmt_date(abs) }, FontId::proportional(10.0), theme::hush());
+                t += step;
+            }
         }
         for q in 0..=4 {
             let y = plot.bottom() - plot.height() * q as f32 / 4.0;
@@ -882,8 +1008,8 @@ impl SoftwarePane {
             brush::Drag::None => {}
         }
         if pan != 0.0 {
-            let dt = -(pan as f64) / plot.width().max(1.0) as f64 * w;
-            self.cwin = Some((x0 + dt, x1 + dt));
+            let dc = -(pan as f64) / plot.width().max(1.0) as f64 * (c1 - c0);
+            self.cwin = Some((ax.back(c0 + dc), ax.back(c1 + dc)));
         }
         if self.cywin.is_some_and(|(m, ..)| m == self.measure) {
             p.text(plot.left_top() + egui::vec2(6.0, 2.0), Align2::LEFT_TOP, "zoomed up and down · double-click for all of it", FontId::proportional(10.0), theme::hush());
@@ -936,22 +1062,34 @@ impl SoftwarePane {
             let z = ui.input(|i| i.zoom_delta());
             if (z - 1.0).abs() > 1e-3 {
                 if let Some(q) = resp.hover_pos() {
-                    let c = from_x(q.x);
-                    let nw = (w / z as f64).max(120.0);
-                    let f = (c - x0) / w;
-                    self.cwin = Some((c - f * nw, c - f * nw + nw));
+                    let cw = c1 - c0;
+                    let c = ax.fwd(from_x(q.x));
+                    let nw = (cw / z as f64).max(120.0);
+                    let f = (c - c0) / cw;
+                    self.cwin = Some((ax.back(c - f * nw), ax.back(c - f * nw + nw)));
                 }
             }
         }
 
         // Under the chart: the moment, or the machines as a whole.
         ui.add_space(4.0);
+        let mut focus = None;
         egui::ScrollArea::vertical().id_salt("bc-under").auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| match self.pinned {
                 Some(px) => self.moment(ui, cat, &cv, px, (w / plot.width().max(1.0) as f64 * 8.0).max(60.0)),
-                None => machines_table(ui, cat, &cv),
+                None => focus = machines_table(ui, cat, &cv),
             });
         });
+        // A line's name in the table focuses the curves on it: the machine
+        // comparison 3D's lanes were for (operator, 2026-11-01: "remove 3D";
+        // "toggle Intel, ARM, GPU, AMD ... without creating separate charts").
+        if let Some(code) = focus {
+            let split = self.br.split;
+            if !self.br.branch.iter().any(|(d, _)| *d == split) {
+                self.br.branch.push((split, code));
+                self.cwin = None;
+            }
+        }
     }
 
     /// What a pinned moment shows: each machine there, what finished around
@@ -985,12 +1123,12 @@ impl SoftwarePane {
         // The package chips below are coloured by the env set they are built for.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new("in manifests:").size(10.5).color(theme::hush()));
+            // A square per manifest group, its sets on hover: the full names
+            // were a paragraph of text under the curves (operator, 2026-11-06).
+            ui.label(RichText::new("◐").size(11.5).color(theme::hush())).on_hover_text("chip colours: the env manifests a package is in; in none - by paradigm");
             for (g, (label, n)) in cat.sets.iter().enumerate() {
-                ui.label(RichText::new("■").size(10.5).color(super::Catalog::group_color(g)));
-                ui.label(RichText::new(label).size(10.5).color(theme::muted())).on_hover_text(format!("{n} packages are in exactly these env manifests"));
+                ui.label(RichText::new("■").size(13.0).color(super::Catalog::group_color(g))).on_hover_text(format!("{label}\n{n} packages are in exactly these env manifests"));
             }
-            ui.label(RichText::new("· in none: by paradigm").size(10.5).color(theme::hush()));
         });
         let mut open = None;
         for c in &cv.boxes {
@@ -1196,8 +1334,10 @@ impl SoftwarePane {
 
 /// The lines as a whole, under the chart until a moment is pinned: machines
 /// with what they cost, any other split with its build time and its share.
-fn machines_table(ui: &mut egui::Ui, cat: &Catalog, cv: &Curves) {
-    ui.add(egui::Label::new(RichText::new("Tap a moment on the curves for what finished then and what was still compiling.").size(12.5).color(theme::text())).wrap());
+/// Returns the line whose name was clicked, to focus on.
+fn machines_table(ui: &mut egui::Ui, cat: &Catalog, cv: &Curves) -> Option<u16> {
+    let mut focus = None;
+    ui.add(egui::Label::new(RichText::new("Tap a moment on the curves for what finished then; tap a name to show only its line.").size(12.5).color(theme::text())).wrap());
     ui.add_space(6.0);
     let machines = cv.boxes.iter().all(|c| c.machine.is_some());
     let all: usize = cv.boxes.iter().map(|c| c.ends.len()).sum();
@@ -1224,7 +1364,9 @@ fn machines_table(ui: &mut egui::Ui, cat: &Catalog, cv: &Curves) {
                 Some(b) if machines => {
                     let hours = c.hours();
                     let spent = c.cum.last().copied().unwrap_or(0.0);
-                    ui.label(RichText::new(format!("● {}", c.name)).color(c.color)).on_hover_text(format!("{} · {}", cat.boxes.get(b).map_or("", |x| x.name.as_str()), if c.itype.is_empty() { "?" } else { &c.itype }));
+                    if ui.add(egui::Label::new(RichText::new(format!("● {}", c.name)).color(c.color)).sense(egui::Sense::click())).on_hover_text(format!("{} · {} - show only its line", cat.boxes.get(b).map_or("", |x| x.name.as_str()), if c.itype.is_empty() { "?" } else { &c.itype })).clicked() {
+                        focus = Some(c.code);
+                    }
                     ui.label(thousands(n));
                     ui.label(RichText::new(c.failed.to_string()).color(if c.failed > 0 { theme::alt() } else { theme::muted() }));
                     if !narrow {
@@ -1240,7 +1382,9 @@ fn machines_table(ui: &mut egui::Ui, cat: &Catalog, cv: &Curves) {
                 _ => {
                     let mut d: Vec<i64> = c.steps.iter().map(|s| s.1 - s.0).collect();
                     d.sort_unstable();
-                    ui.label(RichText::new(format!("● {}", c.name)).color(c.color));
+                    if ui.add(egui::Label::new(RichText::new(format!("● {}", c.name)).color(c.color)).sense(egui::Sense::click())).on_hover_text("show only its line").clicked() {
+                        focus = Some(c.code);
+                    }
                     ui.label(thousands(n));
                     ui.label(RichText::new(c.failed.to_string()).color(if c.failed > 0 { theme::alt() } else { theme::muted() }));
                     ui.label(format!("{:.0}%", 100.0 * n as f64 / all.max(1) as f64));
@@ -1256,6 +1400,7 @@ fn machines_table(ui: &mut egui::Ui, cat: &Catalog, cv: &Curves) {
         ui.add_space(4.0);
         ui.label(RichText::new("Spend and $ / package light up once the instance prices arrive (builds.json).").size(10.5).color(theme::hush()));
     }
+    focus
 }
 
 /// One machine with work: its progress, the step in flight against its
@@ -1420,7 +1565,7 @@ mod tests {
         // Two working stretches a day apart; a 10-minute pause inside the first.
         let active = merged(vec![(0, 3600), (4200, 7200), (90_000, 93_600)], ON_GAP);
         assert_eq!(active, vec![(0, 7200), (90_000, 93_600)]);
-        let c = BoxCurve { name: "a".into(), color: Color32::WHITE, machine: Some(0), steps: vec![], ends: vec![3600, 93_600], secs: vec![3600, 7200], failed: 0, spans: vec![], cum: vec![], itype: String::new(), per_h: None, first: 0, last: 93_600, active };
+        let c = BoxCurve { name: "a".into(), code: 0, color: Color32::WHITE, machine: Some(0), steps: vec![], ends: vec![3600, 93_600], secs: vec![3600, 7200], failed: 0, spans: vec![], cum: vec![], itype: String::new(), per_h: None, first: 0, last: 93_600, active };
         assert!(c.on(3000.0, 3100.0) && c.on(3700.0, 3800.0), "a short pause is still at work");
         assert!(!c.on(20_000.0, 80_000.0), "the night it was off");
         assert!(c.on(89_000.0, 90_500.0), "picked up again");
@@ -1436,10 +1581,26 @@ mod tests {
 
     #[test]
     fn a_line_exists_only_while_its_machine_was_building() {
-        let c = BoxCurve { name: "a".into(), color: Color32::WHITE, machine: Some(0), steps: vec![(100, 200, 0)], ends: vec![200], secs: vec![100], failed: 0, spans: vec![(50, 300, 1.0)], cum: vec![250.0], itype: String::new(), per_h: None, first: 50, last: 300, active: vec![(50, 300)] };
+        let c = BoxCurve { name: "a".into(), code: 0, color: Color32::WHITE, machine: Some(0), steps: vec![(100, 200, 0)], ends: vec![200], secs: vec![100], failed: 0, spans: vec![(50, 300, 1.0)], cum: vec![250.0], itype: String::new(), per_h: None, first: 50, last: 300, active: vec![(50, 300)] };
         assert!(Measure::Built.value(&c, 10.0).is_none(), "before it began");
         assert!(Measure::Built.value(&c, 400.0).is_none(), "after it stopped");
         assert_eq!(Measure::Built.value(&c, 250.0), Some(1.0));
+    }
+
+    #[test]
+    fn building_time_cuts_the_idle_days_out() {
+        let mk = |active: Vec<(i64, i64)>| BoxCurve { name: "a".into(), code: 0, color: Color32::WHITE, machine: Some(0), steps: vec![], ends: vec![], secs: vec![], failed: 0, spans: vec![], cum: vec![], itype: String::new(), per_h: None, first: 0, last: 0, active };
+        // Two machines: 0-100 and 50-150 overlap into one stretch; a day off; 90 000-90 100.
+        let cv = Curves { key: Default::default(), boxes: vec![mk(vec![(0, 100), (90_000, 90_100)]), mk(vec![(50, 150)])], lo: 0, hi: 90_100, priced: false };
+        let ax = Axis::new(&cv, false);
+        assert_eq!(ax.fwd(120.0), 120.0);
+        assert_eq!(ax.fwd(5_000.0), 150.0, "a moment in the cut gap sits where the gap was cut");
+        assert_eq!(ax.fwd(90_050.0), 200.0, "the day off takes no width: 150 s of building, then 50 more");
+        assert_eq!(ax.back(200.0), 90_050.0);
+        assert_eq!(ax.back(ax.fwd(30.0)), 30.0);
+        assert_eq!(ax.cuts().collect::<Vec<_>>(), vec![(150.0, 90_000.0)]);
+        let cal = Axis::new(&cv, true);
+        assert_eq!((cal.fwd(5_000.0), cal.back(5_000.0)), (5_000.0, 5_000.0));
     }
 
     #[test]

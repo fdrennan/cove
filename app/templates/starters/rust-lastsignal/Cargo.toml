@@ -1,0 +1,30 @@
+[package]
+name = "__CRATE__"
+version = "0.1.0"
+edition = "2021"
+description = "__HOST__ - Last Signal, a survival strategy game - survivors against the machines - with its rules in Rust and WebAssembly, started from Cove's template"
+
+# The game: Rust compiled twice. To WebAssembly for the page (build-web.sh,
+# dist/web/game.wasm), and natively for `cargo test`. No dependencies, so the
+# wasm build needs nothing but the stack's wasm32-unknown-unknown target.
+[lib]
+name = "game"
+path = "src/game.rs"
+crate-type = ["cdylib", "rlib"]
+
+# The site: `app serve <port>` on 127.0.0.1:<port>.
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+# Exact versions, the stack's Rust set (manifests/Rust/1.96.0), so the app
+# builds offline from the set's vendor directory (env.sh). Native only: the
+# wasm build compiles the game and nothing else.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tiny_http = "=0.12.0"
+serde_json = "=1.0.154"
+
+[profile.release]
+opt-level = 3
+# The browser downloads the module: keep it small.
+lto = true

@@ -40,6 +40,8 @@ cargo zigbuild --release --target "$target" --manifest-path "$here/Cargo.toml"
 
 mkdir -p "$stage/bin"
 cp "$here/target/$target/release/cove.exe" "$stage/bin/"
+# Cove's licence and the notices of every crate in it travel with the binary.
+cp "$here/../LICENSE" "$here/THIRD-PARTY-NOTICES.txt" "$stage/"
 cp "$here/packaging/windows/install.ps1" "$stage/"
 file "$stage/bin/cove.exe" | grep -q 'PE32+' || { echo "not a Windows PE32+ binary" >&2; exit 1; }
 

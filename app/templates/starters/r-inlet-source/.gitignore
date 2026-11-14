@@ -1,0 +1,4 @@
+.run/
+# RStudio's source and your work in it: a git repository of its own (source.sh).
+# What you changed is kept as patches in recipe/, which is saved with the project.
+src/

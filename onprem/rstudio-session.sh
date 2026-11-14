@@ -85,9 +85,10 @@ fi
 # Lmod's init and module files are not written for `set -u`.
 set +u
 . /opt/ndexr/stack/use.sh
-# Inlet was pimp-my-rstudio until 2026-10-28; the old name loads while the
-# stack has not built the new one.
-ml Inlet 2>/dev/null || ml pimp-my-rstudio
+# Inlet was pimp-my-rstudio until 2026-10-28. Where the stack has not
+# published Inlet yet, the old build starts - and says so in the session log,
+# because it still shows the old name and Posit's logo (inlet.ndexr.io, #713).
+ml Inlet 2>/dev/null || { echo "rstudio-session: no Inlet module on this host; starting pimp-my-rstudio" >&2; ml pimp-my-rstudio; }
 # The environment picked at New: its R becomes the session's R, and its PATH
 # (Python, the site library) is what rsession inherits.
 [[ -n $module ]] && ml "$module"
