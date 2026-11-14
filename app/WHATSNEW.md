@@ -4,7 +4,8 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
-- 2026-11-14T03:10Z · The public viewer (ndexr.io, cove.ndexr.io/view/) has a Source ↗ link beside Sign in to build, to Cove's public code at gitlab.com/ndexr/cove
+- 2026-11-14T03:20Z · Cove's source code is on GitHub: github.com/fdrennan/cove (Source ↗ in the public viewer, Help, Options › About)
+- 2026-11-14T03:10Z · The public viewer (ndexr.io, cove.ndexr.io/view/) has a Source ↗ link beside Sign in to build, to Cove's public code
 - 2026-11-14T02:46Z · The public viewer (ndexr.io, cove.ndexr.io/view/) no longer labels itself "public view · read-only" beside Sign in to build
 - 2026-11-14T02:40Z · Settings › Access: a switch to show your app on ndexr.io's public viewer - off until you turn it on, and only an app anyone may view is listed
 - 2026-11-14T02:35Z · Project tabs are as wide as their name; drag one to a new place (on a phone, the tab menu's Move left / Move right); a pulsing dot on a tab means its agent is at work, and its hover says how many runs - no dot, idle

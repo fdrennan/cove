@@ -2434,11 +2434,12 @@ impl RequestDraft {
 /// and actually maybe we dont need github"): a repository of its own,
 /// written by onprem/public-export.sh - this folder less what is private to
 /// the platform. The domain's own repository (ndexr/domains/...) stays
-/// private: its history holds phone photos and a work address. On GitLab
-/// (operator, 2026-11-13: "add the gitlab repo link to cove and ndexr.io"):
-/// exec pushed the export to gitlab.com/ndexr/cove and the operator made it
-/// public the same day. github.com/fdrennan/cove exists but is empty.
-pub const SOURCE_URL: &str = "https://gitlab.com/ndexr/cove";
+/// private: its history holds phone photos and a work address. On GitHub
+/// (operator, 2026-11-13: "lets move it into github simply because thats the
+/// most popular location for code ... we track it with github not gitlab"):
+/// the public history moved whole from gitlab.com/ndexr/cove, which is no
+/// longer pushed to.
+pub const SOURCE_URL: &str = "https://github.com/fdrennan/cove";
 
 /// Global Options' categories, as RStudio's sidebar: (name, what is on it).
 const OPTION_PAGES: [(&str, &str); 3] = [
@@ -2476,7 +2477,7 @@ fn pimped(ui: &mut egui::Ui) {
     // The notices of the 469 crates Cove is built from (Cargo.lock), which their
     // licences ask to travel with every copy of Cove.
     ui.horizontal_wrapped(|ui| {
-        ui.hyperlink_to(RichText::new("Cove's source code · GitLab ↗").size(12.5), SOURCE_URL).on_hover_text(SOURCE_URL);
+        ui.hyperlink_to(RichText::new("Cove's source code ↗").size(12.5), SOURCE_URL).on_hover_text(SOURCE_URL);
         ui.label(RichText::new("·").color(theme::text()));
         ui.hyperlink_to(RichText::new("Third-party notices").size(12.5), "https://cove.ndexr.io/view/third-party-notices");
     });
@@ -3004,7 +3005,7 @@ impl App {
                 page = Some(p);
             }
         }
-        if ui.add(egui::Button::new(RichText::new("Cove's source code · GitLab ↗").size(13.0))).on_hover_text(SOURCE_URL).clicked() {
+        if ui.add(egui::Button::new(RichText::new("Cove's source code ↗").size(13.0))).on_hover_text(SOURCE_URL).clicked() {
             ui.ctx().open_url(egui::OpenUrl::new_tab(SOURCE_URL));
             ui.close();
         }

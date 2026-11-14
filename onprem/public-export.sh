@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The public copy of Cove, https://gitlab.com/ndexr/cove (app.rs SOURCE_URL):
+# The public copy of Cove, https://github.com/fdrennan/cove (app.rs SOURCE_URL):
 # this working tree's files, less what is private to the platform (operator,
 # 2026-10-28: "check cove repo for any problems before open sourcing";
 # 2026-11-14: "the gitlab repo for cove.ndexr.io should be public and
