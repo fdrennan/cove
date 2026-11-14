@@ -90,6 +90,7 @@ enum TabAct {
     Pin(String),
     Live(String),
     Move(String, bool),
+    Nudge(String, isize),
     Close(Vec<String>),
 }
 
@@ -98,13 +99,34 @@ struct TabResp {
     close: bool,
 }
 
+/// A tab's name as drawn: "⏸ " when its live reload is paused, then the host
+/// less ".ndexr.io".
+fn tab_name(host: &str, paused: bool) -> String {
+    format!("{}{}", if paused { "⏸ " } else { "" }, crate::tabs::Tabs::short(host))
+}
+
+const TAB_FONT: f32 = 12.5;
+/// The widest a tab grows; a longer name is cut with "…" (the full host is
+/// in its hover and in ⌄).
+const TAB_MAX: f32 = 220.0;
+
+/// A tab's width from its name: 8 points in, the 22-point mark, the name, and
+/// the 26-point room the × takes - kept whether or not × shows, so a tab does
+/// not change width under the pointer.
+fn tab_width(ui: &egui::Ui, host: &str, paused: bool) -> f32 {
+    let text = ui.ctx().fonts_mut(|f| f.layout_no_wrap(tab_name(host, paused), egui::FontId::proportional(TAB_FONT), egui::Color32::WHITE).size().x);
+    (8.0 + 22.0 + text + 26.0).clamp(64.0, TAB_MAX)
+}
+
 /// One project tab: its framework's mark, its short name (only the mark when
 /// pinned), ⏸ when its live reload is paused, and × to close (on the tab in
 /// front, or under the pointer).
 #[allow(clippy::too_many_arguments)]
-fn project_tab(ui: &mut egui::Ui, host: &str, info: Option<&DomainInfo>, on: bool, pinned: bool, paused: bool, w: f32, small: bool) -> TabResp {
+fn project_tab(ui: &mut egui::Ui, host: &str, info: Option<&DomainInfo>, on: bool, pinned: bool, paused: bool, going: u32, w: f32, small: bool) -> TabResp {
     let h = if small { 30.0 } else { 26.0 };
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click());
+    // Dragged to a new place with a mouse; on a phone a drag scrolls the
+    // strip, and the tab menu's Move items reorder.
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), if small { egui::Sense::click() } else { egui::Sense::click_and_drag() });
     let hovered = resp.hovered();
     let fill = if on { theme::surface() } else if hovered { theme::surface().gamma_multiply(0.6) } else { egui::Color32::TRANSPARENT };
     let p = ui.painter_at(rect);
@@ -123,13 +145,23 @@ fn project_tab(ui: &mut egui::Ui, host: &str, info: Option<&DomainInfo>, on: boo
         let first = crate::tabs::Tabs::short(host).chars().next().unwrap_or('?').to_ascii_uppercase();
         p.text(icon_rect.center(), egui::Align2::CENTER_CENTER, first, egui::FontId::proportional(12.0), theme::muted());
     }
+    // An agent at work in this project: a dot on its mark, pulsing (no dot:
+    // idle). On the mark, so the tab keeps its width.
+    if going > 0 {
+        let t = ui.input(|i| i.time);
+        let a = 0.55 + 0.45 * ((t * 3.0).sin() as f32 * 0.5 + 0.5);
+        let c = icon_rect.right_top() + egui::vec2(-1.0, 2.0);
+        p.circle_filled(c, 4.5, theme::surface());
+        p.circle_filled(c, 3.5, theme::ok().gamma_multiply(a));
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+    }
     x += 22.0;
     let show_x = !pinned && (on || hovered);
     let x_rect = egui::Rect::from_center_size(egui::pos2(rect.right() - 13.0, rect.center().y), egui::vec2(18.0, 18.0));
     if !pinned {
-        let right = if show_x { x_rect.left() - 4.0 } else { rect.right() - 6.0 };
-        let name = format!("{}{}", if paused { "⏸ " } else { "" }, crate::tabs::Tabs::short(host));
-        let mut job = egui::text::LayoutJob::single_section(name, egui::TextFormat { font_id: egui::FontId::proportional(12.5), color: if on { theme::text_strong() } else { theme::text() }, ..Default::default() });
+        // The ×'s room is the name's whether or not × shows (tab_width).
+        let right = x_rect.left() - 4.0;
+        let mut job = egui::text::LayoutJob::single_section(tab_name(host, paused), egui::TextFormat { font_id: egui::FontId::proportional(TAB_FONT), color: if on { theme::text_strong() } else { theme::text() }, ..Default::default() });
         job.wrap = egui::text::TextWrapping::truncate_at_width((right - x).max(10.0));
         let galley = p.layout_job(job);
         p.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, theme::text());
@@ -1261,6 +1293,12 @@ pub struct Ide {
     /// The open projects as a browser's tabs (tabs.rs; tab_strip draws them).
     /// Kept by app.rs Saved.
     pub tabs: crate::tabs::Tabs,
+    /// The tab being dragged to a new place in the strip.
+    tab_drag: Option<String>,
+    /// Agent runs going in each open tab's project (Query::AgentBusy), and
+    /// when that was last asked.
+    tab_busy: Slot<std::collections::BTreeMap<String, u32>>,
+    tab_busy_at: f64,
     /// The sites whose App does not reload itself when their files change
     /// (the ● at the strip's right; operator, 2026-11-05). Live is the default.
     pub live_off: std::collections::BTreeSet<String>,
@@ -1377,7 +1415,12 @@ pub struct Ide {
     /// the answer in flight, when it was asked, and when a save in Cove's
     /// own editor last reloaded the site (a stamp change right after it is
     /// that same save, not a second one).
-    site_stamp: Option<(String, String)>,
+    /// Each site folder's last stamp (watch_site), kept while its tab is
+    /// away, so coming back to a site whose files changed reloads it once.
+    site_stamps: HashMap<String, String>,
+    /// Each site's reload count while another is in front (site_frame keeps
+    /// its page; the count moves only for a change to that site).
+    site_seqs: HashMap<String, u64>,
     site_stamp_slot: Slot<(String, String)>,
     site_stamp_inflight: Arc<AtomicBool>,
     site_stamp_asked: f64,
@@ -1648,6 +1691,9 @@ impl Ide {
             domains_unfolded: Default::default(),
             domain: None,
             open_by_domain: HashMap::new(),
+            tab_busy: Default::default(),
+            tab_busy_at: -10.0,
+            tab_drag: None,
             tabs: Default::default(),
             recent_hosts: Vec::new(),
             project_pick: 0,
@@ -1701,7 +1747,8 @@ impl Ide {
             stamp_slot: Default::default(),
             stamp_inflight: Default::default(),
             stamp_asked: f64::NEG_INFINITY,
-            site_stamp: None,
+            site_stamps: HashMap::new(),
+            site_seqs: HashMap::new(),
             site_stamp_slot: Default::default(),
             site_stamp_inflight: Default::default(),
             site_stamp_asked: f64::NEG_INFINITY,
@@ -4902,12 +4949,15 @@ impl Ide {
     /// changing the app viewer" - only saves in Cove's own editor did).
     fn watch_site(&mut self, ctx: &egui::Context, now: f64) {
         if let Some((path, st)) = self.site_stamp_slot.lock().unwrap().take() {
-            let changed = self.site_stamp.as_ref().is_some_and(|(p, old)| *p == path && *old != st && !st.is_empty());
+            let here = self.domain.as_ref().is_some_and(|d| d.path == path);
+            let changed = here && self.site_stamps.get(&path).is_some_and(|old| *old != st && !st.is_empty());
             let live = self.domain.as_ref().is_some_and(|d| !self.live_off.contains(&d.host));
             if changed && live && now - self.site_saved_at > 4.0 {
                 self.site_seq += 1;
             }
-            self.site_stamp = Some((path, st));
+            if here {
+                self.site_stamps.insert(path, st);
+            }
         }
         let Some(path) = self.domain.as_ref().map(|d| d.path.clone()) else { return };
         if self.site_stamp_inflight.load(Ordering::Relaxed) || now - self.site_stamp_asked < 3.0 {
@@ -5924,8 +5974,24 @@ impl Ide {
     /// have a full tab menu"). A click brings a tab forward, a middle click
     /// closes it, a right click opens its menu; + is a new tab (Projects) and
     /// ⌄ lists every tab and the ones closed lately.
-    pub fn tab_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    ///
+    /// True when a tab was clicked this frame, or + / New tab / Reopen used:
+    /// what should bring the IDE forward when the strip shows in every mode
+    /// (app.rs header).
+    ///
+    /// `keys`: ← and → step to the tab before or after the one in front
+    /// (operator, 2026-11-14: "pushing left or right on keyboard should go
+    /// between tabs"), wrapping round - only when nothing holds the keyboard
+    /// (a field, the editor, a console, the terminal, which all use the
+    /// arrows) and no dialog is open.
+    pub fn tab_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, keys: bool) -> bool {
         self.ask_domains(ctx);
+        // A tab clicked, a tab closed, a share accepted: each leaves the
+        // project to open in `pending_open`, and this opens it. Only the
+        // project button (domain_bar) called it, and the strip took that
+        // button's place, so no tab switched (operator, 2026-11-14: "tabs
+        // dont seem to be switching").
+        self.open_pending(ctx);
         let listed: Vec<DomainInfo> = match &*self.domains.lock().unwrap() {
             Some(Ok(v)) => v.clone(),
             _ => Vec::new(),
@@ -5938,7 +6004,21 @@ impl Ide {
             }
         }
         let active = if self.ndexr_open { None } else { self.domain.as_ref().map(|d| d.host.clone()) };
+        // Which projects have an agent at work, every few seconds.
+        let now = ctx.input(|i| i.time);
+        if now - self.tab_busy_at > 4.0 && !self.tabs.open.is_empty() {
+            self.tab_busy_at = now;
+            let slot = self.tab_busy.clone();
+            self.backend.query(Query::AgentBusy { domains: self.tabs.open.clone() }, ctx, move |r: Result<std::collections::BTreeMap<String, u32>, String>| {
+                if let Ok(m) = r {
+                    *slot.lock().unwrap() = Some(m);
+                }
+            });
+        }
+        ctx.request_repaint_after(std::time::Duration::from_secs(4));
+        let busy = self.tab_busy.lock().unwrap().clone().unwrap_or_default();
         let mut act: Option<TabAct> = None;
+        let mut tapped = false;
         let small = ui.ctx().content_rect().width() < 600.0;
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
@@ -5947,14 +6027,23 @@ impl Ide {
             egui::ScrollArea::horizontal().id_salt("project-tabs").max_width(room).auto_shrink([true, true]).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    let n = self.tabs.open.len().max(1) as f32;
-                    // As a browser does: tabs share the row, wide while few.
-                    let w = (room / n - 2.0).clamp(if small { 84.0 } else { 110.0 }, 200.0);
+                    let mut rects: Vec<egui::Rect> = Vec::new();
                     for host in self.tabs.open.clone() {
                         let on = active.as_deref() == Some(host.as_str());
                         let pinned = self.tabs.is_pinned(&host);
                         let info = listed.iter().find(|d| d.host == host);
-                        let r = project_tab(ui, &host, info, on, pinned, self.live_off.contains(&host), if pinned { 40.0 } else { w }, small);
+                        let paused = self.live_off.contains(&host);
+                        // Each tab as wide as its name (operator, 2026-11-14:
+                        // "tabs should size to the domain name to manage space
+                        // better"); a pinned one is its mark only.
+                        let w = if pinned { 40.0 } else { tab_width(ui, &host, paused) };
+                        let going = busy.get(&host).copied().unwrap_or(0);
+                        let r = project_tab(ui, &host, info, on, pinned, paused, going, w, small);
+                        rects.push(r.resp.rect);
+                        tapped |= r.resp.clicked();
+                        if r.resp.drag_started() {
+                            self.tab_drag = Some(host.clone());
+                        }
                         if r.close {
                             act = Some(TabAct::Close(vec![host.clone()]));
                         } else if r.resp.middle_clicked() {
@@ -5963,13 +6052,37 @@ impl Ide {
                             act = Some(TabAct::Switch(host.clone()));
                         }
                         let full = info.map_or(host.clone(), |d| if d.title.is_empty() { d.host.clone() } else { format!("{} · {}", d.host, d.title) });
-                        let resp = r.resp.on_hover_text(format!("{full}\nright-click: the tab menu · middle-click: close"));
+                        let agent = match going {
+                            0 => "agent idle".to_owned(),
+                            1 => "agent working - 1 run going".to_owned(),
+                            n => format!("agent working - {n} runs going"),
+                        };
+                        let resp = r.resp.on_hover_text(format!("{full}\n{agent}\nright-click: the tab menu · middle-click: close"));
                         resp.context_menu(|ui| {
-                            ui.set_min_width(230.0);
+                            theme::chrome_menu(ui, 240.0);
                             if let Some(a) = self.tab_menu(ui, &host, on) {
                                 act = Some(a);
                             }
                         });
+                    }
+                    // A tab dragged: a line where it would land, and there it
+                    // goes when let go (tabs.rs `place` keeps it in its group).
+                    if let Some(dragged) = self.tab_drag.clone() {
+                        let pointer = ui.ctx().pointer_interact_pos();
+                        let released = ui.input(|i| i.pointer.any_released());
+                        if let Some(p) = pointer {
+                            let at = rects.iter().position(|r| p.x < r.center().x).unwrap_or(rects.len());
+                            let x = rects.get(at).map_or_else(|| rects.last().map_or(p.x, |r| r.right() + 1.0), |r| r.left() - 1.0);
+                            let y = rects.first().map_or(ui.max_rect().y_range(), |r| r.y_range());
+                            ui.painter().vline(x, y, egui::Stroke::new(2.0, theme::primary()));
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                            if released {
+                                self.tabs.place(&dragged, at);
+                            }
+                        }
+                        if released || pointer.is_none() {
+                            self.tab_drag = None;
+                        }
                     }
                 });
             });
@@ -5977,7 +6090,7 @@ impl Ide {
                 act = Some(TabAct::New);
             }
             ui.menu_button(RichText::new("⌄").size(13.0).color(theme::text_strong()), |ui| {
-                ui.set_min_width(260.0);
+                theme::chrome_menu(ui, 260.0);
                 ui.label(RichText::new(format!("{} open", self.tabs.open.len())).size(12.0).strong().color(theme::text_strong()));
                 for host in self.tabs.open.clone() {
                     let on = active.as_deref() == Some(host.as_str());
@@ -5989,7 +6102,7 @@ impl Ide {
                         ui.close();
                     }
                 }
-                ui.separator();
+                theme::menu_sep(ui);
                 if ui.button("+ New tab").clicked() {
                     act = Some(TabAct::New);
                     ui.close();
@@ -6018,9 +6131,20 @@ impl Ide {
                 }
             });
         });
+        let free = keys && act.is_none() && self.naming.is_none() && self.choosing.is_none() && ctx.memory(|m| m.focused().is_none());
+        if free && self.tabs.open.len() > 1 {
+            let step = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) as isize - i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft) as isize);
+            if step != 0 {
+                let n = self.tabs.open.len() as isize;
+                let at = active.as_ref().and_then(|a| self.tabs.open.iter().position(|h| h == a)).map_or(if step > 0 { 0 } else { n - 1 }, |i| (i as isize + step).rem_euclid(n));
+                act = Some(TabAct::Switch(self.tabs.open[at as usize].clone()));
+            }
+        }
+        let forward = tapped || matches!(act, Some(TabAct::Switch(_) | TabAct::New | TabAct::Reopen));
         if let Some(a) = act {
             self.tab_act(a, active.as_deref(), ctx);
         }
+        forward
     }
 
     /// One tab's menu, as a browser's: what it opens, its place, what closes.
@@ -6034,19 +6158,22 @@ impl Ide {
         };
         let h = host.to_owned();
         ui.label(RichText::new(host).monospace().size(12.0).strong().color(theme::text_strong()));
-        ui.separator();
+        theme::menu_sep(ui);
         item(ui, true, "New tab".into(), TabAct::New);
         item(ui, true, if on { "Reload the site".into() } else { "Go to this tab".into() }, if on { TabAct::Reload } else { TabAct::Switch(h.clone()) });
         item(ui, true, "Open the site in a browser tab ↗".into(), TabAct::Outside(h.clone()));
         item(ui, true, "Copy its address".into(), TabAct::Copy(h.clone()));
-        ui.separator();
+        theme::menu_sep(ui);
         let pinned = self.tabs.is_pinned(host);
         item(ui, true, if pinned { "Unpin tab".into() } else { "Pin tab".into() }, TabAct::Pin(h.clone()));
         let live = !self.live_off.contains(host);
         item(ui, true, if live { "Pause live reload".into() } else { "Resume live reload".into() }, TabAct::Live(h.clone()));
+        let at = self.tabs.open.iter().position(|x| x == host).unwrap_or(0);
+        item(ui, at > 0, "Move left".into(), TabAct::Nudge(h.clone(), -1));
+        item(ui, at + 1 < self.tabs.open.len(), "Move right".into(), TabAct::Nudge(h.clone(), 1));
         item(ui, true, "Move to start".into(), TabAct::Move(h.clone(), true));
         item(ui, true, "Move to end".into(), TabAct::Move(h.clone(), false));
-        ui.separator();
+        theme::menu_sep(ui);
         item(ui, true, "Close tab".into(), TabAct::Close(vec![h.clone()]));
         let others = self.tabs.others(host);
         item(ui, !others.is_empty(), "Close other tabs".into(), TabAct::Close(others));
@@ -6054,7 +6181,7 @@ impl Ide {
         item(ui, !right.is_empty(), "Close tabs to the right".into(), TabAct::Close(right));
         let left = self.tabs.left_of(host);
         item(ui, !left.is_empty(), "Close tabs to the left".into(), TabAct::Close(left));
-        ui.separator();
+        theme::menu_sep(ui);
         let last = self.tabs.closed.last().cloned();
         item(ui, last.is_some(), format!("Reopen closed tab{}", last.as_ref().map_or(String::new(), |h| format!(" · {}", crate::tabs::Tabs::short(h)))), TabAct::Reopen);
         act
@@ -6064,16 +6191,8 @@ impl Ide {
         let now = ctx.input(|i| i.time);
         match a {
             TabAct::Switch(h) => self.pending_open = Some((h, now, 0.0)),
-            TabAct::New => {
-                if self.choosing.is_none() {
-                    self.naming = Some(String::new());
-                }
-            }
-            TabAct::Reopen => {
-                if let Some(h) = self.tabs.reopen() {
-                    self.pending_open = Some((h, now, 0.0));
-                }
-            }
+            TabAct::New => self.new_tab(),
+            TabAct::Reopen => self.reopen_tab(ctx),
             TabAct::Reload => self.site_seq += 1,
             TabAct::Outside(h) => ctx.open_url(egui::OpenUrl::new_tab(format!("https://{h}/"))),
             TabAct::Copy(h) => ctx.copy_text(format!("https://{h}/")),
@@ -6084,6 +6203,7 @@ impl Ide {
                 }
             }
             TabAct::Move(h, start) => self.tabs.move_to(&h, start),
+            TabAct::Nudge(h, by) => self.tabs.nudge(&h, by),
             TabAct::Close(hosts) => match self.tabs.close(&hosts, active) {
                 Some(next) => self.pending_open = Some((next, now, 0.0)),
                 // The tab in front closed and none is left: no project, as a
@@ -6098,6 +6218,22 @@ impl Ide {
                 }
                 None => {}
             },
+        }
+    }
+
+    /// A new tab: the Projects dialog, to go to a project or create one (the
+    /// Cove menu's "New tab"; the strip's + does the same).
+    pub fn new_tab(&mut self) {
+        if self.choosing.is_none() {
+            self.naming = Some(String::new());
+        }
+    }
+
+    /// The tab closed last, open again (the Cove menu's "Reopen closed tab").
+    pub fn reopen_tab(&mut self, ctx: &egui::Context) {
+        if let Some(h) = self.tabs.reopen() {
+            let now = ctx.input(|i| i.time);
+            self.pending_open = Some((h, now, 0.0));
         }
     }
 
@@ -7921,7 +8057,12 @@ impl Ide {
         self.bring(Tab::Agents);
         self.show_lower(Lower::App);
         self.removing = None;
-        self.site_seq += 1;
+        // The site keeps its own count: the page App kept for it shows as it
+        // was, reloaded only by a change since (watch_site, a save).
+        if let Some(prev) = &self.domain {
+            self.site_seqs.insert(prev.host.clone(), self.site_seq);
+        }
+        self.site_seq = self.site_seqs.get(&d.host).copied().unwrap_or(0);
         self.domain = Some(d);
     }
 
@@ -8323,7 +8464,18 @@ mod site_frame {
     /// loaded - so the page on screen never goes blank. The frame is another
     /// origin and cannot be read; its own load event marks it (`data-loaded`).
     /// Another domain loads in front at once: nothing of it is there to keep.
-    const SITES: [&str; 2] = ["ndexr-viewer-site", "ndexr-viewer-site-b"];
+    ///
+    /// One such pair per site, kept loaded while its tab is away (operator,
+    /// 2026-11-14: "changing between tabs shouldnt trigger opening up the site
+    /// in app again, only when a file changes and the user comes back does it
+    /// matter"). A site's frames are hidden (display:none keeps the page
+    /// alive) while another site is in front; coming back shows them as they
+    /// were. Its `seq` (Ide `site_seqs`) moves only for a change to that site.
+    /// At most SITE_KEEP sites are kept; the one shown longest ago goes.
+    const SITE_KEEP: usize = 6;
+    fn site_ids(slot: usize) -> [String; 2] {
+        [format!("ndexr-viewer-site-{slot}"), format!("ndexr-viewer-site-{slot}-b")]
+    }
     /// Cove's launch splash, laid over the App panel while its site loads
     /// (operator, 2026-10-15: "run the cove launching loader inside of it
     /// while it loads, there is a large white screen"). Full while there is
@@ -8340,6 +8492,10 @@ mod site_frame {
 
     #[derive(Default)]
     struct Site {
+        /// Which pair of frames (site_ids) this site has.
+        slot: usize,
+        /// When it was last in front, for SITE_KEEP.
+        used: f64,
         front: usize,
         src: [String; 2],
         loading: Option<f64>,
@@ -8367,13 +8523,22 @@ mod site_frame {
     }
 
     thread_local! {
-        static SITE_STATE: std::cell::RefCell<Site> = std::cell::RefCell::new(Site::default());
+        /// Every kept site by its address, and the one in front.
+        static SITE_STATE: std::cell::RefCell<(std::collections::HashMap<String, Site>, String)> = std::cell::RefCell::new(Default::default());
+    }
+
+    /// Every site frame's id, kept or not yet made.
+    fn all_site_ids() -> Vec<String> {
+        SITE_STATE.with(|s| s.borrow().0.values().flat_map(|x| site_ids(x.slot)).collect())
     }
 
     /// The site frame in front - what "Screenshot → agent" asks.
     #[allow(dead_code)]
-    pub fn site_front() -> &'static str {
-        SITE_STATE.with(|s| SITES[s.borrow().front])
+    pub fn site_front() -> String {
+        SITE_STATE.with(|s| {
+            let s = s.borrow();
+            s.0.get(&s.1).map(|x| site_ids(x.slot)[x.front].clone()).unwrap_or_default()
+        })
     }
 
     pub fn place_site(ctx: &egui::Context, rect: egui::Rect, base: &str, seq: u64) {
@@ -8392,12 +8557,48 @@ mod site_frame {
                 let _ = e.set_attribute(attr, v);
             }
         };
-        SITE_STATE.with(|st| {
-            let mut st = st.borrow_mut();
+        SITE_STATE.with(|all| {
+            let mut all = all.borrow_mut();
+            let (sites, shown) = &mut *all;
+            let doc = web_sys::window().and_then(|w| w.document());
+            // A site not kept yet: the first free pair, after letting the
+            // one shown longest ago go when SITE_KEEP are kept.
+            if !sites.contains_key(base) {
+                if sites.len() >= SITE_KEEP {
+                    if let Some(old) = sites.iter().min_by(|a, b| a.1.used.total_cmp(&b.1.used)).map(|(k, _)| k.clone()) {
+                        if let Some(gone) = sites.remove(&old) {
+                            for id in site_ids(gone.slot) {
+                                if let Some(e) = doc.as_ref().and_then(|d| d.get_element_by_id(&id)) {
+                                    e.remove();
+                                }
+                            }
+                        }
+                    }
+                }
+                let slot = (0..).find(|n| !sites.values().any(|x| x.slot == *n)).unwrap_or(0);
+                sites.insert(base.to_owned(), Site { slot, ..Default::default() });
+            }
+            // The others step aside, loaded.
+            if shown.as_str() != base {
+                for (k, x) in sites.iter() {
+                    if k != base {
+                        for id in site_ids(x.slot) {
+                            if let Some(e) = doc.as_ref().and_then(|d| d.get_element_by_id(&id)) {
+                                set(&e, "style", "display:none");
+                            }
+                        }
+                    }
+                }
+                *shown = base.to_owned();
+            }
+            let st = sites.get_mut(base).expect("kept above");
+            st.used = now;
+            let ids = site_ids(st.slot);
             let (f, b) = (st.front, 1 - st.front);
-            let (Some(fe), Some(be)) = (element(SITES[f]), element(SITES[b])) else { return };
+            let (Some(fe), Some(be)) = (element(&ids[f]), element(&ids[b])) else { return };
             for e in [&fe, &be] {
                 set(e, "onload", "this.setAttribute('data-loaded', this.getAttribute('src'))");
+                set(e, "data-cove-site", "1");
             }
             let same_site = |a: &str| a.split("?ide_reload=").next() == Some(base);
             if st.src[f] == src {
@@ -8549,11 +8750,14 @@ mod site_frame {
     /// Each frame not placed this frame - or every one, under a dialog - hides.
     pub fn end_frame(hide: bool) {
         let shown = SHOWN.with(|s| s.replace(0));
-        for (ids, bit) in [(&[SITES[0], SITES[1], LOADER][..], SITE.1), (&[VIEWER.0][..], VIEWER.1), (&PV[..], PREVIEW.1)] {
+        let mut sites = all_site_ids();
+        sites.push(LOADER.to_owned());
+        let one = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        for (ids, bit) in [(sites, SITE.1), (one(&[VIEWER.0]), VIEWER.1), (one(&PV), PREVIEW.1)] {
             if !hide && shown & bit != 0 {
                 continue;
             }
-            for id in ids {
+            for id in &ids {
                 if let Some(e) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id(id)) {
                     if e.get_attribute("style").is_none_or(|s| !s.contains("display:none")) {
                         let _ = e.set_attribute("style", "display:none");
@@ -8585,7 +8789,7 @@ pub fn viewer_frame_end(hide: bool) {
 /// 2026-10-16: "all users should be able to create any subdomain of theirs ...
 /// they need their top level domains filled in for them if they are adding
 /// subdomains"): "suno" offers suno.<each of the person's top domains>,
-/// "suno.nan" completes to suno.nancydrennan1.ndexr.io, a full new name is
+/// "suno.jam" completes to suno.jamie.ndexr.io, a full new name is
 /// offered as typed. The person's own <user>.ndexr.io is always a parent, so a
 /// subdomain can go under it before they have it as a domain of its own.
 /// The person's own domain: <username>.ndexr.io, in their own domains folder
@@ -8664,7 +8868,7 @@ fn new_domain_offers(typed: &str, v: &[DomainInfo]) -> Vec<String> {
         parents.insert(0, "ndexr.io".to_owned());
     }
     let mut out: Vec<String> = Vec::new();
-    // As typed, unless it is the start of one of their own ("studio.nan").
+    // As typed, unless it is the start of one of their own ("studio.jam").
     if is_host(&t) && t.contains('.') && !have(&t) && !parents.iter().any(|p| p.starts_with(rest) && p.as_str() != rest) {
         out.push(t.clone());
     }
@@ -9030,17 +9234,17 @@ mod tests {
 
     #[test]
     fn a_new_name_gets_the_persons_top_domains() {
-        let d = |h: &str| -> DomainInfo { serde_json::from_value(serde_json::json!({ "host": h, "path": format!("/home/nancydrennan1/domains/{h}") })).unwrap() };
-        let v = vec![d("nancydrennan1.ndexr.io"), d("suno.nancydrennan1.ndexr.io"), d("chocolate.ndexr.io")];
-        assert_eq!(new_domain_offers("studio", &v), vec!["studio.nancydrennan1.ndexr.io", "studio.chocolate.ndexr.io"]);
-        assert_eq!(new_domain_offers("studio.nan", &v), vec!["studio.nancydrennan1.ndexr.io"]);
+        let d = |h: &str| -> DomainInfo { serde_json::from_value(serde_json::json!({ "host": h, "path": format!("/home/jamie/domains/{h}") })).unwrap() };
+        let v = vec![d("jamie.ndexr.io"), d("suno.jamie.ndexr.io"), d("chocolate.ndexr.io")];
+        assert_eq!(new_domain_offers("studio", &v), vec!["studio.jamie.ndexr.io", "studio.chocolate.ndexr.io"]);
+        assert_eq!(new_domain_offers("studio.jam", &v), vec!["studio.jamie.ndexr.io"]);
         // what exists is not offered again; a full new name is offered as typed
         assert_eq!(new_domain_offers("suno", &v), vec!["suno.chocolate.ndexr.io"]);
         assert_eq!(new_domain_offers("x.koodle.io", &v)[0], "x.koodle.io");
         assert!(new_domain_offers("bad name", &v).is_empty());
         // their own <user>.ndexr.io is a parent before they have it
         let w = vec![d("chocolate.ndexr.io")];
-        assert_eq!(new_domain_offers("lab", &w), vec!["lab.nancydrennan1.ndexr.io", "lab.chocolate.ndexr.io"]);
+        assert_eq!(new_domain_offers("lab", &w), vec!["lab.jamie.ndexr.io", "lab.chocolate.ndexr.io"]);
         // The platform's listing (the operator): ndexr.io first, then the owner folder's domain.
         let op = |h: &str, owner: &str| -> DomainInfo { serde_json::from_value(serde_json::json!({ "host": h, "path": format!("/home/ubuntu/ndexr/src/domains/{owner}/{h}") })).unwrap() };
         let all = vec![op("100days.ndexr.io", "drennanfreddy"), op("admin.ndexr.io", "fdrennan"), op("drennanfreddy.ndexr.io", "drennanfreddy")];

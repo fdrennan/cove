@@ -1237,6 +1237,20 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                 r.and_then(|said| app_access_read(&h).map(|mut v| { v.said = said; v })).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
             }
         }
+        Query::AppViewer { host, on } => {
+            let h = host.trim().to_ascii_lowercase();
+            let admin = ndexr_admin_cached(owner);
+            let manages = crate::shares::role_of(Path::new(&account.home), &h).as_deref() == Some("manage");
+            if !admin && !manages && !person_domains(owner, &account).iter().any(|(x, _)| *x == h) {
+                Err(format!("{h} is not one of your domains"))
+            } else {
+                let r = crate::host::app_viewer(&h, *on);
+                if let Some(v) = on {
+                    audit(ctx, owner, "app-viewer", &format!("{h} {} {}", if *v { "listed" } else { "unlisted" }, if r.is_ok() { "set" } else { "refused" }));
+                }
+                r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+            }
+        }
         Query::DeployJob { host } => {
             let h = host.trim().to_ascii_lowercase();
             if person_domains(owner, &account).iter().any(|(x, _)| *x == h) {
@@ -1269,6 +1283,16 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         // another person's prompts), so a person's history and streams come
         // through here - only their own: a domain of theirs, their Exec thread,
         // and runs started for them or listed in their history.
+        Query::AgentBusy { domains } => {
+            let admin = is_admin(ctx, owner);
+            let mine = workable_domains(owner, &account);
+            let asked: Vec<String> = domains
+                .iter()
+                .map(|d| d.trim().to_ascii_lowercase())
+                .filter(|d| admin || mine.iter().any(|(h, _)| h == d))
+                .collect();
+            serde_json::to_value(crate::host::agent_busy(owner, &asked)).map_err(|e| e.to_string())
+        }
         Query::AgentHistory { domain } => {
             let d = domain.trim().to_ascii_lowercase();
             let theirs = d == "exec.ndexr.io" || is_admin(ctx, owner) || workable_domains(owner, &account).iter().any(|(h, _)| *h == d);

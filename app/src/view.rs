@@ -125,9 +125,12 @@ impl ViewApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(10.0);
                 ui.hyperlink_to(RichText::new("Sign in to build →").strong().color(theme::primary()), SIGN_IN);
-                if ui.available_width() > 260.0 {
-                    ui.label(RichText::new("public view · read-only").size(11.5).color(theme::hush()));
-                }
+                // The source, public (operator, 2026-11-13: "add the gitlab
+                // repo link to cove and ndexr.io"); this view is ndexr.io's
+                // front page, so this is that link too.
+                ui.add_space(8.0);
+                ui.hyperlink_to(RichText::new("Source ↗").size(12.5).color(theme::hush()), crate::app::SOURCE_URL)
+                    .on_hover_text(crate::app::SOURCE_URL);
             });
         });
     }

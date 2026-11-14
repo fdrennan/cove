@@ -275,21 +275,21 @@ mod tests {
 
     #[test]
     fn unit_names_match_systemd_escape() {
-        // `systemd-escape --path /home/nkd1959/shared/meggan.ndexr.io` and
+        // `systemd-escape --path /home/robin/shared/garden.ndexr.io` and
         // `.../source-wars.ndexr.io`.
-        assert_eq!(unit_name("/home/nkd1959/shared/meggan.ndexr.io"), "home-nkd1959-shared-meggan.ndexr.io.mount");
+        assert_eq!(unit_name("/home/robin/shared/garden.ndexr.io"), "home-robin-shared-garden.ndexr.io.mount");
         assert_eq!(unit_name("/home/a/shared/source-wars.ndexr.io"), "home-a-shared-source\\x2dwars.ndexr.io.mount");
     }
 
     #[test]
     fn a_unit_says_whose_it_is() {
-        let g = Grant { host: "meggan.ndexr.io".into(), owner: "drennanfreddy".into(), user: "nkd1959".into(), role: "edit".into() };
-        let body = unit_body(&g, Path::new("/home/nkd1959"));
-        assert_eq!(parse(&body), Some(("nkd1959".into(), "drennanfreddy".into(), "meggan.ndexr.io".into())));
-        assert!(body.contains("What=/home/ubuntu/ndexr/src/domains/drennanfreddy/meggan.ndexr.io\n"));
-        assert!(body.contains("Where=/home/nkd1959/shared/meggan.ndexr.io\n"));
+        let g = Grant { host: "garden.ndexr.io".into(), owner: "drennanfreddy".into(), user: "robin".into(), role: "edit".into() };
+        let body = unit_body(&g, Path::new("/home/robin"));
+        assert_eq!(parse(&body), Some(("robin".into(), "drennanfreddy".into(), "garden.ndexr.io".into())));
+        assert!(body.contains("What=/home/ubuntu/ndexr/src/domains/drennanfreddy/garden.ndexr.io\n"));
+        assert!(body.contains("Where=/home/robin/shared/garden.ndexr.io\n"));
         assert!(body.contains("Options=bind\n"));
-        let ro = unit_body(&Grant { role: "read".into(), ..g.clone() }, Path::new("/home/nkd1959"));
+        let ro = unit_body(&Grant { role: "read".into(), ..g.clone() }, Path::new("/home/robin"));
         assert!(ro.contains("Options=bind,ro\n"));
         assert_eq!(parse(&ro), parse(&body));
         // A unit someone else wrote is never ours to remove.

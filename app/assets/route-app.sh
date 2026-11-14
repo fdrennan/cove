@@ -12,7 +12,7 @@
 set -euo pipefail
 domain="${1:?domain}" user="${2:?user}" dir="${3:?dir}"
 [[ "$domain" =~ ^[a-z0-9][a-z0-9.-]+\.[a-z]+$ ]] || { echo "not a domain: $domain"; exit 2; }
-# A leading digit is a real account here (Google sign-ins made 111011475571bsr1),
+# A leading digit is a real account here (Google sign-ins make names like 123456789012abcd1),
 # and the name is only checked, never interpolated into a command below.
 [[ "$user" =~ ^[a-z0-9_][a-z0-9_-]*$ ]] || { echo "not a user: $user"; exit 2; }
 ROOT=/home/ubuntu/ndexr
@@ -57,7 +57,7 @@ RS
 chown ubuntu "$r"
 rc=0
 # pipefail: the grep below took over the pipeline's status, so a refused route
-# (andrei.ndexr.io, 2026-10-30: no site_password.conf for its gate) still said
+# (a customer's site, 2026-10-30: no site_password.conf for its gate) still said
 # "now goes to port" and exited 0 - to the reset script and to Cove's Up alike.
 runuser -u ubuntu -- bash -c "
   set -o pipefail

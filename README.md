@@ -11,6 +11,9 @@ It is one Rust program (egui) that runs natively and in the browser
 (WebAssembly), and serves itself: `cove serve` for one person, `cove
 multiuser` for many behind a reverse proxy.
 
+- Source: https://gitlab.com/ndexr/cove
+- Running: https://cove.ndexr.io
+
 ## Layout
 
 | path | what it is |

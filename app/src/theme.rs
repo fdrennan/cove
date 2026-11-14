@@ -215,7 +215,9 @@ pub fn set_palette(ctx: &egui::Context, i: usize) {
     v.panel_fill = ground();
     v.window_fill = surface_hi();
     v.window_corner_radius = SQUARE;
-    v.menu_corner_radius = SQUARE;
+    // Menus as a browser's: rounded, roomy (operator, 2026-11-14: "menus
+    // should feel a bit like chrome, no more feeling like rstudio").
+    v.menu_corner_radius = egui::CornerRadius::same(10);
     v.window_shadow = egui::epaint::Shadow { offset: [0, 12], blur: 40, spread: 0, color: Color32::from_black_alpha(shade) };
     v.popup_shadow = egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(shade * 3 / 4) };
     v.extreme_bg_color = ground();
@@ -262,7 +264,7 @@ pub fn set_palette(ctx: &egui::Context, i: usize) {
     style.spacing.item_spacing = egui::vec2(6.0, 4.0);
     style.spacing.button_padding = egui::vec2(8.0, 3.0);
     style.spacing.interact_size.y = 22.0;
-    style.spacing.menu_margin = egui::Margin::symmetric(4, 4);
+    style.spacing.menu_margin = egui::Margin::symmetric(6, 8);
     // Gentle motion: panels and collapsibles ease, they do not snap.
     style.animation_time = 0.18;
     // The splitters between windows grab across the whole gap, not egui's
@@ -273,6 +275,40 @@ pub fn set_palette(ctx: &egui::Context, i: usize) {
     let theme = if light { egui::Theme::Light } else { egui::Theme::Dark };
     ctx.set_style_of(theme, style);
     ctx.set_theme(theme);
+}
+
+/// A menu laid out as Chrome lays its menus (operator, 2026-11-14: "menus
+/// should feel a bit like chrome, no more feeling like rstudio"): rows a
+/// finger tall with room either side, a soft fill under the pointer instead
+/// of an outline, shortcuts quiet at the right, and air around separators.
+/// Call it first thing in a menu's closure; it changes that menu only.
+pub fn chrome_menu(ui: &mut egui::Ui, min_width: f32) {
+    ui.set_min_width(min_width);
+    let s = ui.style_mut();
+    s.spacing.button_padding = egui::vec2(14.0, 7.0);
+    s.spacing.interact_size.y = 30.0;
+    s.spacing.item_spacing.y = 0.0;
+    s.spacing.menu_spacing = 2.0;
+    let w = &mut s.visuals.widgets;
+    for st in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+        st.corner_radius = egui::CornerRadius::same(6);
+        st.bg_stroke = Stroke::NONE;
+    }
+    w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    w.hovered.weak_bg_fill = surface();
+    w.hovered.bg_fill = surface();
+    w.hovered.fg_stroke = Stroke::new(1.0, text_strong());
+    w.open.weak_bg_fill = surface();
+    w.active.weak_bg_fill = moss();
+    w.active.fg_stroke = Stroke::new(1.0, text_strong());
+    s.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, moss());
+}
+
+/// A separator with Chrome's breathing room.
+pub fn menu_sep(ui: &mut egui::Ui) {
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(4.0);
 }
 
 /// A filled call-to-action in the brand signal, like .btn-primary.

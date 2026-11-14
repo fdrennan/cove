@@ -84,9 +84,30 @@ pub fn icon(ui: &mut egui::Ui, key: &str, size: f32) -> Option<egui::Response> {
     Some(ui.add(img).on_hover_text(m.name))
 }
 
+/// Cove's own mark: the app icon (packaging/macos/cove-icon-1024.png, at
+/// 96 px), for the menu button at the top right (operator, 2026-11-14: "tab
+/// on top right should have a cove icon"). Decoded once per context.
+pub fn cove_mark(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    const PNG: &[u8] = include_bytes!("../assets/cove-icon-96.png");
+    let id = egui::Id::new("cove-mark");
+    ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)).or_else(|| {
+        let img = image::load_from_memory_with_format(PNG, image::ImageFormat::Png).ok()?.to_rgba8();
+        let ci = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw());
+        let t = ctx.load_texture("cove-mark", ci, egui::TextureOptions::LINEAR);
+        ctx.data_mut(|d| d.insert_temp(id, t.clone()));
+        Some(t)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cove_mark_decodes() {
+        let img = image::load_from_memory_with_format(include_bytes!("../assets/cove-icon-96.png"), image::ImageFormat::Png).unwrap();
+        assert_eq!((img.width(), img.height()), (96, 96));
+    }
 
     #[test]
     fn every_mark_decodes_and_every_starter_has_one() {

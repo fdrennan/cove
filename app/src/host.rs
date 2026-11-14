@@ -134,6 +134,8 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::AgentPoll { id, offset } => serde_json::to_value(agent_poll(id, *offset)?),
         Query::AgentStop { id } => serde_json::to_value(agent_stop(id)?),
         Query::AgentHistory { domain } => serde_json::to_value(agent_history(domain)?),
+        Query::AgentBusy { domains } => serde_json::to_value(agent_busy(&session_owner(), domains)),
+        Query::AppViewer { host, on } => serde_json::to_value(app_viewer(&host.trim().to_ascii_lowercase(), *on)?),
         Query::Term { id, offset, rows, cols } => serde_json::to_value(crate::term::pty::read(*id, *offset, *rows, *cols)?),
         Query::TermWrite { id, input } => serde_json::to_value(crate::term::pty::write(*id, input)?),
         Query::TermKill { id } => serde_json::to_value(crate::term::pty::kill(*id)),
@@ -349,6 +351,14 @@ pub fn visible_domains(viewer: Option<&str>) -> Result<Vec<u8>, String> {
     // what it is built with (its mark, in Connect and beside a project).
     let b = match serde_json::from_slice::<Vec<crate::api::DomainInfo>>(&b) {
         Ok(mut rows) => {
+            // Signed out - the public viewer (/view/, ndexr.io's front page) -
+            // a project shows only when its owner has said so (Settings ›
+            // Access; operator, 2026-11-14: "users should be able to opt in
+            // to show their domain in the viewer"). Signed in, the atlas and
+            // Connect still show every app the person may open.
+            if who.is_empty() {
+                rows.retain(|r| in_viewer(&r.host));
+            }
             let facts = app_kinds();
             for r in &mut rows {
                 if let Some(f) = facts.get(&r.host) {
@@ -363,6 +373,62 @@ pub fn visible_domains(viewer: Option<&str>) -> Result<Vec<u8>, String> {
     c.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(300));
     c.insert(who.to_owned(), (std::time::Instant::now(), b.clone()));
     Ok(b)
+}
+
+/// A project's folder on this machine: `<platform domains>/<owner>/<host>`,
+/// or a platform domain's own `<platform domains>/<host>` - the one holding
+/// its `.cove/app.env`.
+pub fn project_folder(host: &str) -> Option<PathBuf> {
+    if !is_host_name(host) {
+        return None;
+    }
+    let root = Path::new(PLATFORM_DOMAINS);
+    let has = |d: &Path| d.join(crate::dotcove::DIR).join("app.env").is_file();
+    let flat = root.join(host);
+    if has(&flat) {
+        return Some(flat);
+    }
+    std::fs::read_dir(root).ok()?.flatten().map(|e| e.path().join(host)).find(|d| has(d))
+}
+
+/// Whether a project is listed on the public viewer: APP_VIEWER=yes in its
+/// .cove/app.env, its owner's choice (Query::AppViewer). Not said: no.
+pub fn in_viewer(host: &str) -> bool {
+    project_folder(host).is_some_and(|d| viewer_line(&std::fs::read_to_string(d.join(crate::dotcove::DIR).join("app.env")).unwrap_or_default()))
+}
+
+fn viewer_line(env: &str) -> bool {
+    env.lines().find_map(|l| l.trim().strip_prefix("APP_VIEWER=")).is_some_and(|v| v.trim().trim_matches('"') == "yes")
+}
+
+/// Read, and with `on` set, the project's APP_VIEWER (Query::AppViewer):
+/// the line rewritten in place, or added under a comment saying what it is.
+/// The file keeps its owner and mode (written in place).
+pub fn app_viewer(host: &str, on: Option<bool>) -> Result<bool, String> {
+    let dir = project_folder(host).ok_or_else(|| format!("{host}: no .cove/app.env here - only a Cove project can be listed"))?;
+    let path = dir.join(crate::dotcove::DIR).join("app.env");
+    let env = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let Some(on) = on else { return Ok(viewer_line(&env)) };
+    std::fs::write(&path, set_viewer_line(&env, on)).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(on)
+}
+
+fn set_viewer_line(env: &str, on: bool) -> String {
+    let line = format!("APP_VIEWER={}", if on { "yes" } else { "no" });
+    if env.lines().any(|l| l.trim().starts_with("APP_VIEWER=")) {
+        let mut out: String = env.lines().map(|l| if l.trim().starts_with("APP_VIEWER=") { line.clone() } else { l.to_owned() }).collect::<Vec<_>>().join("\n");
+        out.push('\n');
+        out
+    } else {
+        let mut out = env.to_owned();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("# Listed on the public viewer (ndexr.io's front page, /view/): the owner's\n# choice, in Cove's Settings › Access.\n");
+        out.push_str(&line);
+        out.push('\n');
+        out
+    }
 }
 
 /// The Software tab's Builds views' live half (`/builds.json`): what each
@@ -2115,7 +2181,7 @@ fn list_domains() -> Vec<crate::api::DomainInfo> {
         // The person's own owner folder, when it is here: theirs, not every
         // owner's. A session running as the platform account read the whole
         // checkout, so 300-odd customers' domains were "my projects" and a
-        // customer's (aelia.ndexr.io) came up as the default (operator,
+        // customer's site came up as the default (operator,
         // 2026-10-19). Other people's domains are reached by acting as them
         // (multiuser.rs act_as), not by listing them as yours.
         let me = std::env::var("COVE_OWNER").ok().filter(|o| !o.is_empty());
@@ -3243,7 +3309,7 @@ if (identical(domain, "exec.ndexr.io") && !admin) {
 } else {
   # A subdomain of a domain the person owns is theirs too (operator,
   # 2026-10-16: "all users should be able to create any subdomain of
-  # theirs") - suno.nancydrennan1.ndexr.io under nancydrennan1.ndexr.io -
+  # theirs") - suno.jamie.ndexr.io under jamie.ndexr.io -
   # recorded on first use. A bare apex (ndexr.io) never counts.
   # Shared with them to work on (people_sharing.sql share_editors): the
   # domain's own thread and agent, beside its owner's.
@@ -4304,6 +4370,34 @@ fn thread_dir_as(owner: &str, domain: &str) -> Result<PathBuf, String> {
     Ok(if domain == "exec.ndexr.io" { exec_thread_dir(owner)? } else { Path::new(HOST_RUNS).join("_domain").join(domain) })
 }
 
+/// How many runs are going in each domain's thread (Query::AgentBusy, the
+/// tabs' activity; operator, 2026-11-14: "for each tab, see if it has some
+/// activity going with an agent or is idle"). Only a thread's newest runs are
+/// read - a run is going while it has no .done and its process is there
+/// (agent_poll's own test) - so a long thread costs no more than a short one.
+pub fn agent_busy(owner: &str, domains: &[String]) -> std::collections::BTreeMap<String, u32> {
+    let runs = Path::new(HOST_RUNS);
+    domains
+        .iter()
+        .filter(|d| is_host_name(d))
+        .filter_map(|d| {
+            let td = thread_dir_as(owner, d).ok()?;
+            let n = busy_in(runs, &td);
+            (n > 0).then(|| (d.clone(), n))
+        })
+        .collect()
+}
+
+/// The runs going among a thread's newest few.
+fn busy_in(runs: &Path, thread: &Path) -> u32 {
+    const NEWEST: usize = 6;
+    let mut ids: Vec<String> = std::fs::read_dir(thread)
+        .map(|r| r.flatten().filter_map(|e| e.file_name().to_str().and_then(|n| n.strip_suffix(".prompt")).map(str::to_owned)).collect())
+        .unwrap_or_default();
+    ids.sort();
+    ids.iter().rev().take(NEWEST).filter(|id| valid_run_id(id) && !runs.join(format!("{id}.done")).exists() && runs.join(format!("{id}.stream")).exists() && !run_gone(runs, id)).count() as u32
+}
+
 /// Whether run `id` is a turn of `owner`'s thread for `domain` - its .prompt
 /// is there. How `cove multiuser` knows a run is theirs after a restart has
 /// emptied its memory of who started what.
@@ -4849,6 +4943,38 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_is_busy_while_a_new_run_has_no_done() {
+        let d = std::env::temp_dir().join(format!("cove-busy-{}", std::process::id()));
+        let (runs, thread) = (d.join("runs"), d.join("thread"));
+        std::fs::create_dir_all(&runs).unwrap();
+        std::fs::create_dir_all(&thread).unwrap();
+        let id = |n: u32| format!("20261114T0{n}0000Z-aaaaaa{n}");
+        for n in 1..=3 {
+            std::fs::write(thread.join(format!("{}.prompt", id(n))), "x").unwrap();
+            std::fs::write(runs.join(format!("{}.stream", id(n))), "").unwrap();
+        }
+        // 1 finished; 2 and 3 going (no .pid yet: still starting, never "gone").
+        std::fs::write(runs.join(format!("{}.done", id(1))), "").unwrap();
+        assert_eq!(super::busy_in(&runs, &thread), 2);
+        std::fs::write(runs.join(format!("{}.done", id(3))), "").unwrap();
+        assert_eq!(super::busy_in(&runs, &thread), 1);
+        assert_eq!(super::busy_in(&runs, &d.join("no-thread")), 0);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_viewer_line_is_the_owners_choice() {
+        let env = "APP_LANGUAGE=r\nAPP_KIND=port\n";
+        assert!(!super::viewer_line(env), "not said: not listed");
+        let on = super::set_viewer_line(env, true);
+        assert!(super::viewer_line(&on) && on.starts_with(env) && on.contains("# Listed on the public viewer"));
+        let off = super::set_viewer_line(&on, false);
+        assert!(!super::viewer_line(&off) && off.matches("APP_VIEWER=").count() == 1, "rewritten in place, not added twice: {off}");
+        assert!(super::viewer_line("APP_VIEWER=\"yes\"\n"));
+        assert!(super::project_folder("../etc").is_none());
+    }
+
+    #[test]
     fn every_project_turn_says_change_the_app_in_place() {
         let port = super::brief_text("du.ndexr.io", "APP_LANGUAGE=rust\nAPP_KIND=port\nAPP_PORT=8941\nAPP_HEALTH=/health\n");
         for want in ["du.ndexr.io's app is the one in this folder", "in place", "replaces what is there", "127.0.0.1:8941", ".cove/build.sh, then .cove/down.sh and .cove/up.sh", "never send going live to another agent"] {
@@ -5100,7 +5226,7 @@ mod tests {
             }
             m
         };
-        for v in [None, Some("drennanfreddy"), Some("pawan"), Some("no-such-user")] {
+        for v in [None, Some("drennanfreddy"), Some("someone"), Some("no-such-user")] {
             eprintln!("{v:?}: {:?}", count(v));
         }
         let owners = |v: Option<&str>| -> std::collections::BTreeMap<String, usize> {
@@ -5117,7 +5243,7 @@ mod tests {
         let anon = count(None);
         assert!(anon.keys().all(|k| k == "public"), "anonymous sees only public: {anon:?}");
         assert_eq!(count(Some("no-such-user")), anon, "an unknown name is not signed in");
-        assert!(!count(Some("pawan")).contains_key("admin"), "a non-admin sees no admin sites");
+        assert!(!count(Some("someone")).contains_key("admin"), "a non-admin sees no admin sites");
     }
 
     /// Publish one real domain (`COVE_TEST_PUBLISH=<host> COVE_TEST_OWNER=<user>
@@ -5149,7 +5275,7 @@ mod tests {
     fn platform_r_as_root() {
         use super::{agent_run_as, claude_as, is_root, platform_account, platform_r_as};
         assert!(is_root(), "run this one as root");
-        let owner = std::env::var("COVE_TEST_OWNER").unwrap_or_else(|_| "111011475571bsr1".into());
+        let owner = std::env::var("COVE_TEST_OWNER").unwrap_or_else(|_| "123456789012abcd1".into());
         let v = claude_as(&owner, "status", "").expect("status");
         assert!(!v.kind.is_empty() && !v.title.is_empty(), "{v:?}");
         let who = platform_r_as(&owner, "whoami.R", "cat(jsonlite::toJSON(list(user = Sys.info()[['effective_user']]), auto_unbox = TRUE))", &[], 30).expect("whoami");

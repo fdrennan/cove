@@ -4,6 +4,14 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-14T03:10Z · The public viewer (ndexr.io, cove.ndexr.io/view/) has a Source ↗ link beside Sign in to build, to Cove's public code at gitlab.com/ndexr/cove
+- 2026-11-14T02:46Z · The public viewer (ndexr.io, cove.ndexr.io/view/) no longer labels itself "public view · read-only" beside Sign in to build
+- 2026-11-14T02:40Z · Settings › Access: a switch to show your app on ndexr.io's public viewer - off until you turn it on, and only an app anyone may view is listed
+- 2026-11-14T02:35Z · Project tabs are as wide as their name; drag one to a new place (on a phone, the tab menu's Move left / Move right); a pulsing dot on a tab means its agent is at work, and its hover says how many runs - no dot, idle
+- 2026-11-14T02:28Z · Switching tabs no longer reloads a site in App: each tab's page stays loaded while you are away and shows as you left it; it reloads once when you come back only if its files changed meanwhile (six sites are kept at a time)
+- 2026-11-14T02:19Z · ← and → step between project tabs, wrapping round - when nothing is being typed in (a field, the editor, a console or the terminal keep their arrows), and not in the Atlas, whose arrows walk its layers
+- 2026-11-14T02:17Z · Clicking a project tab switches to it again (cove.ndexr.io, ndexr.io and every other tab only highlighted before); the menu button at the top right is Cove's icon, with a dot when there are unread messages
+- 2026-11-14T02:30Z · Cove's source code is linked from Help and from Options › About: gitlab.com/ndexr/cove, the public copy of Cove
 - 2026-11-14T01:56Z · View's Builds (ndexr.io and cove.ndexr.io/view/?tab=builds) opens on where every build machine is now - the same live cards signed-in Builds leads with, read-only - above the curves, timeline and queue
 - 2026-11-14T01:50Z · Projects are tabs, as in a browser: a row under the top bar with one tab per open project - click to switch (each keeps its files), × or a middle click to close, + for a new one, ⌄ for every tab and the ones closed lately. Right-click a tab for its menu: new tab, reload, open the site in a browser tab, copy its address, pin, pause live reload, move it, close it, others, to its right or left, and reopen a closed tab. Open tabs are kept for next time
 - 2026-11-14T01:10Z · Projects: a project typed by its whole name is the first row, so Enter opens it

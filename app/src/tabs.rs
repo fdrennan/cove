@@ -123,6 +123,20 @@ impl Tabs {
         self.open.insert(at, h);
     }
 
+    /// Drop `host` before the tab now at `at` (`open.len()` = the end), as a
+    /// drag lets go (operator, 2026-11-14: "we need to be able to move around
+    /// and reorganize the tabs"). It stays in its group: a pinned tab among
+    /// the pinned, the rest after them.
+    pub fn place(&mut self, host: &str, at: usize) {
+        let Some(i) = self.open.iter().position(|h| h == host) else { return };
+        let h = self.open.remove(i);
+        // Removing it shifted everything after it one to the left.
+        let at = if at > i { at - 1 } else { at };
+        let n = self.pinned_count();
+        let at = if self.is_pinned(host) { at.min(n) } else { at.clamp(n, self.open.len()) };
+        self.open.insert(at, h);
+    }
+
     /// One step left (-1) or right (+1) within its group.
     pub fn nudge(&mut self, host: &str, by: isize) {
         let Some(i) = self.open.iter().position(|h| h == host) else { return };
@@ -211,6 +225,23 @@ mod tests {
         assert_eq!(t.open, v(&["a", "b", "c"]), "not past a pinned tab");
         t.nudge("b", 1);
         assert_eq!(t.open, v(&["a", "c", "b"]));
+    }
+
+    #[test]
+    fn a_dragged_tab_lands_where_it_is_dropped() {
+        let mut t = tabs(&["a", "b", "c", "d"]);
+        t.place("a", 3);
+        assert_eq!(t.open, v(&["b", "c", "a", "d"]), "dropped before d");
+        t.place("d", 0);
+        assert_eq!(t.open, v(&["d", "b", "c", "a"]));
+        t.place("b", 4);
+        assert_eq!(t.open, v(&["d", "c", "a", "b"]), "dropped at the end");
+        t.toggle_pin("a");
+        assert_eq!(t.open, v(&["a", "d", "c", "b"]));
+        t.place("b", 0);
+        assert_eq!(t.open, v(&["a", "b", "d", "c"]), "not before a pinned tab");
+        t.place("a", 4);
+        assert_eq!(t.open, v(&["a", "b", "d", "c"]), "a pinned tab stays with the pinned");
     }
 
     #[test]

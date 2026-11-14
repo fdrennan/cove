@@ -366,10 +366,7 @@ pub struct App {
     /// (Query::HostVitals); refused once, it is not asked again this session.
     vitals: Arc<Mutex<Option<Result<crate::api::Vitals, String>>>>,
     vitals_at: f64,
-    /// The header's left side at its narrowest (menu, modes, recap and the
-    /// smallest project picker), measured last frame: the right side keeps
-    /// out of it.
-    header_left_w: f32,
+
     /// How tall Builds' top part (machines and their cards) measured last
     /// frame: its panel is sized from it, up to the cap.
     builds_top_h: f32,
@@ -561,7 +558,6 @@ impl App {
             go_boxes_at: f64::NEG_INFINITY,
             vitals: Default::default(),
             vitals_at: f64::NEG_INFINITY,
-            header_left_w: 0.0,
             builds_top_h: 240.0,
             go_box_job: Default::default(),
             go_confirm: None,
@@ -903,197 +899,250 @@ impl App {
         }
     }
 
-    // ── the menu ───────────────────────────────────────────────────────────
-    /// What the menu bar held, behind one ☰ at the toolbar's start (operator,
-    /// 2026-10-18: "remove the menubar altogether"). The keyboard shortcuts
-    /// are unchanged; the menu is for what has no button of its own.
-    fn main_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    /// The Cove menu, behind the three dots at the top right (header).
+    fn menu_items(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let item = |ui: &mut egui::Ui, label: &str, keys: &str| ui.add(egui::Button::new(label).shortcut_text(keys)).clicked();
         let lang = self.ide.lang;
         let small = compact(ctx);
-        // On a phone ☰ holds what the desk's header shows - Messages, Help,
-        // Save, the runtime, the agent's scope - so its button carries the
-        // unread count.
         let unread = self.inbox.unread();
-        // The wordmark is the menu (operator, 2026-10-26: "clicking on Cove
-        // should be what shows the menu under the hamburger menu"): one place
-        // to look, in every view, and no ☰ beside it.
-        let label = if small && unread > 0 {
-            RichText::new(format!("Cove · {unread} ▾")).font(theme::display(16.0)).color(theme::primary())
-        } else {
-            RichText::new("Cove ▾").font(theme::display(if small { 16.0 } else { 15.0 })).color(theme::primary())
-        };
-        ui.menu_button(label, |ui| {
-            ui.set_min_width(if small { 260.0 } else { 190.0 });
+        // Chrome's ⋮, not RStudio's menu bar (operator, 2026-11-14: "menus
+        // should feel a bit like chrome, no more feeling like rstudio"):
+        // one list in sections - tabs, the open project and file, zoom
+        // and the view, the console, settings and help - each a finger
+        // tall, with few submenus and none two deep.
+        crate::theme::chrome_menu(ui, if small { 280.0 } else { 300.0 });
+        // The whole old menu bar lives here since the tabs took the top row
+        // (operator, 2026-11-14: "should be the top most thing and the rest
+        // of the menubar goes into the side button on top right"): the
+        // modes (a phone has them along the bottom), then Messages, Help,
+        // Save and what is running, then the other sessions.
+        if !small {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                self.mode_tabs(ui, false, 0.0);
+            });
+            crate::theme::menu_sep(ui);
+        }
+        {
             if small {
                 ui.spacing_mut().interact_size.y = 40.0;
-                let n = if unread > 0 { format!("Messages · {unread} new") } else { "Messages".to_owned() };
-                if ui.add(egui::Button::new(RichText::new(n).size(14.0).color(if unread > 0 { theme::primary() } else { theme::text_strong() })).min_size(egui::vec2(0.0, 40.0))).clicked() {
-                    if self.inbox.open {
-                        self.inbox.open = false;
-                    } else {
-                        self.inbox.show_requests();
-                    }
-                    ui.close();
-                }
-                ui.menu_button(RichText::new("Help - walkthroughs, shortcuts, a request").size(14.0), |ui| {
-                    ui.set_min_width(280.0);
-                    self.help_items(ui);
-                });
-                ui.horizontal(|ui| {
-                    self.ide.push_button(ui, ctx, "Save");
-                    self.session_blocks(ui);
-                });
-                ui.separator();
             }
-            // Projects and sessions are the project button's (ide.rs domain_bar);
-            // here, what acts on the open one.
-            if let Some(host) = self.ide.domain.as_ref().map(|d| d.host.clone()) {
-                ui.menu_button(format!("Project · {host}"), |ui| {
-                    if item(ui, "Settings…", "") {
-                        self.project_settings = true;
-                        self.ask_modules(ctx);
-                        ui.close();
-                    }
-                    // The strip's own actions, here when it is not showing.
-                    if item(ui, "Git…", "") {
-                        self.ide.open_versions(ctx);
-                        ui.close();
-                    }
-                    let verbs = self.ide.app_verbs();
-                    if !verbs.is_empty() {
-                        ui.separator();
-                        for (verb, word) in [("build", "Build"), ("up", "Up"), ("down", "Down")] {
-                            if verbs.iter().any(|v| v == verb) && item(ui, word, "") {
-                                self.ide.app_action(verb, ctx);
-                                ui.close();
-                            }
-                        }
-                    }
-                    ui.separator();
-                    if item(ui, "Archive…", "") {
-                        self.ide.ask_remove(&host, false);
-                        ui.close();
-                    }
-                    if ui.add(egui::Button::new(RichText::new("Delete…").color(theme::warn()))).clicked() {
-                        self.ide.ask_remove(&host, true);
-                        ui.close();
-                    }
-                });
+            let n = if unread > 0 { format!("Messages · {unread} new") } else { "Messages".to_owned() };
+            if ui.add(egui::Button::new(RichText::new(n).size(if small { 14.0 } else { 12.5 }).color(if unread > 0 { theme::primary() } else { theme::text_strong() })).min_size(egui::vec2(0.0, if small { 40.0 } else { 30.0 }))).clicked() {
+                if self.inbox.open {
+                    self.inbox.open = false;
+                } else {
+                    self.inbox.show_requests();
+                }
+                ui.close();
             }
-            ui.separator();
-            // No New File (operator, 2026-10-26: "a relic of the past"): files
-            // are made in Files and by the agent; Ctrl+Shift+N still opens a script.
-            ui.menu_button("File", |ui| {
-                if item(ui, "Save", "Ctrl+S") {
-                    self.ide.save_current(ctx);
+            ui.menu_button(RichText::new("Help - walkthroughs, shortcuts, a request").size(if small { 14.0 } else { 12.5 }), |ui| {
+                crate::theme::chrome_menu(ui, 280.0);
+                self.help_items(ui);
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.add_space(8.0);
+                self.ide.push_button(ui, ctx, "Save");
+                self.session_blocks(ui);
+                if crate::setup::chip(ui, self.setup.status()) {
+                    self.setup.start_claude(ctx);
                 }
-                if item(ui, "Close", "") {
-                    self.ide.close_current();
-                }
-                ui.separator();
-                if item(ui, "Global Options…", "") {
-                    self.open_options(ctx);
+                if !small {
+                    self.vitals_chip(ui, ctx);
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                {
-                    ui.separator();
-                    // Any folder on this computer as the project - no domain
-                    // needed (operator, 2026-10-19). It takes the ?folder= path:
-                    // saved as the project, the consoles restart in it, Files
-                    // opens on it. Only where the consoles run on this computer;
-                    // on a cell, a local path would mean nothing to them.
-                    let local = self.backend.is_local();
-                    let open = ui
-                        .add_enabled(local, egui::Button::new("Open Folder…").shortcut_text("Ctrl+Shift+O"))
-                        .on_disabled_hover_text("This window runs on your cell: open a folder there, in Files.");
-                    if open.clicked() {
-                        self.pick_folder(ctx);
-                        ui.close();
-                    }
-                }
+                self.account_button(ui, ctx);
             });
-            // Only what is needed (operator, 2026-10-18: "remove the menubar
-            // altogether ... except for necessary on desktop"): Edit and Code
-            // went - their keys still work and the editor has their buttons.
-            ui.menu_button("View", |ui| {
-                ui.menu_button("Theme", |ui| {
-                    for p in crate::setup::ThemePref::ALL {
-                        if ui.radio(self.saved.theme == p, p.label()).clicked() {
-                            self.saved.theme = p;
-                            crate::setup::follow_theme(p, ctx);
+            // Cove's other sessions, which the project button listed before
+            // the tabs replaced it.
+            ui.menu_button(RichText::new("Other sessions").size(if small { 14.0 } else { 12.5 }), |ui| {
+                crate::theme::chrome_menu(ui, 280.0);
+                self.recents.sessions_list(ui, &self.backend);
+            });
+            crate::theme::menu_sep(ui);
+        }
+        if item(ui, "New tab", "") {
+            self.ide.new_tab();
+            self.mode = Mode::Ide;
+            ui.close();
+        }
+        let closed = self.ide.tabs.closed.last().map(|h| crate::tabs::Tabs::short(h).to_owned());
+        let reopen = ui.add_enabled(closed.is_some(), egui::Button::new(match &closed {
+            Some(h) => format!("Reopen closed tab · {h}"),
+            None => "Reopen closed tab".to_owned(),
+        }));
+        if reopen.clicked() {
+            self.ide.reopen_tab(ctx);
+            self.mode = Mode::Ide;
+            ui.close();
+        }
+        crate::theme::menu_sep(ui);
+        // The open project (projects and sessions are the project
+        // button's, ide.rs domain_bar) and the file in front.
+        if let Some(host) = self.ide.domain.as_ref().map(|d| d.host.clone()) {
+            ui.menu_button(format!("Project · {}", crate::tabs::Tabs::short(&host)), |ui| {
+                crate::theme::chrome_menu(ui, 220.0);
+                if item(ui, "Settings…", "") {
+                    self.project_settings = true;
+                    self.ask_modules(ctx);
+                    ui.close();
+                }
+                if item(ui, "Git…", "") {
+                    self.ide.open_versions(ctx);
+                    ui.close();
+                }
+                let verbs = self.ide.app_verbs();
+                if !verbs.is_empty() {
+                    crate::theme::menu_sep(ui);
+                    for (verb, word) in [("build", "Build"), ("up", "Up"), ("down", "Down")] {
+                        if verbs.iter().any(|v| v == verb) && item(ui, word, "") {
+                            self.ide.app_action(verb, ctx);
                             ui.close();
                         }
                     }
-                });
-                if item(ui, if is_fullscreen(ctx) { "Exit Full Screen" } else { "Enter Full Screen" }, "F11") {
+                }
+                crate::theme::menu_sep(ui);
+                if item(ui, "Archive…", "") {
+                    self.ide.ask_remove(&host, false);
+                    ui.close();
+                }
+                if ui.add(egui::Button::new(RichText::new("Delete…").color(theme::warn()))).clicked() {
+                    self.ide.ask_remove(&host, true);
+                    ui.close();
+                }
+            });
+        }
+        // No New File (operator, 2026-10-26: "a relic of the past"): files
+        // are made in Files and by the agent; Ctrl+Shift+N still opens a script.
+        if item(ui, "Save file", "Ctrl+S") {
+            self.ide.save_current(ctx);
+            ui.close();
+        }
+        if item(ui, "Close file", "") {
+            self.ide.close_current();
+            ui.close();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Any folder on this computer as the project - no domain
+            // needed (operator, 2026-10-19). Only where the consoles run
+            // on this computer; on a cell a local path means nothing.
+            let local = self.backend.is_local();
+            let open = ui
+                .add_enabled(local, egui::Button::new("Open folder…").shortcut_text("Ctrl+Shift+O"))
+                .on_disabled_hover_text("This window runs on your cell: open a folder there, in Files.");
+            if open.clicked() {
+                self.pick_folder(ctx);
+                ui.close();
+            }
+        }
+        crate::theme::menu_sep(ui);
+        // Zoom as Chrome has it: one row, − the size +, and full screen.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.add_space(14.0);
+            ui.label("Zoom");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let full = is_fullscreen(ctx);
+                if ui.add(egui::Button::new(if full { "⛶ exit" } else { "⛶" }).min_size(egui::vec2(36.0, 30.0))).on_hover_text(if full { "exit full screen (F11)" } else { "full screen (F11)" }).clicked() {
                     if let Err(why) = toggle_fullscreen(ctx) {
                         self.toast(why, ctx);
                     }
                 }
-                // Drag a tab to a corner for a window there; this puts them back.
-                if item(ui, "Reset Layout", "") {
-                    self.saved.grid = Grid::default();
-                    self.saved.zoom_tab = None;
+                ui.add_space(6.0);
+                let z = ctx.zoom_factor();
+                if ui.add(egui::Button::new("+").min_size(egui::vec2(32.0, 30.0))).on_hover_text("larger (Ctrl+=)").clicked() {
+                    ctx.set_zoom_factor((z + 0.1).min(3.0));
+                }
+                if ui.add(egui::Button::new(format!("{:.0}%", z * 100.0)).min_size(egui::vec2(52.0, 30.0))).on_hover_text("back to 100%").clicked() {
+                    ctx.set_zoom_factor(1.0);
+                }
+                if ui.add(egui::Button::new("−").min_size(egui::vec2(32.0, 30.0))).on_hover_text("smaller (Ctrl+-)").clicked() {
+                    ctx.set_zoom_factor((z - 0.1).max(0.5));
                 }
             });
-            ui.menu_button("Session", |ui| {
-                if item(ui, &format!("Interrupt {}", lang.word()), "Esc") {
-                    self.ide.interrupt(lang, ctx);
+        });
+        ui.menu_button("Theme", |ui| {
+            crate::theme::chrome_menu(ui, 200.0);
+            for p in crate::setup::ThemePref::ALL {
+                if ui.radio(self.saved.theme == p, p.label()).clicked() {
+                    self.saved.theme = p;
+                    crate::setup::follow_theme(p, ctx);
+                    ui.close();
                 }
-                if item(ui, "Restart R", "Ctrl+Shift+F10") {
-                    self.ide.restart(Lang::R, ctx);
-                }
-                if item(ui, "Restart Shell", "") {
-                    self.ide.restart(Lang::Shell, ctx);
-                }
-                ui.separator();
-                if lang != Lang::Shell && item(ui, &format!("Clear Workspace ({})", lang.word()), "") {
+            }
+        });
+        // Drag a tab to a corner for a window there; this puts them back.
+        if item(ui, "Reset layout", "") {
+            self.saved.grid = Grid::default();
+            self.saved.zoom_tab = None;
+            ui.close();
+        }
+        crate::theme::menu_sep(ui);
+        // What RStudio called Session: the consoles.
+        ui.menu_button("Console", |ui| {
+            crate::theme::chrome_menu(ui, 260.0);
+            if item(ui, &format!("Interrupt {}", lang.word()), "Esc") {
+                self.ide.interrupt(lang, ctx);
+            }
+            if item(ui, "Restart R", "Ctrl+Shift+F10") {
+                self.ide.restart(Lang::R, ctx);
+            }
+            if item(ui, "Restart Shell", "") {
+                self.ide.restart(Lang::Shell, ctx);
+            }
+            if lang != Lang::Shell {
+                crate::theme::menu_sep(ui);
+                if item(ui, &format!("Clear workspace ({})", lang.word()), "") {
                     self.ide.clear_workspace(ctx);
                 }
-            });
-            ui.menu_button("Help", |ui| {
-                // Check for Updates, in a browser session and the desktop app
-                // alike: release.rs shows what it finds and takes a newer one.
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(u) = &self.updater {
-                    if item(ui, "Check for Updates", "") {
-                        u.check_now(ctx);
-                        self.release.check_now(ctx);
-                    }
+            }
+        });
+        crate::theme::menu_sep(ui);
+        if item(ui, "Settings…", "") {
+            self.open_options(ctx);
+            ui.close();
+        }
+        ui.menu_button("Help", |ui| {
+            crate::theme::chrome_menu(ui, 260.0);
+            // Check for Updates, in a browser session and the desktop app
+            // alike: release.rs shows what it finds and takes a newer one.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(u) = &self.updater {
+                if item(ui, "Check for Updates", "") {
+                    u.check_now(ctx);
+                    self.release.check_now(ctx);
                 }
-                if crate::release::ReleaseBar::applies(&self.backend) {
-                    if item(ui, "Check for Updates", "") {
-                        self.release.check_now(ctx);
-                    }
-                    let mut auto = self.release.auto();
-                    if ui.checkbox(&mut auto, "Update without asking").on_hover_text("a newer Cove restarts this session's R, Python and terminal as soon as it is ready; your files, settings and agents stay").changed() {
-                        self.release.set_auto(auto);
-                    }
+            }
+            if crate::release::ReleaseBar::applies(&self.backend) {
+                if item(ui, "Check for Updates", "") {
+                    self.release.check_now(ctx);
                 }
-                if item(ui, "Set up Cove…", "") {
-                    self.setup.start();
+                let mut auto = self.release.auto();
+                if ui.checkbox(&mut auto, "Update without asking").on_hover_text("a newer Cove restarts this session's R, Python and terminal as soon as it is ready; your files, settings and agents stay").changed() {
+                    self.release.set_auto(auto);
                 }
-                if item(ui, "Connect Claude…", "") {
-                    self.setup.start_claude(ctx);
-                }
-                // The install instructions for every environment set the
-                // Builds view shows the status of (repo.ndexr.io, 2026-10-28).
-                if item(ui, "How to use the environments", "") {
-                    ctx.open_url(egui::OpenUrl::new_tab("https://repo.ndexr.io"));
-                }
-                ui.separator();
-                if item(ui, "Send a Request…", "") {
-                    self.request = Some(Default::default());
-                }
-                ui.separator();
-                if item(ui, "About Cove", "") {
-                    self.about = true;
-                }
-            });
-        })
-        .response
-        .on_hover_text("the project, its files and settings, the view, the session, help");
+            }
+            if item(ui, "Set up Cove…", "") {
+                self.setup.start();
+            }
+            if item(ui, "Connect Claude…", "") {
+                self.setup.start_claude(ctx);
+            }
+            // The install instructions for every environment set the
+            // Builds view shows the status of (repo.ndexr.io, 2026-10-28).
+            if item(ui, "How to use the environments", "") {
+                ctx.open_url(egui::OpenUrl::new_tab("https://repo.ndexr.io"));
+            }
+            ui.separator();
+            if item(ui, "Send a Request…", "") {
+                self.request = Some(Default::default());
+            }
+            ui.separator();
+            if item(ui, "About Cove", "") {
+                self.about = true;
+            }
+        });
     }
 
     /// Where RStudio Server shows who is signed in: the machine, and the
@@ -2380,6 +2429,17 @@ impl RequestDraft {
     }
 }
 
+/// Where Cove's source is public (operator, 2026-11-14: "cove should display
+/// ... the gitlab repo ... for cove.ndexr.io should be public and accessible,
+/// and actually maybe we dont need github"): a repository of its own,
+/// written by onprem/public-export.sh - this folder less what is private to
+/// the platform. The domain's own repository (ndexr/domains/...) stays
+/// private: its history holds phone photos and a work address. On GitLab
+/// (operator, 2026-11-13: "add the gitlab repo link to cove and ndexr.io"):
+/// exec pushed the export to gitlab.com/ndexr/cove and the operator made it
+/// public the same day. github.com/fdrennan/cove exists but is empty.
+pub const SOURCE_URL: &str = "https://gitlab.com/ndexr/cove";
+
 /// Global Options' categories, as RStudio's sidebar: (name, what is on it).
 const OPTION_PAGES: [(&str, &str); 3] = [
     ("General", "which R, Python and shell modules · the project folder"),
@@ -2415,7 +2475,11 @@ fn pimped(ui: &mut egui::Ui) {
     ui.label(RichText::new("Cove is MIT-licensed and contains no RStudio code. RStudio and Positron are trademarks of Posit Software, PBC; Cove is not affiliated with Posit.").size(10.5).color(theme::hush()));
     // The notices of the 469 crates Cove is built from (Cargo.lock), which their
     // licences ask to travel with every copy of Cove.
-    ui.hyperlink_to(RichText::new("Third-party notices").size(10.5), "https://cove.ndexr.io/view/third-party-notices");
+    ui.horizontal_wrapped(|ui| {
+        ui.hyperlink_to(RichText::new("Cove's source code · GitLab ↗").size(12.5), SOURCE_URL).on_hover_text(SOURCE_URL);
+        ui.label(RichText::new("·").color(theme::text()));
+        ui.hyperlink_to(RichText::new("Third-party notices").size(12.5), "https://cove.ndexr.io/view/third-party-notices");
+    });
 }
 
 /// Where every module comes from: the ndexr stack on CVMFS, and the
@@ -2780,136 +2844,83 @@ impl App {
     /// - phone: 44 px on top (☰, the project, the IDE's panes) and the modes as
     ///   a bottom bar; Save, Messages, Help, the runtime and the agent's scope
     ///   are in ☰. It replaces four rows (mode, project, toolbar, panes).
+    /// The top of the window (operator, 2026-11-14: "we need to be able to
+    /// move around and reorganize the tabs, should be the top most thing and
+    /// the rest of the menubar goes into the side button on top right"): one
+    /// row, the project tabs (ide.rs tab_strip) and ⋮ at its right - the Cove
+    /// menu (menu_items), which holds the modes, Messages, Help, Save, what is
+    /// running and the rest. In every mode: a tab chosen from Atlas or Builds
+    /// brings the IDE back on it. On a phone the modes stay along the bottom,
+    /// where a thumb reaches them, and the IDE's Agents / App switcher sits
+    /// beside ⋮.
     fn header(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         let small = compact(ctx);
         let ide = self.mode == Mode::Ide;
-        let frame = egui::Frame::new().fill(theme::ground().gamma_multiply(0.9)).inner_margin(egui::Margin::symmetric(6, 3));
         if small {
-            // The modes where a thumb reaches them, each a 44-pt target.
-            // Tighter than it was (52 points, 36-point buttons, 4 apart):
-            // the agent's thread above gets the room (operator, 2026-11-13:
-            // "The IDE connect builds atlas and account has padding and margin
-            // that could be decreased slightly for mobile").
+            // The modes where a thumb reaches them, each a 44-pt target
+            // (operator, 2026-11-13: "padding and margin that could be
+            // decreased slightly for mobile").
             let nav_frame = egui::Frame::new().fill(theme::ground().gamma_multiply(0.9)).inner_margin(egui::Margin::symmetric(3, 2));
             egui::Panel::bottom("rs-nav").resizable(false).show_separator_line(true).exact_size(44.0).frame(nav_frame).show(root, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     ui.spacing_mut().button_padding.x = 4.0;
-                    // Five on a phone: Go is a desk view (operator, 2026-11-07:
-                    // "go mode can be dropped for mobile ... focus on smaller
-                    // screens in ide mode").
+                    // Five on a phone: Go is a desk view (operator, 2026-11-07).
                     let tab = (ui.available_width() - 4.0 * 2.0) / 5.0;
                     self.mode_tabs(ui, true, tab);
                 });
             });
-            egui::Panel::top("rs-modebar").resizable(false).show_separator_line(true).exact_size(44.0).frame(frame).show(root, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    self.main_menu(ui, ctx);
-                    if ide {
-                        // The panes keep their room; the project's label is
-                        // cut to the rest (ide.rs domain_bar, request #188).
-                        let panes = self.saved.grid.windows().len() as f32;
-                        let w = (ui.available_width() - panes * 64.0 - 8.0).max(60.0);
-                        let (ide, recents, backend) = (&mut self.ide, &mut self.recents, &self.backend);
-                        ide.domain_bar(ui, ctx, w, |ui| recents.sessions_list(ui, backend));
-                        self.pane_switcher(ui);
-                    }
-                });
-            });
-            if ide {
-                self.tab_row(root, ctx, 34.0);
-            }
-            return;
         }
-        egui::Panel::top("rs-modebar").resizable(false).show_separator_line(true).exact_size(40.0).frame(frame).show(root, |ui| {
-            // The right side first, so it is always on screen: drawn after the
-            // left, it got whatever was left over, and when the left reached
-            // the edge the whole of it - Help and Messages too - started past
-            // the window and was clipped (operator, 2026-10-28, once the
-            // machine's figures joined it: "the right half of the top menu bar
-            // is hidden"). It keeps out of the left side's narrowest width;
-            // what does not fit is dropped, least needed first, and all of it
-            // is in ☰ too.
+        let frame = egui::Frame::new().fill(theme::ground()).inner_margin(egui::Margin { left: 6, right: 4, top: 3, bottom: 0 });
+        let mut chosen = false;
+        egui::Panel::top("rs-top").resizable(false).show_separator_line(true).exact_size(if small { 40.0 } else { 34.0 }).frame(frame).show(root, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                let left = self.header_left_w;
-                let room = |ui: &egui::Ui| ui.available_width() - left;
-                ui.add_space(2.0);
-                self.mode_help(ui);
-                self.mode_inbox(ui);
-                if ide {
+                // The menu button first, so it is always on screen: Cove's
+                // own mark (operator, 2026-11-14: "tab on top right should
+                // have a cove icon"; three dots before it), and the unread count.
+                let unread = self.inbox.unread();
+                let ink = if unread > 0 { theme::primary() } else { theme::text_strong() };
+                let pad = if unread > 0 { RichText::new(format!("     {unread}")).size(12.5).strong().color(ink) } else { RichText::new("") };
+                let btn = egui::Button::new(pad).frame(false).min_size(egui::vec2(if small { 36.0 } else { 30.0 }, if small { 34.0 } else { 28.0 }));
+                let (r, _) = egui::containers::menu::MenuButton::from_button(btn).ui(ui, |ui| self.menu_items(ui, ctx));
+                let c = egui::pos2(r.rect.left() + if small { 18.0 } else { 15.0 }, r.rect.center().y);
+                let side = if small { 26.0 } else { 22.0 };
+                match crate::frameworks::cove_mark(ctx) {
+                    Some(t) => {
+                        let at = egui::Rect::from_center_size(c, egui::vec2(side, side));
+                        egui::Image::new(egui::load::SizedTexture::new(t.id(), at.size())).corner_radius(5).paint_at(ui, at);
+                        if unread > 0 {
+                            ui.painter().circle_filled(at.right_top() + egui::vec2(-2.0, 2.0), 3.5, theme::primary());
+                        }
+                    }
+                    None => {
+                        for dy in [-5.5, 0.0, 5.5] {
+                            ui.painter().circle_filled(c + egui::vec2(0.0, dy), if small { 2.2 } else { 1.9 }, ink);
+                        }
+                    }
+                }
+                r.on_hover_text("Cove: the modes, Messages, Help, Save, the project and file, zoom, the console, settings");
+                if small && ide {
+                    self.pane_switcher(ui);
+                }
+                if !small && self.mode == Mode::Go && self.go_is_admin() {
+                    self.go_recap_bar(ui, ctx);
                     theme::tool_sep(ui);
-                    // Save is Push all (operator, 2026-10-15); Ctrl+S saves the open file.
-                    self.ide.push_button(ui, ctx, "Save");
-                }
-                if room(ui) > 250.0 {
-                    self.vitals_chip(ui, ctx);
-                }
-                if ide {
-                    if room(ui) > 40.0 {
-                        theme::tool_sep(ui);
-                        if fullscreen_button(ui, is_fullscreen(ctx)) {
-                            if let Err(why) = toggle_fullscreen(ctx) {
-                                self.toast(why, ctx);
-                            }
-                        }
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if room(ui) > 120.0 {
-                        theme::tool_sep(ui);
-                        self.account_button(ui, ctx);
-                    }
-                    if room(ui) > 140.0 {
-                        theme::tool_sep(ui);
-                        if crate::setup::chip(ui, self.setup.status()) {
-                            self.setup.start_claude(ctx);
-                        }
-                    }
-                    if room(ui) > 170.0 {
-                        theme::tool_sep(ui);
-                        self.session_blocks(ui);
-                    }
                 }
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    let x0 = ui.cursor().min.x;
-                    self.main_menu(ui, ctx);
-                    ui.add_space(6.0);
-                    self.mode_tabs(ui, false, 0.0);
-                    // Go's recap after the modes, not between the menu and them
-                    // (operator, 2026-10-28).
-                    if self.mode == Mode::Go && self.go_is_admin() {
-                        theme::tool_sep(ui);
-                        self.go_recap_bar(ui, ctx);
-                    }
-                    let fixed = ui.cursor().min.x - x0;
-                    self.header_left_w = fixed + if ide { 180.0 } else { 8.0 };
-                    if ide {
-                        theme::tool_sep(ui);
-                        let domain_w = (ui.available_width() * 0.6).clamp(170.0, 340.0);
-                        let (ide, recents, backend) = (&mut self.ide, &mut self.recents, &self.backend);
-                        ide.domain_bar(ui, ctx, domain_w, |ui| recents.sessions_list(ui, backend));
-                        // The agent's scope is beside the composer's mic (agent.rs
-                        // scope_toggle), not here: the header left Save against
-                        // the pill (operator, 2026-10-26: "agent ... look bad").
-                    }
+                    // ← and → step between tabs (operator, 2026-11-14), except
+                    // where they already mean something: the Atlas walks its
+                    // layers with them, and a walkthrough its steps.
+                    let keys = self.mode != Mode::Atlas && self.walk.run.is_none();
+                    chosen = self.ide.tab_strip(ui, ctx, keys);
                 });
             });
         });
-        if ide {
-            self.tab_row(root, ctx, 30.0);
+        if chosen && !ide {
+            self.mode = Mode::Ide;
+            self.saved.zoom_tab = None;
         }
-    }
-
-    /// The projects' tabs, a row of their own under the top bar (ide.rs
-    /// tab_strip; operator, 2026-11-14: "act like a browser with domains as
-    /// tabs").
-    fn tab_row(&mut self, root: &mut egui::Ui, ctx: &egui::Context, h: f32) {
-        let frame = egui::Frame::new().fill(theme::ground().gamma_multiply(0.75)).inner_margin(egui::Margin { left: 6, right: 6, top: 2, bottom: 0 });
-        egui::Panel::top("rs-tabs").resizable(false).show_separator_line(true).exact_size(h).frame(frame).show(root, |ui| {
-            self.ide.tab_strip(ui, ctx);
-        });
     }
 
     /// The IDE's windows by name, the one in front lit: on a phone only one
@@ -2967,23 +2978,6 @@ impl App {
         }
     }
 
-    // Help, one click from anywhere (a person's request, 2026-10-18:
-    // "the user shouldn't have to ... click on the hamburger menu and go find
-    // this section ... click on help and immediately the send request menu
-    // comes up").
-    /// Help (operator, 2026-10-27: "a persistent Help menu ... replay any
-    /// walkthrough without resetting their workspace", and "Show me how":
-    /// search for a task and walk it on the real controls). Sending a request
-    /// stays here, first.
-    fn mode_help(&mut self, ui: &mut egui::Ui) {
-        let r = ui.menu_button(RichText::new("? Help ▾").size(12.0).color(theme::text_strong()), |ui| {
-            ui.set_min_width(300.0);
-            self.help_items(ui);
-        });
-        crate::tour::mark(ui, "help", r.response.rect);
-        r.response.on_hover_text("walkthroughs on the real controls, shortcuts, and a request to the ndexr team");
-    }
-
     /// Help's entries: in the header, and in the Cove menu on a phone.
     fn help_items(&mut self, ui: &mut egui::Ui) {
         if ui.add(egui::Button::new(RichText::new("Send a request - what you need or what is broken").size(13.0))).clicked() && self.request.is_none() {
@@ -3009,6 +3003,10 @@ impl App {
             if ui.add(egui::Button::new(RichText::new(name).size(13.0))).clicked() {
                 page = Some(p);
             }
+        }
+        if ui.add(egui::Button::new(RichText::new("Cove's source code · GitLab ↗").size(13.0))).on_hover_text(SOURCE_URL).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(SOURCE_URL));
+            ui.close();
         }
         if let Some(id) = start {
             self.walk.find.clear();
@@ -3054,22 +3052,6 @@ impl App {
             }
             Act::Open(p) => self.ide.open_file(&p, ctx),
             Act::AppLog => self.ide.show_app_log(),
-        }
-    }
-
-    // Messages: answers to requests, and people (inbox.rs).
-    fn mode_inbox(&mut self, ui: &mut egui::Ui) {
-        let n = self.inbox.unread();
-        let t = RichText::new(if n > 0 { format!("Messages · {n}") } else { "Messages".to_owned() })
-            .size(12.0)
-            .color(if n > 0 { theme::primary() } else { theme::text_strong() });
-        let b = egui::Button::new(t);
-        if ui.add(b).on_hover_text("your requests and their answers, and people to talk to").clicked() {
-            if self.inbox.open {
-                self.inbox.open = false;
-            } else {
-                self.inbox.show_requests();
-            }
         }
     }
 
@@ -4149,27 +4131,6 @@ fn toggle_fullscreen(ctx: &egui::Context) -> Result<(), &'static str> {
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!is_fullscreen(ctx)));
         Ok(())
     }
-}
-
-/// The toolbar's full-screen control, drawn: four corners pointing out, or in
-/// when it would leave full screen.
-fn fullscreen_button(ui: &mut egui::Ui, on: bool) -> bool {
-    let (r, resp) = ui.allocate_exact_size(egui::vec2(22.0, 18.0), egui::Sense::click());
-    let c = if resp.hovered() { theme::text_strong() } else { theme::muted() };
-    let s = egui::Stroke::new(1.4, c);
-    let b = egui::Rect::from_center_size(r.center(), egui::vec2(12.0, 10.0));
-    let k = 3.5;
-    let p = ui.painter();
-    for (corner, dx, dy) in [(b.left_top(), 1.0, 1.0), (b.right_top(), -1.0, 1.0), (b.right_bottom(), -1.0, -1.0), (b.left_bottom(), 1.0, -1.0)] {
-        // Out: the bracket hugs the corner. In: it is drawn from the corner inwards.
-        let at = if on { corner + egui::vec2(dx * k, dy * k) } else { corner };
-        let (hx, vy) = if on { (-dx, -dy) } else { (dx, dy) };
-        p.line_segment([at, at + egui::vec2(hx * k, 0.0)], s);
-        p.line_segment([at, at + egui::vec2(0.0, vy * k)], s);
-    }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(if on { "leave full screen (F11)" } else { "full screen (F11)" })
-        .clicked()
 }
 
 #[cfg(test)]

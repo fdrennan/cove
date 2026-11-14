@@ -246,6 +246,9 @@ pub enum Query {
     /// when the person asked something or the agent needs them. Answers with
     /// the line and its mp3, or an empty line for nothing worth saying.
     Spoken { asked: String, reply: String },
+    /// How many agent runs are going in each of these projects' threads (the
+    /// tabs' activity: ide.rs tab_strip). Only the ones the person may see.
+    AgentBusy { domains: Vec<String> },
     /// Listen under a reply (brief.rs `read_aloud`): the whole reply, read
     /// aloud as it is - no choosing, unlike Speak. Answers with the text read
     /// and its mp3.
@@ -317,6 +320,14 @@ pub enum Query {
         host: String,
         #[serde(default)]
         level: String,
+    },
+    /// Whether one of my projects is listed on the public viewer (ndexr.io's
+    /// front page, /view/): APP_VIEWER in its .cove/app.env, read, and set
+    /// with `on`. Off until its owner says so (host.rs app_viewer).
+    AppViewer {
+        host: String,
+        #[serde(default)]
+        on: Option<bool>,
     },
     /// Delete's last step, after Archive removed the folder: give up the
     /// name - registry row, ownership and vhost (assets/release-project.sh,
@@ -445,6 +456,7 @@ impl Query {
                 | Query::AgentPoll { .. }
                 | Query::AgentStop { .. }
                 | Query::AgentHistory { .. }
+                | Query::AgentBusy { .. }
                 | Query::ClaudeStatus
                 | Query::ClaudeConnect { .. }
                 | Query::ClaudeForget

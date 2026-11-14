@@ -53,6 +53,8 @@ pub struct SettingsPane {
     /// The project these were read for; a different one reads again.
     host: String,
     access: Slot<Result<AppAccessView, String>>,
+    /// Listed on the public viewer (Query::AppViewer), as read or last set.
+    viewer: Slot<Result<bool, String>>,
     vars: Slot<Vec<(String, String)>>,
     /// The rows being edited, and whether each value shows.
     edit: Vec<(String, String, bool)>,
@@ -79,6 +81,12 @@ impl SettingsPane {
         // Who can view it, for the summary (an empty level reads it).
         let (slot, c) = (self.access.clone(), ctx.clone());
         backend.query(Query::AppAccess { host: self.host.clone(), level: String::new() }, ctx, move |r: Result<AppAccessView, String>| {
+            *slot.lock().unwrap() = Some(r);
+            c.request_repaint();
+        });
+        let (slot, c) = (self.viewer.clone(), ctx.clone());
+        *slot.lock().unwrap() = None;
+        backend.query(Query::AppViewer { host: self.host.clone(), on: None }, ctx, move |r: Result<bool, String>| {
             *slot.lock().unwrap() = Some(r);
             c.request_repaint();
         });
@@ -231,7 +239,7 @@ impl SettingsPane {
     /// 2026-11-03: "manage it twice is confusing, should be once only, who
     /// can view is different level than who can access"). Here it is said
     /// once, with the way there.
-    fn access_section(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, _backend: &Backend, d: &DomainInfo) -> Option<Act> {
+    fn access_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, d: &DomainInfo) -> Option<Act> {
         let view = self.access.lock().unwrap().clone();
         heading(ui, "Access", "Who can view this app, and who can do more with it.");
         match &view {
@@ -250,6 +258,39 @@ impl SettingsPane {
         ui.add_space(12.0);
         if ui.add(button("Share…")).on_hover_text("who can view it, and who can see the code, work on it or manage it").clicked() {
             return Some(Act::Access(d.host.clone()));
+        }
+        // On the public viewer or not: the owner's choice, off until made
+        // (operator, 2026-11-14: "users should be able to opt in to show
+        // their domain in the viewer"). Only a public app is listed there.
+        ui.add_space(16.0);
+        ui.label(RichText::new("The public viewer").size(14.5).strong().color(theme::text_strong()));
+        let public = matches!(&view, Some(Ok(v)) if v.level == "public");
+        let listed = self.viewer.lock().unwrap().clone();
+        match listed {
+            None => {
+                ui.spinner();
+            }
+            Some(Err(e)) => {
+                ui.label(RichText::new(e).size(13.5).color(theme::warn()));
+            }
+            Some(Ok(on)) => {
+                let mut want = on;
+                let r = ui.checkbox(&mut want, RichText::new("Show this app on ndexr.io's public viewer").size(13.5).color(theme::text_strong()));
+                if r.on_hover_text("ndexr.io's front page lists the apps their owners have chosen to show; anyone can see it").changed() {
+                    let (slot, c) = (self.viewer.clone(), ctx.clone());
+                    *slot.lock().unwrap() = None;
+                    backend.query(Query::AppViewer { host: d.host.clone(), on: Some(want) }, ctx, move |r: Result<bool, String>| {
+                        *slot.lock().unwrap() = Some(r);
+                        c.request_repaint();
+                    });
+                }
+                let said = match (on, public) {
+                    (true, true) => "Listed: anyone visiting ndexr.io sees it among the apps there, within a minute.",
+                    (true, false) => "Chosen, but it shows only while anyone can view it - set Who can view it to everyone.",
+                    (false, _) => "Not listed. People reach it at its address, as Who can view it allows.",
+                };
+                ui.label(RichText::new(said).size(13.5).color(theme::text()));
+            }
         }
         None
     }

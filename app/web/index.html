@@ -364,7 +364,8 @@
     });
     st.site = function () {
       // Two frames take turns (the App tab's smooth reload): the one shown.
-      var f = ["ndexr-viewer-site", "ndexr-viewer-site-b"].map(function (id) { return document.getElementById(id); })
+      // One pair per kept site (ide.rs site_frame): the one shown.
+      var f = Array.prototype.slice.call(document.querySelectorAll("iframe[data-cove-site]"))
         .filter(function (e) { return e && e.contentWindow && e.style.display !== "none" && e.style.visibility !== "hidden"; })[0];
       if (!f) { st.got.push("ERROR:no site is showing in App"); return; }
       var id = "cove-" + Date.now(), origin = "*";
