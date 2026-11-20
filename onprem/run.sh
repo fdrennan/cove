@@ -174,6 +174,10 @@ publish() {
   # The desktop app follows every release onto the test machines (laptop,
   # neo) that answer - detached, one build per machine at a time.
   setsid "$here/onprem/desktop-push.sh" all "$id" </dev/null >/dev/null 2>&1 &
+  # The public source follows too, at most hourly, behind a secrets gate
+  # (onprem/public-push.sh): github.com/fdrennan/cove went a week stale when
+  # it was pushed by hand (operator, 2026-11-20).
+  setsid "$here/onprem/public-push.sh" "$id" </dev/null >/dev/null 2>&1 &
   prune_releases
   publish_claude
   publish_rust
