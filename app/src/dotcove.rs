@@ -226,6 +226,23 @@ fn refresh_verbs(dir: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static
             changed |= std::fs::write(&b, now).is_ok();
         }
     }
+    // Where a Julia project's packages are (operator, 2026-11-20: "the local
+    // version of cove not knowing where to find packages"): an env.sh Cove
+    // wrote before julia_set() trusted a module's link to a site library a
+    // laptop never has, and every `using` failed ("Package HTTP not found",
+    // request #197). A copy Cove wrote - its first line is the starter's - and
+    // that predates the fix gets the current one; the old is kept beside it. So
+    // does one that fetched the whole 2 GB set before it came in pieces
+    // (chunks.tsv, 2026-11-20).
+    let je = cove.join("julia").join("env.sh");
+    if let Ok(t) = std::fs::read_to_string(&je) {
+        if t.starts_with("# Sourced by run.sh and build.sh: app.env, and Julia from the ndexr stack") && !t.contains("chunks.tsv") {
+            if let Some((_, now)) = files("_julia").into_iter().find(|(p, _)| *p == "env.sh") {
+                let _ = std::fs::write(cove.join("julia").join("env.sh.prev"), &t);
+                changed |= std::fs::write(&je, rewrite(now, "julia")).is_ok();
+            }
+        }
+    }
     let gi = dir.join(".gitignore");
     if cove.join("app.env").is_file() {
         let g = std::fs::read_to_string(&gi).unwrap_or_default();
@@ -324,6 +341,27 @@ pub fn set_type(dir: &Path, lang: &str, running: bool, port: &dyn Fn() -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Request #197: an env.sh Cove wrote before julia_set() is replaced (the
+    /// old kept as env.sh.prev); one the person wrote is left alone.
+    #[test]
+    fn an_old_julia_env_gets_the_package_set_rule() {
+        let d = std::env::temp_dir().join(format!("cove-julia-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(".cove/julia")).unwrap();
+        std::fs::write(d.join(".cove/app.env"), "APP_LANGUAGE=julia\nAPP_KIND=port\n").unwrap();
+        let old = "# Sourced by run.sh and build.sh: app.env, and Julia from the ndexr stack in\n. .cove/app.env\nml Julia/1.11.7\n";
+        std::fs::write(d.join(".cove/julia/env.sh"), old).unwrap();
+        assert!(refresh_verbs(&d, &files));
+        let now = std::fs::read_to_string(d.join(".cove/julia/env.sh")).unwrap();
+        assert!(now.contains("chunks.tsv") && now.contains(". .cove/app.env"), "the current rule, with the project's own paths");
+        assert_eq!(std::fs::read_to_string(d.join(".cove/julia/env.sh.prev")).unwrap(), old);
+        assert!(!refresh_verbs(&d, &files), "a second look changes nothing");
+        std::fs::write(d.join(".cove/julia/env.sh"), "# mine\nml Julia/1.11.7\n").unwrap();
+        refresh_verbs(&d, &files);
+        assert_eq!(std::fs::read_to_string(d.join(".cove/julia/env.sh")).unwrap(), "# mine\nml Julia/1.11.7\n");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     fn files(id: &str) -> Vec<(&'static str, &'static str)> {
         crate::host::starter_files(id)

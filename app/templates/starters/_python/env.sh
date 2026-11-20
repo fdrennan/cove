@@ -35,8 +35,11 @@ command -v python3 >/dev/null || { echo "no python3: run where /opt/ndexr/stack 
 # only part of the set in its site library (the records marked SiteLibrary);
 # what it lacks comes from ndexr's own repository for the set - the wheels the
 # n-boxes built, pinned to the set's current.json - into a per-user cache for
-# the set. Never PyPI or another mirror. A project made before APP_NEEDS was
-# FastAPI's.
+# the set. A declared package ndexr has not built comes from PyPI: ndexr's
+# index sends pip there for any project it lacks (repo.ndexr.io), and pip
+# builds it here if PyPI has no wheel (operator, 2026-11-20: "declared
+# packages not available are always pulled or built but nothing more"). A
+# project made before APP_NEEDS was FastAPI's.
 cove_triple="$(printf '%s' "${NDEXR_ENV_SITE_LIBRARY:-}" | sed -n 's|.*/stack/\([^/]*\)/eb/.*|\1|p')"
 cove_set="Python/$(python3 -c 'import sys; print(sys.version.split()[0])')"
 export PYTHONUSERBASE="${XDG_CACHE_HOME:-$HOME/.cache}/ndexr/env/${cove_triple:-$(uname -m)}/$cove_set"
@@ -68,7 +71,7 @@ if gone and triple:
         with open(pins, "w") as f:
             f.writelines(f"{p['name']}=={p['version']}\n" for p in current.values())
         subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--quiet", "--disable-pip-version-check",
-                        "--no-warn-script-location", "--only-binary", ":all:", "--index-url", f"{repo}/python/simple",
+                        "--no-warn-script-location", "--prefer-binary", "--index-url", f"{repo}/python/simple",
                         "--constraint", pins, *gone], stdout=sys.stderr, check=False)
     except Exception as e:  # no network, no repo: the message below says what is missing
         print(f"env: could not fetch from {repo}: {e}", file=sys.stderr)
@@ -76,6 +79,6 @@ if gone and triple:
     site.addsitedir(site.getusersitepackages())
     gone = missing()
 if gone:
-    sys.exit(f"not in the stack's Python set ({os.path.basename(repo)}): {', '.join(gone)} - ndexr builds none of it for this box")
+    sys.exit(f"could not install: {', '.join(gone)} - neither ndexr's Python set ({os.path.basename(repo)}) nor PyPI had it for this Python")
 PY
 export PORT="${PORT:-$APP_PORT}"
