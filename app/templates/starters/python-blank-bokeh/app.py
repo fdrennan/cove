@@ -1,8 +1,17 @@
 """__HOST__: a blank Bokeh server app. `bokeh serve --dev` reloads it on every save."""
+import sys
+from pathlib import Path
+
 import numpy as np
 from bokeh.layouts import column
 from bokeh.models import ColumnDataSource, Div, Slider
 from bokeh.plotting import curdoc, figure
+
+sys.path.insert(0, str(Path(__file__).parent))
+from log import log  # noqa: E402
+
+# bokeh serve runs this file once per browser session. run.sh logs the start.
+log.info("session opened")
 
 x = np.linspace(0, 4 * np.pi, 400)
 source = ColumnDataSource(data={"x": x, "y": np.sin(x)})

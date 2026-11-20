@@ -25,6 +25,8 @@ own noise (gene-to-gene spread, as in real arrays); a chosen share of genes
 is truly changed in the treated group by about the chosen log2 fold change,
 up or down. Same settings and same dataset number, same data.
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R and Shiny only, from the stack's R; no dataset, key or database.
 Welch, B. L. (1947), "The generalization of 'Student's' problem when several
@@ -33,7 +35,7 @@ Benjamini, Y. and Hochberg, Y. (1995), "Controlling the False Discovery Rate",
 J. R. Stat. Soc. B 57(1).
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

@@ -10,6 +10,7 @@ change this file's first line from "Blank Dash" to its name and rewrite this par
 ## Seeing a change
 Dash's hot reload refreshes the page on every save and its reloader restarts the server. Flask's debugger stays off: it runs code typed in the browser.
 Packages come from the stack: env/Python/3.13.15 (`ml env/Python/3.13.15`); APP_NEEDS in app.env names them, and env.sh refuses to start without them.
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
 
 ## Paths nginx keeps for itself
 A request to /vendor/, /images/, /css/, /javascript/, /shared/, /sites/,

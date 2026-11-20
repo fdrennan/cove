@@ -9,12 +9,12 @@
 #   onprem/desktop-push.sh laptop|neo|cell [id] one machine, by hand
 #   onprem/desktop-push.sh status               where each machine is
 #
-# laptop  Pop!_OS 22.04, x86_64. Built HERE (build-linux.sh: glibc 2.28 via
-#         zigbuild, with this host's WebKitGTK for the App panel - the laptop
-#         has neither zig nor the dev libs), then build-deb.sh. Installed per
-#         user (~/.local, the tarball's install.sh): the laptop has no
-#         password-less sudo. With one, the .deb goes in through apt instead.
-#         The .deb is always left at ~/Downloads/cove_latest_amd64.deb.
+# laptop  x86_64 Linux (Gentoo since 2026-11-19). Built HERE (build-linux.sh:
+#         glibc 2.28 via zigbuild, with this host's WebKitGTK for the App panel
+#         - the laptop has neither zig nor the dev libs). Installed per user
+#         (~/.local, the tarball's install.sh): one build per architecture,
+#         no .deb (operator, 2026-11-19: "dont need ubuntu specific version
+#         instead we just build by arch").
 # cell    every account's cell: the WEBVIEW=0 server build (a cell has no
 #         GTK/WebKit), at app/dist-cell/linux-x86_64/cove.tar.gz. ood-sync-users
 #         (each minute, user-provision.sh ndexr_cell_tools_ensure) publishes it
@@ -82,28 +82,22 @@ cell() {
 }
 
 laptop() {
-  local arch=x86_64 tgz deb
-  build_linux ./build-deb.sh || { echo "the Linux build failed"; return 1; }
+  local arch=x86_64 tgz
+  build_linux || { echo "the Linux build failed"; return 1; }
   tgz="$app/dist/linux-$arch/cove.tar.gz"
-  deb="$(ls -t "$app"/dist/deb/cove_*_amd64.deb 2>/dev/null | head -1)"
-  ssh "$host" 'mkdir -p ~/.cache/cove-desktop ~/Downloads' &&
-    scp -q "$tgz" "$host:.cache/cove-desktop/cove.tar.gz" &&
-    { [[ -z "$deb" ]] || scp -q "$deb" "$host:Downloads/cove_latest_amd64.deb"; } || { echo "copy to the laptop failed"; return 1; }
+  ssh "$host" 'mkdir -p ~/.cache/cove-desktop' &&
+    scp -q "$tgz" "$host:.cache/cove-desktop/cove.tar.gz" || { echo "copy to the laptop failed"; return 1; }
   # shellcheck disable=SC2016
   ssh "$host" 'bash -s' >> "$state/$host.log" 2>&1 <<'SH' || { echo "install on the laptop failed"; return 1; }
 set -e
 cd ~/.cache/cove-desktop && rm -rf cove-*-linux-* && tar xzf cove.tar.gz
-if sudo -n true 2>/dev/null; then
-  sudo -n apt-get install -y ~/Downloads/cove_latest_amd64.deb
-else
-  ./cove-*-linux-*/install.sh
-fi
+./cove-*-linux-*/install.sh
 SH
   # Installed is not the same as able to start: say what it lacks.
   local missing
   missing="$(ssh "$host" 'b=$(command -v cove || echo ~/.local/bin/cove); ldd "$b" 2>/dev/null | awk "/not found/ {print \$1}" | tr "\n" " "')"
   if [[ -n "$missing" ]]; then
-    echo "installed, but it cannot start until the laptop has: $missing- run once on the laptop: sudo apt install ~/Downloads/cove_latest_amd64.deb (pulls libwebkit2gtk-4.1-0)"
+    echo "installed, but it cannot start until the laptop has: $missing- install WebKitGTK 4.1 there once (Gentoo: net-libs/webkit-gtk:4.1; Debian/Ubuntu: libwebkit2gtk-4.1-0)"
     return 2
   fi
   echo "installed in ~/.local/bin/cove"

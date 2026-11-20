@@ -118,7 +118,7 @@ third:
 | Record | Question | ndexr today |
 |---|---|---|
 | Construction | what produced each artifact | The catalog's build steps per item (`/srv/ndexr/software/catalog.json`, `st`: ok/fail per arch), build logs (`/view/buildlog.json`), each module's easyconfig (host.rs `easyconfig`), and how each installed package arrived (host.rs `provenance`). |
-| Execution | what actually took part in one computation | Not recorded. Cove knows a session's env set (`.ndexr-env`) and loaded modules while it runs; nothing keeps a record of a run. |
+| Execution | what actually took part in one computation | Recorded per running app since 2026-11-18: `.cove/record.json` (app/src/record.rs), read off the app's own process when it starts - stack revision, toolchain, every loaded module, each package with its version and library, platform, lock-file hashes - and saved with the project's versions; Settings › Record names a drift from this machine's stack. Measured on box.biomarker.ndexr.io: 102 modules, 96 R packages, revision 58. Not yet per computation: a notebook cell or a batch run inside a running app is not recorded on its own. |
 | Evaluation | why a result was accepted for its use | Not recorded, with one exception: `stack-kit/manifest/wheel-exceptions.tsv` is an acceptance record - why each downloaded binary was taken. |
 
 ## The atlas's relationships against REF's list

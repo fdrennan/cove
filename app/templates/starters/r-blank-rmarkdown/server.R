@@ -3,6 +3,8 @@
 # render is kept per set of parameters until report.Rmd changes; the page
 # reloads itself when it does. A report that fails shows its error.
 
+box::use(./r/log)
+
 out <- file.path(getwd(), ".run", "html")
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
 stamp <- function() as.character(file.mtime("report.Rmd"))
@@ -17,6 +19,7 @@ render <- function(query) {
   key <- paste(stamp(), paste(names(p), unlist(p), sep = "=", collapse = "&"))
   file <- file.path(out, paste0(substr(digest_of(key), 1, 16), ".html"))
   if (!file.exists(file)) {
+    log$log_info("rendering report.Rmd with {paste(names(p), unlist(p), sep = '=', collapse = ' ')}")
     work <- tempfile("render-")
     dir.create(work)
     on.exit(unlink(work, recursive = TRUE), add = TRUE)
@@ -41,11 +44,14 @@ app <- list(call = function(req) {
   if (path != "/") return(reply(404L, "text/plain", "not found"))
   tryCatch(
     reply(200L, "text/html; charset=utf-8", render(req$QUERY_STRING)),
-    error = function(e) reply(500L, "text/html; charset=utf-8",
-      paste0("<h1>report.Rmd did not render</h1><pre>", htmltools::htmlEscape(conditionMessage(e)), "</pre>", live)))
+    error = function(e) {
+      log$log_error("report.Rmd did not render: {conditionMessage(e)}")
+      reply(500L, "text/html; charset=utf-8",
+        paste0("<h1>report.Rmd did not render</h1><pre>", htmltools::htmlEscape(conditionMessage(e)), "</pre>", live))
+    })
 })
 
 port <- as.integer(Sys.getenv("PORT"))
 s <- httpuv::startServer("127.0.0.1", port, app)
-message("serving report.Rmd on 127.0.0.1:", port)
+log$log_info("__HOST__: report server starting on 127.0.0.1:{port}")
 while (TRUE) httpuv::service(1000)

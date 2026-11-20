@@ -10,6 +10,7 @@ change this file's first line from "Blank MCP server" to its name and rewrite th
 ## Seeing a change
 uvicorn reloads it on every save. The official `mcp` package is not in the ndexr stack yet, so app.py speaks the protocol itself.
 Packages come from the stack: env/Python/3.13.15 (`ml env/Python/3.13.15`); APP_NEEDS in app.env names them, and env.sh refuses to start without them.
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
 
 ## Paths nginx keeps for itself
 A request to /vendor/, /images/, /css/, /javascript/, /shared/, /sites/,

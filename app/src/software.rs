@@ -403,6 +403,16 @@ impl Catalog {
         (self.counts, self.st_i.len(), self.total_secs, self.boxes.len())
     }
 
+    /// When the spec wrote this catalog, UTC seconds (when it was read).
+    pub fn generated(&self) -> i64 {
+        self.generated
+    }
+
+    /// The build machines: (name, architecture, lane).
+    pub fn machines(&self) -> Vec<(&str, &str, &str)> {
+        self.boxes.iter().map(|b| (b.name.as_str(), b.arch.as_str(), b.lane.as_str())).collect()
+    }
+
     /// Known to the stack but never yet built anywhere: tried (failed or
     /// queued) and not succeeded - a star that does not exist yet (atlas.rs).
     /// Packages the pkgs lane installs carry no build record at all, so
@@ -472,6 +482,46 @@ impl Catalog {
                 *slot = Some((s, e));
             }
         }
+        out
+    }
+
+    /// What was installed when, per lane (x86_64, aarch64, cuda): each item's
+    /// first finished build there as (end, item), seconds from t0, soonest
+    /// first - so the inventory at any moment is a prefix (referral #780).
+    pub fn installs_by_lane(&self) -> Vec<(String, Vec<(i64, u32)>)> {
+        let mut lanes: Vec<String> = Vec::new();
+        let lane_of: Vec<usize> = (0..self.boxes.len().max(1))
+            .map(|b| {
+                let l = self.box_arch(b);
+                lanes.iter().position(|x| *x == l).unwrap_or_else(|| {
+                    lanes.push(l);
+                    lanes.len() - 1
+                })
+            })
+            .collect();
+        let mut first: Vec<Vec<Option<i64>>> = vec![vec![None; self.items.len()]; lanes.len()];
+        let n = self.st_i.len().min(self.st_t.len()).min(self.st_d.len()).min(self.st_s.len()).min(self.st_r.len());
+        for k in 0..n {
+            if self.st_s[k] != b'd' {
+                continue;
+            }
+            let e = self.st_t[k] + self.st_d[k];
+            let Some(slot) = lane_of.get(self.box_of_step(k)).and_then(|l| first[*l].get_mut(self.st_i[k] as usize)) else { continue };
+            if slot.is_none_or(|e0| e < e0) {
+                *slot = Some(e);
+            }
+        }
+        let mut out: Vec<(String, Vec<(i64, u32)>)> = lanes
+            .into_iter()
+            .zip(first)
+            .map(|(l, f)| {
+                let mut v: Vec<(i64, u32)> = f.into_iter().enumerate().filter_map(|(i, e)| Some((e?, i as u32))).collect();
+                v.sort_unstable();
+                (l, v)
+            })
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+        out.sort_by_key(|(l, v)| (std::cmp::Reverse(v.len()), l.clone()));
         out
     }
 
@@ -1138,6 +1188,10 @@ pub struct SoftwarePane {
     measure: builds::Measure,
     overlay: Option<builds::Measure>,
     pinned: Option<f64>,
+    /// installs_by_lane for the catalog of this hash, and the moment's
+    /// package search (builds.rs inventory).
+    inv: Option<(String, Arc<Vec<(String, Vec<(i64, u32)>)>>)>,
+    inv_q: String,
     cwin: Option<(f64, f64)>,
     /// Curves across the calendar; off (the default), across building time -
     /// every stretch no machine was building cut out (operator, 2026-10-28:
@@ -1207,6 +1261,8 @@ impl Default for SoftwarePane {
             measure: builds::Measure::Built,
             overlay: Some(builds::Measure::Spend),
             pinned: None,
+            inv: None,
+            inv_q: String::new(),
             cwin: None,
             calendar: false,
             cywin: None,
@@ -2898,6 +2954,42 @@ mod tests {
         assert_eq!(c.st_s, b"sdsdddr");
         // "a" ends at 20 - the machine moved on then - not at its retry at 100.
         assert_eq!((c.st_d[0], c.st_d[2]), (20, 10), "each ends at the earliest sign the machine moved on");
+    }
+
+    /// The moment's inventory: per lane, each item once, at its first finished
+    /// build there; a failed or later build changes nothing (#780).
+    #[test]
+    fn installs_are_first_finishes_per_lane() {
+        let j = br#"{"schema":1,"generated":1791999000,"hash":"h","t0":1791990000,
+            "boxes":[{"name":"a","arch":"x86_64","lane":"x"},{"name":"g","arch":"x86_64","lane":"x86_64 + CUDA"},{"name":"b","arch":"aarch64","lane":"y"}],
+            "runs":[{"id":"20261014T150000Z-a","box":0,"itype":"m","start":0,"end":1791999000},
+                    {"id":"20261014T150000Z-g","box":1,"itype":"m","start":0,"end":1791999000},
+                    {"id":"20261014T150000Z-b","box":2,"itype":"m","start":0,"end":1791999000}],
+            "items":[{"k":"R","n":"x"},{"k":"Python","n":"y"}],
+            "steps":{"i":[0,0,1,0,1],"r":[0,0,0,1,2],"t":[0,200,10,0,0],"d":[100,50,5,30,7],"s":"dddfd"}}"#;
+        let c = Catalog::parse(j).unwrap();
+        let inv = c.installs_by_lane();
+        let lane = |l: &str| inv.iter().find(|(n, _)| n == l).map(|(_, v)| v.clone());
+        assert_eq!(lane("x86_64"), Some(vec![(15, 1), (100, 0)]));
+        assert_eq!(lane("aarch64"), Some(vec![(7, 1)]));
+        assert_eq!(lane("cuda"), None, "a failed build installs nothing");
+    }
+
+    /// Against the live catalog: the counts ndexr.io measured for #780.
+    #[test]
+    #[ignore]
+    fn installs_match_the_measured_catalog() {
+        let c = Catalog::parse(&std::fs::read("/srv/ndexr/software/catalog.json").unwrap()).unwrap();
+        for (lane, v) in c.installs_by_lane() {
+            for at in [1_791_920_220i64 /* 2026-10-13 19:37 */, 1_793_856_420 /* 11-05 05:27 */, 1_794_098_400 /* 11-08 00:40 */] {
+                let n = v.partition_point(|(e, _)| e + c.t0 <= at);
+                let mut by = [0usize; 8];
+                for (_, i) in &v[..n] {
+                    by[c.kind[*i as usize] as usize] += 1;
+                }
+                println!("{lane} {} {n} {by:?}", fmt_date(at));
+            }
+        }
     }
 
     #[test]

@@ -13,12 +13,13 @@ const IMPORTS = ["node:http", "node:fs", "node:path", "node:os", "node:crypto"];
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const log = require("./log");
 const os = require("node:os");
 const crypto = require("node:crypto");
 
 const PORT = Number(process.env.PORT);
 if (!PORT) {
-  console.error("PORT is unset: start with ./run.sh, whose env.sh sets it from app.env APP_PORT");
+  log.error("PORT is unset: start with ./run.sh, whose env.sh sets it from app.env APP_PORT");
   process.exit(2);
 }
 const ROOT = __dirname;
@@ -64,7 +65,7 @@ function writeNow(rows) {
   fs.renameSync(tmp, SCORES_FILE);
 }
 function persist() {
-  writing = Promise.resolve().then(() => writeNow(scores)).catch((e) => console.error("scores not written:", e.message)).finally(() => { writing = null; });
+  writing = Promise.resolve().then(() => writeNow(scores)).catch((e) => log.error("scores not written:", e)).finally(() => { writing = null; });
 }
 
 // A name is what a person typed: trimmed, 1-16 visible characters, nothing
@@ -179,13 +180,14 @@ async function route(req, res) {
 }
 
 const server = http.createServer((req, res) => {
+  log.request(req, res);
   route(req, res).catch((e) => {
     if (!res.headersSent) json(res, e.status || 500, { error: e.message });
-    if (!e.status) console.error(e);
+    if (!e.status) log.error(`${req.method} ${req.url}:`, e);
   });
 });
 server.listen(PORT, "127.0.0.1", () =>
-  console.log(`Dolphin Jump on http://127.0.0.1:${PORT} · node ${process.version} · ${scores.length} runs on the board`));
+  log.info(`__HOST__: Dolphin Jump serving on 127.0.0.1:${PORT} · node ${process.version} · ${scores.length} runs on the board`));
 
 // down.sh sends TERM: finish the write in flight, then exit.
 for (const sig of ["SIGTERM", "SIGINT"]) {

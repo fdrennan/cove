@@ -163,6 +163,11 @@ pub fn lay(host: &str, laid: Vec<(String, String)>, files: &dyn Fn(&str) -> Vec<
         }
         g.push_str(".cove/run/\n");
     }
+    // supporting_docs/ is kept in S3, not git (operator, 2026-11-14), like
+    // every existing project (ndexr scripts/supporting-docs-out-of-git.sh).
+    if !g.lines().any(is_docs_line) {
+        g.push_str("supporting_docs/\n");
+    }
     out.push((".gitignore".to_owned(), g));
     out
 }
@@ -228,8 +233,19 @@ fn refresh_verbs(dir: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static
             let sep = if g.is_empty() || g.ends_with('\n') { "" } else { "\n" };
             changed |= std::fs::write(&gi, format!("{g}{sep}.cove/run/\n")).is_ok();
         }
+        let g = std::fs::read_to_string(&gi).unwrap_or_default();
+        if !g.lines().any(is_docs_line) {
+            let sep = if g.is_empty() || g.ends_with('\n') { "" } else { "\n" };
+            changed |= std::fs::write(&gi, format!("{g}{sep}supporting_docs/\n")).is_ok();
+        }
     }
     changed
+}
+
+/// A .gitignore line that keeps supporting_docs/ out of git: it lives in S3
+/// (ndexr bulk-commit copies it to docs/<key>/ on every save).
+fn is_docs_line(l: &str) -> bool {
+    matches!(l.trim(), "supporting_docs/" | "supporting_docs" | "/supporting_docs/" | "/supporting_docs")
 }
 
 pub fn adopt(dir: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static str)>) -> Result<bool, String> {
@@ -363,7 +379,7 @@ mod tests {
         assert!(refresh_verbs(&d, &crate::host::starter_files));
         let b = std::fs::read_to_string(d.join(DIR).join("build.sh")).unwrap();
         assert!(b.contains("run/build.log"), "build.sh does not keep its log");
-        assert_eq!(std::fs::read_to_string(d.join(".gitignore")).unwrap(), "node_modules/\n.cove/run/\n");
+        assert_eq!(std::fs::read_to_string(d.join(".gitignore")).unwrap(), "node_modules/\n.cove/run/\nsupporting_docs/\n");
         assert!(!refresh_verbs(&d, &crate::host::starter_files), "a second look changed something");
         // Someone's own dispatcher is theirs.
         std::fs::write(d.join(DIR).join("build.sh"), "#!/bin/sh\nmake\n").unwrap();
@@ -385,7 +401,7 @@ mod tests {
         assert!(adopt(&d, &files).unwrap());
         assert!(!d.join("app.env").exists() && !d.join("build.sh").exists() && !d.join(".run").exists());
         assert!(d.join(".cove/run/app.pid").is_file() && d.join(".cove/r/build.sh").is_file() && d.join(".cove/nginx.conf.prev").is_file() && !d.join("nginx.conf.prev").exists());
-        assert_eq!(std::fs::read_to_string(d.join(".gitignore")).unwrap(), "*.log\n.cove/run/\n");
+        assert_eq!(std::fs::read_to_string(d.join(".gitignore")).unwrap(), "*.log\n.cove/run/\nsupporting_docs/\n");
         assert_eq!(contract_dir(&d), d.join(".cove"));
         assert!(!adopt(&d, &files).unwrap(), "once");
         assert!(set_type(&d, "python", true, &|| Ok(8999)).is_err());

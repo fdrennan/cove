@@ -22,6 +22,11 @@ pub struct Tabs {
     /// Closed, newest last, for "Reopen closed tab".
     #[serde(default)]
     pub closed: Vec<String>,
+    /// Favorites (operator, 2026-11-14: "cove needs ability to add as
+    /// favorite and search favorites"): starred projects, open or not, listed
+    /// first in Projects and searchable on their own. Newest star last.
+    #[serde(default)]
+    pub favorites: Vec<String>,
 }
 
 impl Tabs {
@@ -156,12 +161,38 @@ impl Tabs {
         self.open.retain(|h| listed.contains(h));
         self.pinned.retain(|h| self.open.contains(h));
         self.closed.retain(|h| listed.contains(h));
+        self.favorites.retain(|h| listed.contains(h));
+    }
+
+    pub fn is_favorite(&self, host: &str) -> bool {
+        self.favorites.iter().any(|h| h == host)
+    }
+
+    /// Star or unstar a project.
+    pub fn toggle_favorite(&mut self, host: &str) {
+        if self.is_favorite(host) {
+            self.favorites.retain(|h| h != host);
+        } else if !host.is_empty() {
+            self.favorites.push(host.to_owned());
+        }
     }
 
     /// The name on a tab: the host less ".ndexr.io".
     pub fn short(host: &str) -> &str {
-        host.strip_suffix(".ndexr.io").unwrap_or(host)
+        host.strip_suffix(".ndexr.io").or_else(|| host.strip_suffix(LOCAL)).unwrap_or(host)
     }
+}
+
+/// The name of a project that lives on this computer only: `<name>.localhost`
+/// (RFC 6761 keeps .localhost for the machine itself, so it is never anyone's
+/// public domain, yet still a hostname to everything that wants one). A
+/// computer with no ndexr behind it names its projects so; deploying one is
+/// giving it a public name (operator, 2026-11-15: "if a user doesnt have a
+/// domain and has never logged in, they shouldnt have an ndexr.io domain").
+pub const LOCAL: &str = ".localhost";
+
+pub fn is_local(host: &str) -> bool {
+    host.ends_with(LOCAL)
 }
 
 #[cfg(test)]
@@ -242,6 +273,19 @@ mod tests {
         assert_eq!(t.open, v(&["a", "b", "d", "c"]), "not before a pinned tab");
         t.place("a", 4);
         assert_eq!(t.open, v(&["a", "b", "d", "c"]), "a pinned tab stays with the pinned");
+    }
+
+    #[test]
+    fn favorites_star_unstar_and_follow_the_projects() {
+        let mut t = tabs(&["a"]);
+        t.toggle_favorite("b");
+        t.toggle_favorite("a");
+        assert_eq!(t.favorites, v(&["b", "a"]), "a favorite need not be open");
+        assert!(t.is_favorite("b") && !t.is_favorite("c"));
+        t.toggle_favorite("b");
+        assert_eq!(t.favorites, v(&["a"]));
+        t.keep_listed(&v(&["c"]));
+        assert!(t.favorites.is_empty(), "a project gone is no longer a favorite");
     }
 
     #[test]

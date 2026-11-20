@@ -40,6 +40,8 @@ Python, fastapi, uvicorn, pydantic, numpy and scipy come from the stack's env
 set (env/Python/3.13.15, else env/r4.6_py3.13-release); nothing is
 pip-installed.
 
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Ferguson NM, Cummings DAT, Fraser C, Cajka JC, Cooley PC, Burke DS (2006).
 Strategies for mitigating an influenza pandemic. Nature 442, 448-452.
@@ -49,7 +51,7 @@ antiviral treatment and vaccination; this one is the same idea at toy scale,
 on a plane instead of a census.
 
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

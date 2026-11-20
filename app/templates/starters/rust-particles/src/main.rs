@@ -1,6 +1,7 @@
 //! __HOST__: Particle Universe, an N-body gravity simulation.
 //! `app serve <port>` serves on 127.0.0.1.
 
+mod log;
 mod server;
 mod sim;
 

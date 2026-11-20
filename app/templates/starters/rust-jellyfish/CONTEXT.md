@@ -31,6 +31,9 @@ the module imports nothing.
 - app.env, build.sh, up.sh, down.sh, run.sh, env.sh - the app contract
   (APP-CONTRACT.md); crates from the stack's vendored Rust set, offline
 
+## Logging
+Logging: src/log.rs (`log::info!`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
 As published at route.ndexr.io.
 

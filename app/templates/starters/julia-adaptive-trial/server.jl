@@ -36,6 +36,7 @@
 #                        responders, select, stop, nhist}; millis, threads
 #   GET  /health      "ok"
 
+include(joinpath(@__DIR__, "log.jl"))
 using HTTP, JSON3, Distributions, Random, Statistics
 
 const ROOT = @__DIR__
@@ -372,17 +373,29 @@ function guarded(handler)
             handler(req)
         catch err
             err isa ArgumentError || err isa MethodError || err isa InexactError ||
-                @error "request failed" exception = (err, catch_backtrace())
+                Log.error("$(req.method) $(req.target) failed: $(message(err))")
             json((error = message(err),); status = 400)
         end
     end
 end
 
+const WARM = time()
 # Answer one request of each kind in-process so the first visitor does not wait for the compiler.
 for (path, rule) in (("/api/trial", "thompson"), ("/api/trial", "pbest"), ("/api/oc", "thompson"), ("/api/oc", "pbest"))
     guarded(router)(HTTP.Request("POST", path, ["Content-Type" => "application/json"], "{\"rule\":\"$rule\",\"sims\":100}"))
 end
 
-println("Adaptive Trial Designer listening on http://127.0.0.1:$PORT with $(Threads.nthreads()) threads")
-flush(stdout)
-HTTP.serve(guarded(router), "127.0.0.1", PORT)
+Log.info("compiled the handlers in $(round(time() - WARM; digits = 1)) s")
+
+# One log line per request: method, path, status, milliseconds.
+function logged(handler)
+    return function (req)
+        t0 = time()
+        res = handler(req)
+        Log.request(req, res.status, t0)
+        res
+    end
+end
+
+Log.info("__HOST__: Adaptive Trial Designer serving on 127.0.0.1:$PORT with $(Threads.nthreads()) threads")
+HTTP.serve(logged(guarded(router)), "127.0.0.1", PORT)

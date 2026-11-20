@@ -32,8 +32,11 @@ Black-Scholes 9.1218 for S 100, K 105, sigma 0.25, r 3%, one year).
 Black, F. and Scholes, M. (1973), "The Pricing of Options and Corporate
 Liabilities", J. Political Economy 81(3).
 
+## Logging
+Logging: log.jl (`Log.info`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

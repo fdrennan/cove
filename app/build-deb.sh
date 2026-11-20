@@ -84,17 +84,14 @@ if [ -d /run/systemd/system ]; then
     systemctl try-restart "$u" >/dev/null 2>&1 || true
   done
 fi
+# Three lines, what to run next (operator, 2026-11-14: installs "should look
+# and feel cleaner"). The one-line installer hides this and says its own.
 cat <<MSG
-cove installed.
-  desktop:  cove
-  server, one person:  sudo systemctl enable --now cove@<user>
-            token in ~<user>/.config/ndexr/cove-token, then http://127.0.0.1:8788/login
-  server, everyone:    sudo systemctl enable --now cove-multiuser
-            sign in with your own account at http://127.0.0.1:8787/login;
-            /admin for sessions; policy in /etc/cove/multiuser.conf
-  environments: signed in, Cove runs on your ndexr cell. This machine's arch
-            is one the stack is built for, so you can also build the
-            environments here from source: Cove › Software › Install.
+
+  ✓ Cove is installed. Start it: cove   (or open Cove from your applications)
+    Serve it to everyone on this machine: sudo systemctl enable --now cove-multiuser
+    then sign in at http://127.0.0.1:8787 (one person: cove@<user>, port 8788)
+
 MSG
 POSTINST
 cat > "$root/DEBIAN/prerm" <<'PRERM'

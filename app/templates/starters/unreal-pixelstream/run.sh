@@ -21,11 +21,13 @@ trap 'kill "${pids[@]}" 2>/dev/null; exit 0' TERM INT
 # never apply; every port is this project's own.
 ws="$PS_DIR/SignallingWebServer"
 [ -x "$ws/platform_scripts/bash/node/bin/node" ] && PATH="$ws/platform_scripts/bash/node/bin:$PATH"
+printf '%s INFO    [run] __HOST__: Pixel Streaming signalling server starting on 127.0.0.1:%s (streamer %s)\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$PORT" "$STREAMER_PORT"
 ( cd "$ws" && exec node dist/index.js --no_config --serve --http_root "$ws/www" --homepage player.html \
     --player_port "$PORT" --streamer_port "$STREAMER_PORT" --sfu_port "$SFU_PORT" \
     --reverse_proxy --console_messages basic --log_folder "$PWD/.cove/run/ps-logs" ) &
 pids+=($!)
 sleep 3
+printf '%s INFO    [run] __HOST__: CoveGame starting, streaming to ws://127.0.0.1:%s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$STREAMER_PORT"
 "$game" -PixelStreamingURL="ws://127.0.0.1:$STREAMER_PORT" -RenderOffScreen -ForceRes -ResX=1920 -ResY=1080 -Unattended &
 pids+=($!)
 # Either one ending ends both: up.sh sees it and says so.

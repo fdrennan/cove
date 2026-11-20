@@ -57,8 +57,11 @@ come offline from the stack's vendor directory,
 - Barnes-Hut (J. Barnes and P. Hut, Nature 324, 446 (1986)) is the next step
   past 20 000 bodies; direct summation is exact and fast enough below that.
 
+## Logging
+Logging: src/log.rs (`log::info!`), one format across languages; LOG_LEVEL=DEBUG for more. /frame lines are DEBUG.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

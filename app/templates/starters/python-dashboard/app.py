@@ -5,6 +5,7 @@ and a page opened late still gets the last five minutes at once. Rates (network,
 disk) are deltas between consecutive samples divided by the real interval.
 """
 import asyncio
+import logging
 import os
 import platform
 import socket
@@ -17,6 +18,8 @@ import psutil
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+from log import log
 
 HERE = Path(__file__).parent
 EVERY = 2.0                  # seconds between samples
@@ -92,7 +95,7 @@ async def sampler():
         try:
             history.append(await asyncio.to_thread(sample))
         except Exception as e:               # one bad read must not end the history
-            print("sample failed:", e, flush=True)
+            log.exception("sample failed: %s", e)
         await asyncio.sleep(EVERY)
 
 
@@ -104,6 +107,19 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="System dashboard · __HOST__", lifespan=lifespan, docs_url=None, redoc_url=None)
+log.info("__HOST__: system dashboard starting on 127.0.0.1:%s, a sample every %g s", os.environ.get("PORT"), EVERY)
+
+
+class PollAtDebug(logging.Filter):
+    """The page polls /api/stats every 2 s: its access lines are DEBUG, the rest INFO."""
+    def filter(self, r):
+        if r.args and str(r.args[2]).startswith("/api/stats"):
+            r.levelno, r.levelname = logging.DEBUG, "DEBUG"
+            return logging.getLogger().isEnabledFor(logging.DEBUG)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(PollAtDebug())
 
 
 @app.get("/health")

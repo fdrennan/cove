@@ -296,7 +296,7 @@ impl ReleaseBar {
                 req.credentials = ehttp::Credentials::SameOrigin;
             }
             req.headers.insert("Accept", "application/json");
-            ehttp::fetch(req, move |r| {
+            ehttp::fetch(crate::backend::with_token(req), move |r| {
                 // A failed ask (the server restarting) keeps what was known.
                 if let Some(a) = r.ok().filter(|r| r.ok).and_then(|r| serde_json::from_slice::<Answer>(&r.bytes).ok()) {
                     *slot.lock().unwrap() = Some(a);
@@ -450,7 +450,7 @@ impl ReleaseBar {
                 {
                     req.credentials = ehttp::Credentials::SameOrigin;
                 }
-                ehttp::fetch(req, move |r| {
+                ehttp::fetch(crate::backend::with_token(req), move |r| {
                     *slot.lock().unwrap() = Some(match r {
                         Ok(r) if r.ok => Ok(()),
                         Ok(r) => Err(format!("{} {}", r.status, String::from_utf8_lossy(&r.bytes).chars().take(160).collect::<String>())),

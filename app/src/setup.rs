@@ -157,6 +157,8 @@ impl Step {
 /// Set from anywhere (an agent turn refused for want of a Claude): app.rs opens
 /// setup at the Claude step on its next frame.
 static WANT_CLAUDE: AtomicBool = AtomicBool::new(false);
+/// The same for signing in to ndexr (backend.rs SIGNED_OUT).
+static WANT_SIGN_IN: AtomicBool = AtomicBool::new(false);
 
 /// Whether an agent's refusal is about the person's Claude - then the place to
 /// fix it is setup, not a page elsewhere.
@@ -166,10 +168,25 @@ pub fn about_claude(text: &str) -> bool {
         .any(|k| text.contains(k))
 }
 
+/// When this Cove started (Unix seconds): what happened before is history.
+pub fn session_start() -> i64 {
+    static AT: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *AT.get_or_init(crate::software::now_secs)
+}
+
 /// Under an agent's error: a way straight to connecting a Claude, when the
 /// error is about one - and the first time such an error shows (the free
-/// commands ran out), the Claude step opens by itself.
-pub fn connect_button(ui: &mut egui::Ui, text: &str) {
+/// commands ran out), the Claude step opens by itself. Only `fresh` errors -
+/// a turn sent since this Cove started - open it: an old refusal in the
+/// thread's history, or the Account tab's own button, opened Connect Claude
+/// at every start with Claude connected (operator, 2026-11-19).
+pub fn connect_button(ui: &mut egui::Ui, text: &str, fresh: bool) {
+    if text.contains(crate::backend::SIGNED_OUT) {
+        if ui.add(theme::primary_button("Sign in to ndexr")).clicked() {
+            WANT_SIGN_IN.store(true, Ordering::Relaxed);
+        }
+        return;
+    }
     if !about_claude(text) {
         return;
     }
@@ -188,7 +205,7 @@ pub fn connect_button(ui: &mut egui::Ui, text: &str) {
         }
         new
     };
-    if first || ui.add(theme::primary_button("Connect your Claude")).clicked() {
+    if (first && fresh) || ui.add(theme::primary_button("Connect your Claude")).clicked() {
         WANT_CLAUDE.store(true, Ordering::Relaxed);
     }
 }
@@ -240,12 +257,17 @@ pub struct Setup {
     /// The airgapped copy's folder, as typed; and what saving it said.
     airgap_dir: Option<String>,
     airgap_note: Slot<Result<String, String>>,
-    /// They allowed the experimental build to send its errors to ndexr.io.
-    report_build: bool,
+    /// The stack as the Stack step saw it this frame, for the mount dialog,
+    /// drawn after the setup dialog rather than inside it: a modal opened
+    /// inside another took turns with it on top every frame, and the two
+    /// flickered together too fast to read (operator, 2026-11-19, a new
+    /// system).
+    consent_for: Option<crate::api::StackView>,
 }
 
 impl Default for Setup {
     fn default() -> Self {
+        session_start();
         Setup {
             open: false,
             step: Step::Look,
@@ -266,7 +288,7 @@ impl Default for Setup {
             stack_asked: f64::NEG_INFINITY,
             airgap_dir: None,
             airgap_note: Default::default(),
-            report_build: false,
+            consent_for: None,
         }
     }
 }
@@ -298,6 +320,16 @@ impl Setup {
     pub fn start_stack(&mut self) {
         self.start();
         self.step = Step::Stack;
+    }
+
+    /// Straight to the Stack step with a stack job that ran elsewhere (the
+    /// banner's background setup): its whole output and why it failed show
+    /// there, beside the ways to try again. The banner's Details opened
+    /// Global Options, which says nothing about a failure (operator's
+    /// screenshot, 2026-11-14: "details sends us to this which is confusing").
+    pub fn show_job(&mut self, job: JobView) {
+        self.start_stack();
+        *self.job.lock().unwrap() = job;
     }
 
     /// Straight to the Claude step (the toolbar chip, an agent's refusal).
@@ -381,6 +413,13 @@ impl Setup {
         if WANT_CLAUDE.swap(false, Ordering::Relaxed) {
             self.start_claude(ctx);
         }
+        if WANT_SIGN_IN.swap(false, Ordering::Relaxed) {
+            #[cfg(not(target_arch = "wasm32"))]
+            match crate::account::sign_in(env.account.clone(), ctx.clone()) {
+                Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Err(e) => *self.airgap_note.lock().unwrap() = Some(Err(e)),
+            }
+        }
         if !self.busy.load(Ordering::Relaxed) {
             if let Some((op, token)) = self.pending.take() {
                 self.ask(op, token, env.backend, ctx);
@@ -427,6 +466,14 @@ impl Setup {
             ui.add_space(4.0);
             close = self.nav(ui);
         });
+        // The mount dialog over it, once the setup dialog is drawn.
+        if let Some(s) = self.consent_for.take() {
+            if cvmfs_consent(ctx, "setup", &s) {
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::account::set_stack_mode(crate::api::StackMode::Cvmfs);
+                self.stack_job(Query::StackSetup, "Setting up the ndexr stack", ctx, &mut env);
+            }
+        }
         match close {
             Some(toast) => {
                 self.open = false;
@@ -551,6 +598,14 @@ impl Setup {
             return;
         }
         let air = v.settings.airgap;
+        // The three ways, chosen here on the desktop (api.rs StackMode).
+        // Below them: the options for the one chosen.
+        self.consent_for = Some(s.clone());
+        #[cfg(not(target_arch = "wasm32"))]
+        let mode = self.mode_cards(ui, ctx, env, &v);
+        #[cfg(target_arch = "wasm32")]
+        let mode: Option<crate::api::StackMode> = None;
+        let show = |m: crate::api::StackMode| mode.is_none() || mode == Some(m);
         if s.ok {
             let rev = if s.revision.is_empty() { String::new() } else { format!(", revision {}", s.revision) };
             status_card(ui, theme::ok(), "✓", "The stack is on this machine", &format!("{}{rev}", s.root));
@@ -561,31 +616,49 @@ impl Setup {
         }
         ui.add_space(4.0);
         let running = job.running;
-        if !s.ok && !air {
-            choice(ui, "Use it over CernVM-FS", "Our prebuilt stack, mounted read-only at /opt/ndexr/stack and fetched as it is used. Recommended. Needs root once.", |ui| {
+        if !s.ok && !air && show(crate::api::StackMode::Cvmfs) {
+            choice(ui, "Set up CernVM-FS", "Mounts stack.ndexr.io read-only at /opt/ndexr/stack. Needs root once.", |ui| {
                 if s.root_by.is_empty() {
                     ui.label(RichText::new("No root here without a prompt Cove can show. Run this once in a terminal, then Check again:").size(12.5).color(theme::text_strong()));
                     code_line(ui, &s.setup_cmd);
-                } else if ui.add_enabled(!running, theme::primary_button("Set up CernVM-FS")).clicked() {
-                    self.stack_job(Query::StackSetup, "Setting up the ndexr stack", ctx, env);
+                } else if ui.add_enabled(!running, theme::primary_button("Set up CernVM-FS…")).clicked() {
+                    ask_cvmfs("setup");
                 }
             });
-            let mut report = self.report_build;
+        }
+        if !s.ok && !air && show(crate::api::StackMode::Installed) {
+            // The one answer (api.rs Settings::report), shown and changed here.
+            let mut report = v.settings.report == Some(true);
+            let mut changed = false;
             let mut start = false;
             choice(ui, "Experimental: let Cove build it for you", &format!("Cove runs the whole build here from upstream sources into {}: no root, no ndexr servers. Plan for 150-250 GB of disk and most of a day; Cove uses it as soon as it is built. This build is experimental and some steps may fail.", s.build_dir), |ui| {
-                ui.checkbox(&mut report, RichText::new("Send build errors to ndexr.io. We fix them in Cove and the stack, and your build reruns on the release that has the fix.").size(12.5).color(theme::text_strong()))
-                    .on_hover_text("Only failures, and only once each: the step and recipe that failed, its exit code and error excerpt, and the machine's shape (OS, arch, kernel, glibc, cores, memory). User, host and domain names, paths, emails and IP addresses are scrubbed first. Untick to keep everything on this machine.");
+                changed = ui.checkbox(&mut report, RichText::new("Send build errors to ndexr.io. We fix them in Cove and the stack, and your build reruns on the release that has the fix.").size(12.5).color(theme::text_strong()))
+                    .on_hover_text("Only failures, and only once each: the step and recipe that failed, its exit code and error excerpt, and the machine's shape (OS, arch, kernel, glibc, cores, memory). User, host and domain names, paths, emails and IP addresses are scrubbed first. Untick to keep everything on this machine.")
+                    .changed();
                 if ui.add_enabled(!running && !s.building, egui::Button::new("Allow the experimental build")).clicked() {
                     start = true;
                 }
             });
-            self.report_build = report;
+            if changed {
+                let mut st = v.settings.clone();
+                st.report = Some(report);
+                let slot = env.settings.clone();
+                if let Some(view) = slot.lock().unwrap().as_mut() {
+                    view.settings.report = Some(report);
+                }
+                env.backend.query(Query::SaveSettings { settings: st }, ctx, move |r: Result<SettingsView, String>| {
+                    if let Ok(v) = r {
+                        *slot.lock().unwrap() = Some(v);
+                    }
+                });
+            }
             if start {
                 self.stack_job(Query::StackBuild { report }, if report { "Building the ndexr stack here (errors go to ndexr.io)" } else { "Building the ndexr stack here" }, ctx, env);
             }
         }
         let dir = self.airgap_dir.get_or_insert_with(|| if v.settings.stack_dir.trim().is_empty() { s.build_dir.clone() } else { v.settings.stack_dir.clone() });
         let mut save: Option<(bool, Option<String>)> = None;
+        if show(crate::api::StackMode::Installed) {
         choice(
             ui,
             "Airgapped",
@@ -606,6 +679,7 @@ impl Setup {
                 }
             },
         );
+        }
         if let Some((on, d)) = save {
             self.save_airgap(on, d, ctx, env);
         }
@@ -634,10 +708,21 @@ impl Setup {
                     }
                     ui.label(RichText::new(&job.what).strong().color(theme::text_strong()));
                 });
-                let from = job.lines.len().saturating_sub(10);
-                for l in &job.lines[from..] {
-                    ui.label(RichText::new(l).font(egui::FontId::monospace(11.5)).color(theme::text_strong()));
+                // Failed: the reason first, in words, above the log - it was
+                // scrolled past by the diagnostics that follow it (operator,
+                // 2026-11-19, a fresh Gentoo: "still issues").
+                if !job.running && job.ok == Some(false) {
+                    let why = job.why();
+                    if !why.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(why).size(13.0).strong().color(theme::warn())).wrap());
+                        ui.add_space(2.0);
+                    }
                 }
+                // The whole output, scrolled to its end: the reason a setup
+                // failed is often well above its last line.
+                theme::log_scroll(egui::ScrollArea::vertical().id_salt("setup-job-log").max_height(260.0).stick_to_bottom(true), ui, |ui| {
+                    theme::selectable_lines(ui, &job.lines, egui::FontId::monospace(11.5), theme::text_strong(), true);
+                });
             });
         }
         ui.horizontal(|ui| {
@@ -645,9 +730,96 @@ impl Setup {
                 self.stack_asked = f64::NEG_INFINITY;
             }
             if !s.ok {
-                ui.label(RichText::new("Or skip: R, Python and the shell then come from this computer's PATH, and Global Options › Environment brings the stack later.").size(12.5).color(theme::text_strong()));
+                ui.label(RichText::new("Or skip: the consoles wait for the stack, and Global Options › Environment brings it later. The Terminal works without it.").size(12.5).color(theme::text_strong()));
             }
         });
+    }
+
+    /// The three ways this computer can get the stack, each saying whether
+    /// it is the one chosen (operator, 2026-11-14: "all three must be allowed
+    /// and for the user to choose which mode (installed local, cvmfs local, or
+    /// remote)"). Returns the mode chosen, if any.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mode_cards(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>, v: &SettingsView) -> Option<crate::api::StackMode> {
+        use crate::api::StackMode;
+        let now = crate::account::stack_mode();
+        let s = &v.stack;
+        let cvmfs_here = s.ok && s.root.starts_with("/opt/ndexr/stack");
+        let installed_here = s.ok && !cvmfs_here;
+        let signed_in = env.account.lock().unwrap().email.is_some();
+        let mut pick: Option<StackMode> = None;
+        // CernVM-FS is the default (operator, 2026-11-14: "the default should
+        // be to mount cvmfs, advanced is building it locally"): it leads,
+        // carries the primary button, and the build sits under Advanced.
+        let mut card = |ui: &mut egui::Ui, m: StackMode| {
+            let (title, body, button) = match m {
+                StackMode::Installed => (
+                    "Build it on this computer",
+                    if installed_here { format!("The stack in {} - built here or copied here. Works with no connection to ndexr.io; Builds and Software follow the install.", s.root) } else { "Build the stack here from source (150-250 GB, most of a day), or use a copy you bring. Works with no connection to ndexr.io; Builds and Software follow the install.".to_owned() },
+                    "Build or bring it here",
+                ),
+                StackMode::Cvmfs => (
+                    "Mount it with CernVM-FS",
+                    if cvmfs_here { format!("stack.ndexr.io is mounted at {}, fetched as it is used.", s.root) } else { "Our prebuilt stack.ndexr.io, mounted read-only at /opt/ndexr/stack and fetched as it is used. Needs root once, and the network.".to_owned() },
+                    "Mount CernVM-FS",
+                ),
+                StackMode::Remote => (
+                    "ndexr's stack, remotely",
+                    if signed_in { "Cove runs on your cell, with the stack there; this computer needs none of its own.".to_owned() } else { "Sign in to ndexr: Cove runs on your cell, with the stack there; this computer needs none of its own.".to_owned() },
+                    if signed_in { "Use my cell" } else { "Sign in and use my cell" },
+                ),
+            };
+            let on = now == Some(m);
+            egui::Frame::new()
+                .fill(if on { theme::surface_hi() } else { theme::surface() })
+                .stroke(Stroke::new(if on { 2.0 } else { 1.0 }, if on { theme::primary() } else { theme::pane_brd() }))
+                .corner_radius(10)
+                .inner_margin(egui::Margin::symmetric(14, 10))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(title).size(14.5).strong().color(theme::text_strong()));
+                        if on {
+                            theme::state_mark(ui, theme::State::Good, "chosen");
+                        } else if m == StackMode::Cvmfs {
+                            theme::state_mark(ui, theme::State::Active, "default");
+                        }
+                    });
+                    ui.add(egui::Label::new(RichText::new(body).size(12.5).color(theme::text())).wrap());
+                    let b = if m == StackMode::Cvmfs { theme::primary_button(button) } else { egui::Button::new(button) };
+                    if !on && ui.add(b.min_size(egui::vec2(0.0, 30.0))).clicked() {
+                        pick = Some(m);
+                    }
+                });
+            ui.add_space(6.0);
+        };
+        card(ui, StackMode::Cvmfs);
+        card(ui, StackMode::Remote);
+        egui::CollapsingHeader::new(RichText::new("Advanced: build the stack on this computer").size(13.0).color(theme::text_strong()))
+            .id_salt("setup-advanced-installed")
+            .default_open(now == Some(StackMode::Installed))
+            .show(ui, |ui| card(ui, StackMode::Installed));
+        // CernVM-FS still to set up: chosen once they agree to what it does
+        // to this computer (cvmfs_consent, in the step below).
+        if pick == Some(StackMode::Cvmfs) && !cvmfs_here && !s.root_by.is_empty() {
+            ask_cvmfs("setup");
+            pick = None;
+        }
+        if let Some(m) = pick {
+            crate::account::set_stack_mode(m);
+            if m == StackMode::Remote && !signed_in {
+                match crate::account::sign_in(env.account.clone(), ctx.clone()) {
+                    Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                    Err(e) => *self.airgap_note.lock().unwrap() = Some(Err(e)),
+                }
+            }
+            self.stack_asked = f64::NEG_INFINITY;
+        }
+        if now.is_none() && pick.is_none() {
+            ui.label(RichText::new("Mount CernVM-FS to go on, or choose another way. Cove asks again at every start until you do.").size(12.5).color(theme::State::Attention.color()));
+        }
+        // Nothing chosen yet: the options shown below are the default's.
+        pick.or(now).or(Some(StackMode::Cvmfs))
     }
 
     /// The settings (and the stack in them) when the step opens or Check
@@ -796,7 +968,9 @@ impl Setup {
                 #[cfg(target_arch = "wasm32")]
                 let signed_out = false;
                 if signed_out {
-                    status_card(ui, theme::warn(), "!", "Sign in first", "Your Claude is kept with your ndexr account. Go Back a step to sign in - or connect it later from the Claude chip in the toolbar.");
+                    // A Claude signed in on this computer is used as it is
+                    // (localagent.rs) - the status then says so. Here there is none.
+                    status_card(ui, theme::warn(), "!", "No Claude on this computer yet", "Install Claude Code and sign in to it - run `claude` in the Terminal - and Cove's agent uses it here, with no ndexr account. Or Go Back a step and sign in to ndexr to keep your Claude with your account.");
                 } else {
                     status_card(ui, theme::warn(), "!", "Couldn't check your Claude here", e);
                     if ui.link("Connect it at console.ndexr.io instead").clicked() {
@@ -917,7 +1091,7 @@ impl Setup {
             Some(v) if v.stack.ok => (theme::ok(), v.stack.root.clone()),
             Some(v) if !v.stack.unsupported.is_empty() => (theme::alt(), "Linux only - this computer's own R, Python and shell".to_owned()),
             Some(v) if v.stack.building || self.job.lock().unwrap().running => (theme::primary(), "on its way - Cove uses it once it is there".to_owned()),
-            _ => (theme::warn(), "not set up - R, Python and the shell from this computer's PATH".to_owned()),
+            _ => (theme::warn(), "not set up - the consoles wait for it".to_owned()),
         };
         summary_row(ui, stack.0, "Stack", &stack.1);
         #[cfg(not(target_arch = "wasm32"))]
@@ -1116,6 +1290,83 @@ fn capitalise(s: &str) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 fn airgapped(env: &Env<'_>) -> bool {
     env.settings.lock().unwrap().as_ref().is_some_and(|v| v.settings.airgap)
+}
+
+/// Who asked to set the stack up and is waiting on the person's yes: "setup"
+/// (the first-start dialog) or "app" (the banner and Global Options). Each
+/// draws the dialog only for its own ask, and acts on its own yes.
+static ASK_CVMFS: Mutex<Option<&'static str>> = Mutex::new(None);
+
+/// Ask before mounting the stack (operator, 2026-11-14: "when installing the
+/// stack, the users need more of a modal explaining what they are doing, why
+/// root is used, etc"). Nothing starts until `cvmfs_consent` says yes.
+pub fn ask_cvmfs(who: &'static str) {
+    *ASK_CVMFS.lock().unwrap() = Some(who);
+}
+
+/// The dialog for `who`'s ask, if it is open: what setting up CernVM-FS
+/// does to this computer, why it needs root once, how root is asked for,
+/// what it leaves alone and how to undo it - each true of stages/cvmfs.sh,
+/// the script `ndexr install cvmfs` runs. True on the frame they agree.
+pub fn cvmfs_consent(ctx: &egui::Context, who: &'static str, s: &crate::api::StackView) -> bool {
+    if *ASK_CVMFS.lock().unwrap() != Some(who) {
+        return false;
+    }
+    let (mut yes, mut no) = (false, false);
+    let w = (ctx.content_rect().width() - 32.0).clamp(300.0, 600.0);
+    let how = match s.root_by.as_str() {
+        "root" => "Cove is running as root here, so nothing is asked.",
+        "sudo" => "sudo runs it: this account may use sudo without a password, so nothing is asked.",
+        "pkexec" => "Your system asks for an administrator's password once, in its own window. Cove never sees or keeps it.",
+        _ => "Cove cannot ask for root on this machine: run the command below in a terminal yourself, then press Check again.",
+    };
+    let sudo = if s.root_by == "root" { "" } else { "sudo " };
+    egui::Modal::new(egui::Id::new("cvmfs-consent")).show(ctx, |ui| {
+        ui.set_width(w);
+        ui.label(RichText::new("Mount the ndexr stack on this computer").size(19.0).strong().color(theme::text_strong()));
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new("The stack is R, Python, Julia, compilers and thousands of scientific libraries, built once by ndexr. CernVM-FS - the file system research computing centres use to share software - shows all of it at /opt/ndexr/stack and downloads each file the first time something uses it. Nothing is copied up front.").size(13.0).color(theme::text())).wrap());
+        egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.55).max(200.0)).show(ui, |ui| {
+            let head = |ui: &mut egui::Ui, t: &str| {
+                ui.add_space(8.0);
+                ui.label(RichText::new(t).size(14.0).strong().color(theme::text_strong()));
+            };
+            let item = |ui: &mut egui::Ui, t: &str| {
+                ui.add(egui::Label::new(RichText::new(format!("·  {t}")).size(12.5).color(theme::text())).wrap());
+            };
+            head(ui, "What it does");
+            item(ui, "Installs the CernVM-FS client from CERN's package repository, through this computer's package manager (apt or dnf).");
+            item(ui, "Fetches ndexr's public signing key: the client accepts only files ndexr signed, and checks every one.");
+            item(ui, "Writes the stack's settings to /etc/cvmfs/config.d/stack.ndexr.io.conf and adds one line to /etc/fstab, so the stack mounts read-only at /opt/ndexr/stack, now and after a restart.");
+            item(ui, "Adds /etc/profile.d/ndexr-modules.sh and a line in /etc/bash.bashrc, so a new terminal can load software with `ml R/...`.");
+            head(ui, "Why it needs root, once");
+            item(ui, "Installing a system package, mounting a file system and writing under /etc are things only an administrator may do on Linux. This is the only step that needs it.");
+            item(ui, how);
+            item(ui, "After it, nothing runs as root: R, Python, your projects and Cove itself run as you.");
+            head(ui, "What it leaves alone");
+            item(ui, "The software already on this computer: the stack sits beside it in /opt/ndexr/stack, read-only, and nothing in it can be changed from here.");
+            item(ui, "Your files: nothing in your home folder is read or sent anywhere.");
+            item(ui, "Disk: files are cached as they are used, up to 20 GB, and the oldest go first.");
+            head(ui, "Undo it");
+            item(ui, &format!("{sudo}umount /opt/ndexr/stack, delete the stack.ndexr.io line from /etc/fstab, then remove the cvmfs package ({sudo}apt remove cvmfs, or dnf)."));
+            head(ui, "The command it runs");
+            // The CLI asks for sudo itself where it needs it.
+            code_line(ui, &s.setup_cmd);
+        });
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if s.root_by.is_empty() {
+                no = ui.add(theme::primary_button("I will run it myself")).clicked();
+            } else {
+                yes = ui.add(theme::primary_button("Mount the stack")).clicked();
+                no = ui.button("Not now").clicked();
+            }
+        });
+    });
+    if yes || no {
+        *ASK_CVMFS.lock().unwrap() = None;
+    }
+    yes
 }
 
 /// A command to run by hand, selectable.

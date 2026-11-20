@@ -15,13 +15,14 @@ const IMPORTS = ["node:http", "node:fs", "node:path", "node:os", "node:crypto"];
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const log = require("./log");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const BoardOps = require("./static/board-ops.js");
 
 const PORT = Number(process.env.PORT);
 if (!PORT) {
-  console.error("PORT is unset: start with ./run.sh, whose env.sh sets it from app.env APP_PORT");
+  log.error("PORT is unset: start with ./run.sh, whose env.sh sets it from app.env APP_PORT");
   process.exit(2);
 }
 const ROOT = __dirname;
@@ -103,7 +104,7 @@ function load() {
     v.title = typeof b.title === "string" ? b.title : "Project Canvas";
     return v;
   } catch (e) {
-    if (e.code !== "ENOENT") console.error(`board.json unreadable (${e.message}); starting from the sample board`);
+    if (e.code !== "ENOENT") log.warn(`board.json unreadable (${e.message}); starting from the sample board`);
     const b = sampleBoard();
     fs.mkdirSync(DATA_DIR, { recursive: true });
     writeNow(b);
@@ -130,7 +131,7 @@ function persist() {
   writing = (async () => {
     do {
       dirty = false;
-      try { await writeBoard(board); } catch (e) { console.error("write failed:", e.message); }
+      try { await writeBoard(board); } catch (e) { log.error("board.json write failed:", e); }
     } while (dirty);
     writing = null;
   })();
@@ -319,13 +320,14 @@ async function route(req, res) {
 }
 
 const server = http.createServer((req, res) => {
+  log.request(req, res);
   route(req, res).catch((e) => {
     if (!res.headersSent) json(res, e.status || 500, { error: e.message });
-    if (!e.status) console.error(e);
+    if (!e.status) log.error(`${req.method} ${req.url}:`, e);
   });
 });
 server.listen(PORT, "127.0.0.1", () =>
-  console.log(`Project Canvas on http://127.0.0.1:${PORT} · node ${process.version} · board v${board.version} (${path.relative(ROOT, BOARD_FILE)})`));
+  log.info(`__HOST__: Project Canvas serving on 127.0.0.1:${PORT} · node ${process.version} · board v${board.version} (${path.relative(ROOT, BOARD_FILE)})`));
 
 // down.sh sends TERM: finish the write in flight, close streams, then exit,
 // so the last move before a restart is on disk.

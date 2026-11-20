@@ -25,6 +25,7 @@ export RSTUDIO_CONFIG_HOME="$here/config"
 export RSTUDIO_DATA_HOME="$st/home-data"
 unset RSTUDIO_WHICH_R
 
+printf '%s INFO    [app] __HOST__: Inlet (rserver) starting on 127.0.0.1:%s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$PORT" >&2
 exec rserver \
   --server-daemonize=0 \
   --rsession-which-r="$EBROOTR/bin/R" \

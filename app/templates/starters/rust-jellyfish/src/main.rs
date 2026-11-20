@@ -1,5 +1,6 @@
 //! __HOST__: Jellyfish Drift. `app serve <port>` serves on 127.0.0.1.
 
+mod log;
 mod server;
 
 fn main() {

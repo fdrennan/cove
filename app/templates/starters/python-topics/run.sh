@@ -8,4 +8,4 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./env.sh
 
-exec python3 -m uvicorn app:app --host 127.0.0.1 --port "$PORT" --no-access-log
+exec python3 -m uvicorn app:app --host 127.0.0.1 --port "$PORT"

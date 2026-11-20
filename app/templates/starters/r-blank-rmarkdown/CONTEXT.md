@@ -8,6 +8,8 @@ change this file's first line from "Blank R Markdown" to its name and rewrite th
 - app.env, build.sh, up.sh, down.sh, run.sh, env.sh - how the app is checked,
   started and stopped
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Seeing a change
 A save of report.Rmd renders on the next visit, and the open page reloads itself; a save of server.R restarts the server.
 Packages come from the stack: env/r4.6_py3.13-release (`ml env/r4.6_py3.13-release`); APP_NEEDS in app.env names them, and env.sh refuses to start without them.

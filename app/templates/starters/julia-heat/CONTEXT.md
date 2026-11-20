@@ -43,8 +43,11 @@ per grid size, keeps the faster, and logs the Gaussian check.
   Differenzengleichungen der mathematischen Physik", Math. Ann. 100.
 - Thermal diffusivities: CRC Handbook of Chemistry and Physics, rounded.
 
+## Logging
+Logging: log.jl (`Log.info`), one format across languages; LOG_LEVEL=DEBUG for more. /api/step lines are DEBUG.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

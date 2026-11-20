@@ -33,3 +33,5 @@ images/dist/
 
 # ── Headless Chrome profiles left by screenshot runs (2026-10-26) ──
 app/ud-*/
+# Kept in S3, not git (scripts/supporting-docs-out-of-git.sh)
+supporting_docs/

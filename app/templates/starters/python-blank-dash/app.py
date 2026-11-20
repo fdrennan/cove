@@ -4,6 +4,10 @@ import os
 import plotly.express as px
 from dash import Dash, Input, Output, dcc, html
 
+# Importing log configures the root logger, so werkzeug's line per request
+# comes out in the same format, as [request].
+from log import log
+
 app = Dash(__name__, title="__HOST__")
 server = app.server
 
@@ -23,6 +27,7 @@ app.layout = html.Main(
 def chart(n):
     import numpy as np
 
+    log.info("chart: %s points", n)
     x = np.random.default_rng(1).normal(size=n)
     return px.histogram(x=x, nbins=30, title=f"{n} draws from a normal distribution")
 
@@ -33,6 +38,10 @@ def health():
 
 
 if __name__ == "__main__":
+    # The reloader runs this file twice: a watcher, and the server it restarts on
+    # each save (WERKZEUG_RUN_MAIN set). The server says it is starting.
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        log.info("__HOST__: Dash app starting on 127.0.0.1:%s", os.environ.get("PORT"))
     # debug=False: Flask's debugger runs code typed in the browser, and nginx
     # puts this on the web. Hot reload (the page) and the reloader (the
     # server) are what a save needs, without it.

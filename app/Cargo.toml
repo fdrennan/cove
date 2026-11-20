@@ -1,6 +1,6 @@
 [package]
 name = "cove"
-version = "0.1.8"
+version = "0.1.27"
 edition = "2021"
 description = "Cove — build and manage scientific software at any scale, kernel to user: immutable environments, customisable without breaking earlier ones"
 license = "MIT"
@@ -32,6 +32,9 @@ regex-lite = "0.1"
 eframe = { version = "0.36", features = ["wgpu", "glow", "persistence"] }
 # `cove serve` (server.rs).
 tiny_http = "0.12"
+# A file or folder as a .zip (zippack.rs); both already in the tree through eframe.
+flate2 = "1"
+crc32fast = "1"
 # Waits on rfd's async dialogs from a worker thread (ide.rs transfers).
 pollster = "0.4"
 # The Data tab (db.rs): the person's SQLite database, read natively - SQLite

@@ -72,8 +72,11 @@ come offline from the stack's vendor directory,
   SYN-ACK, one round trip; see S. Savage, "Sting: a TCP-based Network
   Measurement Tool", USENIX USITS (1999).
 
+## Logging
+Logging: src/log.rs (`log::info!`), one format across languages; LOG_LEVEL=DEBUG for more. /api/snapshot lines are DEBUG.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it. Probes let a signed-in visitor make the server open TCP
 connections to a host:port of their choice (no payload, at most 8 probes,
 once a second at most each).

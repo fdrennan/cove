@@ -27,6 +27,9 @@ on first start. Extensions you add from the Extensions view stay in
 A setting applies as you save it; keybindings and snippets on reload of the
 page; a rebuilt code-server after Down, then Up.
 
+## Logging
+run.sh writes the start line in the one format across languages; log.js (`const log = require('./log')`) is there for any Node code added, LOG_LEVEL=DEBUG for more.
+
 ## Auth
 Owner only (APP_ACCESS=owner, set when the site is published). code-server
 runs with --auth none: anyone who reaches it works as you, with your files

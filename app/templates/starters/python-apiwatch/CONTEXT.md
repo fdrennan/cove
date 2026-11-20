@@ -48,6 +48,8 @@ include the client's share of the event loop; it runs one load at a time.
 own, which fetch the Swagger UI and ReDoc scripts from jsDelivr in the browser
 (the stack's Python set carries no offline copy).
 
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 - Percentiles: Hyndman, R. J. and Fan, Y. (1996), "Sample quantiles in
   statistical packages", The American Statistician 50(4) - definition 7,
@@ -59,7 +61,7 @@ own, which fetch the Swagger UI and ReDoc scripts from jsDelivr in the browser
 - Prime sieve: Eratosthenes; the sieve answers pi(10^6) = 78,498.
 
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

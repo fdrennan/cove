@@ -7,6 +7,7 @@ the decision surface, drawn by matplotlib on the server, as a PNG data URI.
 """
 import base64
 import io
+import os
 import time
 import warnings
 from pathlib import Path
@@ -32,6 +33,8 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+
+from log import log as applog   # p() below has a `log` parameter (log-scale slider)
 
 HERE = Path(__file__).parent
 BG = "#0b1020"
@@ -154,6 +157,8 @@ def surface_png(model, Xtr, ytr, Xte, yte, k) -> str:
 # ---- routes ----------------------------------------------------------------------------
 
 app = FastAPI(title="ML playground · __HOST__", docs_url=None, redoc_url=None)
+applog.info("__HOST__: ML Playground starting on 127.0.0.1:%s, %d models x %d datasets",
+            os.environ.get("PORT"), len(MODELS), len(DATASETS))
 
 
 @app.get("/health")
@@ -191,9 +196,11 @@ def train(t: Train):
     k = int(y.max()) + 1
     t1 = time.perf_counter()
     png = surface_png(model, Xtr, ytr, Xte, yte, k)
+    test_acc = float(model.score(Xte, yte))
+    applog.info("trained %s on %s (%d points) in %.0f ms: test accuracy %.3f", t.model, t.dataset, len(ytr), fit_ms, test_acc)
     return {
         "train_acc": float(model.score(Xtr, ytr)),
-        "test_acc": float(model.score(Xte, yte)),
+        "test_acc": test_acc,
         "n_train": len(ytr), "n_test": len(yte), "classes": k,
         "args": {k_: round(v, 6) for k_, v in q.items()},
         "fit_ms": round(fit_ms, 1),

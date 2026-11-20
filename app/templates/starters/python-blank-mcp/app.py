@@ -10,14 +10,18 @@ its arguments, and the Python that answers. This is the protocol itself
 (JSON-RPC 2.0 in a POST, one JSON reply), small enough to read; the
 official `mcp` package is not in the ndexr stack yet.
 """
+import os
 import statistics
 import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from log import log
+
 PROTOCOL = "2025-06-18"
 STARTED = time.time()
+log.info("__HOST__: MCP server starting on 127.0.0.1:%s, tools at /mcp", os.environ.get("PORT"))
 
 
 def describe(numbers: list[float]) -> str:
@@ -57,12 +61,17 @@ def answer(method: str, params: dict):
     if method == "tools/list":
         return {"tools": [{"name": n, "description": t["description"], "inputSchema": t["inputSchema"]} for n, t in TOOLS.items()]}
     if method == "tools/call":
-        tool = TOOLS.get(params.get("name", ""))
+        name = params.get("name", "")
+        tool = TOOLS.get(name)
         if tool is None:
-            raise LookupError(f"no tool named {params.get('name')!r}")
+            log.warning("tools/call: no tool named %r", name)
+            raise LookupError(f"no tool named {name!r}")
+        started = time.perf_counter()
         try:
             text, failed = tool["run"](params.get("arguments") or {}), False
+            log.info("tool %s answered in %.1f ms", name, (time.perf_counter() - started) * 1000)
         except Exception as e:  # the tool's own failure goes back to the agent as its result
+            log.exception("tool %s failed", name)
             text, failed = f"{type(e).__name__}: {e}", True
         return {"content": [{"type": "text", "text": str(text)}], "isError": failed}
     raise LookupError(f"method not found: {method}")

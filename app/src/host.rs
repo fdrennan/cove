@@ -63,13 +63,15 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::StackApply { cvmfs } => serde_json::to_value(stack::apply(cvmfs)?),
         Query::StackTest { proxy } => serde_json::to_value(stack::test(proxy)?),
         Query::StackJob => serde_json::to_value(stack::jobs::view("stack")),
+        Query::StackPkgs { set } => serde_json::to_value(stack::pkgs_sync(set)?),
+        Query::LocalInstall => serde_json::to_value(stack::local_install()),
         Query::Render { path } => serde_json::to_value(render(path)?),
         Query::RenderJob => serde_json::to_value(stack::jobs::view("render")),
         Query::ListDomains => serde_json::to_value(list_domains()),
         Query::Inbox { all, chat, find } => serde_json::to_value(crate::messages::inbox(&session_owner(), *all, chat, find)?),
         Query::InboxAct { act } => Ok(crate::messages::act(&session_owner(), act)?),
         Query::ProjectNames { names } => serde_json::to_value(crate::messages::project_names(&session_owner(), names)?),
-        Query::DeployApp { .. } | Query::DeployJob { .. } | Query::AppRoute { .. } | Query::ProjectRelease { .. } | Query::AppAccess { .. } => return Err("apps are routed from cove.ndexr.io, where they are served".into()),
+        Query::DeployApp { .. } | Query::DeployJob { .. } | Query::AppRoute { .. } | Query::ProjectRelease { .. } | Query::AppAccess { .. } | Query::SitePassword { .. } => return Err("apps are routed from cove.ndexr.io, where they are served".into()),
         // Build / Up / Down (apps.rs): the project's own scripts, run here as
         // the person - in a cove.ndexr.io session and on a desktop alike.
         Query::AppStatus { host } => serde_json::to_value(crate::apps::status(Path::new(&app_dir(host)?))),
@@ -79,6 +81,10 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::Versions { host } => serde_json::to_value(versions_at(Path::new(&app_dir(host)?))?),
         Query::VersionRestore { host, sha } => serde_json::to_value(version_restore_at(Path::new(&app_dir(host)?), sha, &session_owner())?),
         Query::Image { host, verb } => serde_json::to_value(image_at(&session_owner(), Path::new(&app_dir(host)?), host, verb)?),
+        #[cfg(unix)]
+        Query::Record { host, capture } => serde_json::to_value(crate::record::view(Path::new(&app_dir(host)?), *capture)),
+        #[cfg(not(unix))]
+        Query::Record { .. } => return Err("a project's record is read on Linux".into()),
         Query::GitChanges { host, sha } => serde_json::to_value(git_changes_at(Path::new(&app_dir(host)?), sha)?),
         Query::GitDiff { host, sha, path, old } => serde_json::to_value(git_diff_at(Path::new(&app_dir(host)?), sha, path, old)?),
         Query::Easyconfig { name, version } => serde_json::to_value(easyconfig(name, version)?),
@@ -150,6 +156,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::Glimpse { path } => serde_json::to_value(glimpse(path)?),
         Query::ReadFile { path } => serde_json::to_value(read_file(path)?),
         Query::AppLog { path, build } => serde_json::to_value(app_log(path, *build)?),
+        Query::SiteRequests { host } => serde_json::to_value(site_requests(host)?),
         Query::Stamps { paths } => serde_json::to_value(paths.iter().take(500).map(|p| stamp(p)).collect::<Vec<String>>()),
         Query::SiteStamp { path } => serde_json::to_value(site_stamp(path)?),
         Query::SourceOpen { kind, name, version, sets, env } => serde_json::to_value(crate::source::open(kind, name, version, sets, env)?),
@@ -902,20 +909,28 @@ pub fn stack_root() -> PathBuf {
     if let Some(p) = std::env::var_os("COVE_STACK_ROOT") {
         return PathBuf::from(p);
     }
-    let picked = saved_settings().stack_dir;
-    if picked.trim().starts_with('/') {
-        return PathBuf::from(picked.trim());
+    let env_dir = std::env::var_os("NDEXR_STACK_DIR").filter(|d| !d.is_empty()).map(PathBuf::from);
+    find_stack_root(&saved_settings().stack_dir, Path::new("/opt/ndexr/stack"), Path::new(&home()), env_dir, &own_triple())
+}
+
+/// Found wherever it was set up (operator, 2026-11-14: "if it has been set up
+/// locally it should auto detect"): the folder picked in Settings, the CVMFS
+/// mount, Cove's own build (~/.ndexr/stack), and where `ndexr stack up` and
+/// `ndexr stack clone` put one by default ($NDEXR_STACK_DIR, else ~/.svbt) -
+/// the first that holds a use.sh. A picked folder with no stack in it no
+/// longer hides one that is here. None: the picked folder (an airgapped copy
+/// on its way), else the mount - what setup and the messages name.
+fn find_stack_root(picked: &str, mount: &Path, home: &Path, env_dir: Option<PathBuf>, triple: &str) -> PathBuf {
+    let picked = picked.trim();
+    let picked = picked.starts_with('/').then(|| PathBuf::from(picked));
+    let has = |p: &Path| p.join("use.sh").is_file() || p.join(triple).join("use.sh").is_file();
+    let candidates = picked.iter().cloned().chain([mount.to_path_buf(), home.join(".ndexr/stack")]).chain(env_dir).chain([home.join(".svbt")]);
+    for c in candidates {
+        if has(&c) {
+            return c;
+        }
     }
-    let has = |p: &Path| p.join("use.sh").is_file() || p.join(own_triple()).join("use.sh").is_file();
-    let mount = PathBuf::from("/opt/ndexr/stack");
-    if has(&mount) {
-        return mount;
-    }
-    let local = PathBuf::from(home()).join(".ndexr/stack");
-    if has(&local) {
-        return local;
-    }
-    mount
+    picked.unwrap_or_else(|| mount.to_path_buf())
 }
 
 /// Some ndexr stack is here - mounted, built locally, or picked - so modules
@@ -1556,6 +1571,11 @@ pub fn language_env(lang: &str) -> String {
         _ => return String::new(),
     };
     let have = installed_modules();
+    // The list could not be read: the language's own environment by name,
+    // which every stack carries - never none, which meant the last project's.
+    if have.is_empty() {
+        return prefer.first().map(|p| (*p).to_owned()).unwrap_or_default();
+    }
     if let Some(p) = prefer.iter().find(|p| have.iter().any(|m| m == *p)) {
         return (*p).to_owned();
     }
@@ -1580,7 +1600,14 @@ fn installed_modules() -> Vec<String> {
         .map(|l| l.trim().trim_end_matches("(default)").to_owned())
         .filter(|l| !l.is_empty() && !l.ends_with(':') && !l.ends_with('/'))
         .collect();
-    *c = Some((std::time::Instant::now(), v.clone()));
+    // An empty answer (`ml` timed out, the stack still mounting) is never
+    // kept: kept, it named no environment for ten minutes, and every R
+    // project opened in the last project's - env/Rust, nodejs - with no R
+    // console and a Source that did nothing (operator, 2026-11-17,
+    // box.biomarker.ndexr.io).
+    if !v.is_empty() {
+        *c = Some((std::time::Instant::now(), v.clone()));
+    }
     v
 }
 
@@ -1907,14 +1934,20 @@ pub fn preview(path: &str) -> Result<(&'static str, Vec<u8>), String> {
 /// The most one transfer carries: in memory on the way through `serve`.
 pub const TRANSFER_MAX: u64 = 2 << 30;
 
-/// `path` as a download: a file's bytes, or a folder as `<name>.tar.gz` (tar
-/// is on every machine the server runs on, Windows 10+ included). Returns the
-/// file name to save it as and the bytes.
-pub fn download(path: &str) -> Result<(String, Vec<u8>), String> {
+/// `path` as a download, packed as `format` asks (operator, 2026-11-18:
+/// "tar.gz or zip, both should be available to select prior to download"):
+/// "zip" or "tar.gz" pack a file or a folder; "" is a file's own bytes, or a
+/// folder as .tar.gz (what /download?path= always gave). tar is on every
+/// machine the server runs on, Windows 10+ included; zip is made here
+/// (zippack.rs). Returns the file name to save it as and the bytes.
+pub fn download(path: &str, format: &str) -> Result<(String, Vec<u8>), String> {
     let p = resolve(path)?.canonicalize().map_err(|e| format!("{path}: {e}"))?;
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| "root".into());
     let m = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-    if m.is_dir() {
+    if format == "zip" {
+        return Ok((format!("{name}.zip"), crate::zippack::zip(&p, TRANSFER_MAX)?));
+    }
+    if m.is_dir() || format == "tar.gz" {
         let parent = p.parent().ok_or("not a folder that can be archived")?;
         let out = Command::new("tar")
             .arg("-czf")
@@ -2332,7 +2365,7 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
            wrapped <- timing$measured(\"{host}\", .server_inner)\n  \
            function(id = \"{host}\", ...) wrapped(id, ...)\n}})\n"
     ) };
-    let context = format!("# {host} · {host}\nOne-paragraph purpose.\n\n## Files\n- module.r\n\n## Auth\nLogin-gated.\n\n## Open\n- Publish it at route.ndexr.io (DNS, certificate, vhost).\n");
+    let context = format!("# {host} · {host}\nOne-paragraph purpose.\n\n## Files\n- module.r\n\n## Auth\nYou and the people you share it with (Project › Access).\n\n## Open\n- Publish it at route.ndexr.io (DNS, certificate, vhost).\n");
     let mut files: Vec<(String, String)> = vec![("module.r".into(), module), ("CONTEXT.md".into(), context), (".gitignore".into(), ".Rhistory\n.RData\n*.log\n".into())];
     app_contract(&mut files, "r", "module", "")?;
     crate::dotcove::write(&dir, &crate::dotcove::lay(&host, files, &starter_files))?;
@@ -2373,7 +2406,7 @@ fn starter_layout(host: &str, starter: &str) -> Result<Vec<(String, String)>, St
     // created, did not read back, and the chooser closed on nothing
     // (operator, 2026-10-25).
     if !laid.iter().any(|(n, _)| n == "CONTEXT.md") {
-        laid.push(("CONTEXT.md".to_owned(), format!("# {host} · {host}\nA project started in Cove ({starter}).\n\n## Files\n- .cove/ - how Cove builds, starts and stops it\n\n## Auth\nLogin-gated.\n")));
+        laid.push(("CONTEXT.md".to_owned(), format!("# {host} · {host}\nA project started in Cove ({starter}).\n\n## Files\n- .cove/ - how Cove builds, starts and stops it\n\n## Auth\nYou and the people you share it with (Project › Access).\n")));
     }
     // The contract and every type's scripts in .cove/ (dotcove.rs): the
     // person's folder starts with their app and nothing else.
@@ -2815,13 +2848,14 @@ out(list(claimed = done))
 
 /// `Query::PublishDomain`: provision_start for one domain of `owner`'s. Their
 /// own (user_domains), or one nobody holds yet - never someone else's. The
-/// access level starts at `login`: no site is public unless the person makes
-/// it so (operator directive, 2026-09-04; ndexr-provision-child's default).
+/// access level starts at `owner`: the person and the people they share it
+/// with (operator, 2026-11-17: new sites default to "you and selected other
+/// people and never public"; `login` before that). Project › Access widens it.
 const PUBLISH_R: &str = r#"
 args <- commandArgs(TRUE); owner <- args[[length(args)]]; h <- tolower(args[[1]])
 # Who may open it, from the project's .cove/app.env APP_ACCESS (multiuser.rs
-# PublishDomain): "login" unless the project asks for stricter or wider.
-access <- if (length(args) >= 3 && args[[2]] %in% c("public", "login", "owner")) args[[2]] else "login"
+# PublishDomain): "owner" unless the project asks for wider.
+access <- if (length(args) >= 3 && args[[2]] %in% c("public", "login", "owner")) args[[2]] else "owner"
 out <- function(x) { cat(jsonlite::toJSON(x, auto_unbox = TRUE, null = "null")); quit(status = 0) }
 options(box.path = Sys.getenv("NDEXR_SRC"))
 box::use(ud = r/users/user_domains, reg = r/domains/registry, pg = r/connections/postgres, sp = r/users/site_provision)
@@ -2916,11 +2950,34 @@ pub fn restore_as(owner: &str, host: &str) -> Result<crate::api::DomainInfo, Str
     let bucket = std::env::var("NDEXR_GIT_S3_BUCKET").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "ndexr-git-dr".into());
     let prefix = std::env::var("NDEXR_GIT_S3_PREFIX").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| "git".into());
     let base = shell_quote(&format!("s3://{bucket}/{prefix}/repos"));
-    let slugs = format!("{owner}__{host} {host} src__domains__{host}");
+    let mbase = shell_quote(&format!("s3://{bucket}/{prefix}/manifests"));
+    let all = shell_quote(PLATFORM_DOMAINS);
+    // Which copy (measured 2026-11-14 against all 439 people's projects: this
+    // restore had never worked from S3). `aws s3 sync -q` is not an aws option
+    // (--quiet), so every pull failed before git ran. 662 of 1333 mirrors have
+    // no refs/ (every ref packed, and S3 keeps no empty folder), which git
+    // will not open. The first key found was often <owner>__<host>, the
+    // oldest family (135 projects a month stale), and a mirror's HEAD can
+    // name a branch the project left. So: the key with the newest manifest,
+    // refs/ made, every branch kept, the manifest's branch checked out, and
+    // the next key when one fails. <host> and src__domains__<host> are shared
+    // by every folder with that name (autosave runs inside the owner's
+    // folder), so when another folder has this host they could be someone
+    // else's project: only <owner>__<host> is trusted then.
     let from_s3 = format!(
         "{{ aws=\"$HOME/.local/bin/aws\"; [ -x \"$aws\" ] || aws=aws; t=\"$(mktemp -d)\"; ok=1; \
-         for s in {slugs}; do \"$aws\" s3 ls {base}/$s.git/HEAD >/dev/null 2>&1 || continue; \
-           echo \"pulling $s from the S3 archive\"; \"$aws\" s3 sync -q {base}/$s.git \"$t/r.git\" && git clone -q \"$t/r.git\" {d} && git -C {d} remote remove origin && ok=0; break; done; \
+         keys=\"{owner}__{host}\"; \
+         [ -n \"$(ls -d {all}/*/{host} {all}/{host} 2>/dev/null | grep -vxF {all}/{owner}/{host})\" ] || keys=\"$keys {host} src__domains__{host}\"; \
+         order=\"$(for s in $keys; do m=\"$(\"$aws\" s3 cp {mbase}/$s.json - 2>/dev/null | tr -d '\\n')\"; [ -n \"$m\" ] || continue; \
+           at=\"$(printf '%s' \"$m\" | grep -o '\"archived_at\": *\"[^\"]*\"' | cut -d'\"' -f4)\"; \
+           br=\"$(printf '%s' \"$m\" | grep -o '\"branch\": *\"[^\"]*\"' | cut -d'\"' -f4)\"; \
+           printf '%s %s:%s\\n' \"$at\" \"$s\" \"$br\"; done | sort -r | cut -d' ' -f2)\"; \
+         for sb in $order; do s=\"${{sb%%:*}}\"; br=\"${{sb#*:}}\"; \"$aws\" s3 ls {base}/$s.git/HEAD >/dev/null 2>&1 || continue; \
+           echo \"pulling $s from the S3 archive\"; rm -rf \"$t/r.git\"; \
+           \"$aws\" s3 sync --quiet {base}/$s.git \"$t/r.git\" && mkdir -p \"$t/r.git/refs\" && git clone -q \"$t/r.git\" {d} || {{ rm -rf {d}; continue; }}; \
+           for b in $(git -C {d} for-each-ref --format='%(refname:strip=3)' refs/remotes/origin); do [ \"$b\" = HEAD ] || git -C {d} branch -q --track \"$b\" \"origin/$b\" 2>/dev/null; done; \
+           git -C {d} checkout -q \"$br\" 2>/dev/null || git -C {d} checkout -q \"$(git -C {d} for-each-ref --sort=-committerdate --count=1 --format='%(refname:short)' refs/heads)\"; \
+           git -C {d} remote remove origin; ok=0; break; done; \
          rm -rf \"$t\"; [ $ok -eq 0 ]; }}"
     );
     let inner = format!(
@@ -3002,6 +3059,12 @@ pub fn versions_at(dir: &Path) -> Result<Vec<crate::api::Version>, String> {
 /// code's language - what it has loaded, argument names inside a call
 /// included - or, for Rust, from rust-analyzer (lsp.rs).
 pub fn code_complete(path: &str, lang: &str, line: &str, col: usize, text: &str, row: usize) -> Result<crate::api::Completion, String> {
+    // `alias$` of a box::use: the module's own exports, R running or not.
+    if lang == "r" {
+        if let Some(c) = crate::boxcomplete::complete(path, text, line, col, &saved_settings().module) {
+            return Ok(c);
+        }
+    }
     let session = match lang {
         "r" => Lang::R,
         "python" => Lang::Python,
@@ -3459,7 +3522,10 @@ fn brief_text(domain: &str, env: &str) -> String {
          If CONTEXT.md or CLAUDE.md says otherwise (scripts/new-rust-app.sh, an app-<host>.service, a deploy through exec), \
          that note is out of date: do this, and correct the note. \
          For icons or pictures run ndexr-media (icon \"<what>\", generate \"<prompt>\" --name <file>, fetch <url>): \
-         files land in images/ with their source and licence in images/SOURCES.md.\n---\n"
+         files land in images/ with their source and licence in images/SOURCES.md. \
+         Large files (renders, video, audio, datasets, anything over about 5 MB) go in supporting_docs/, never git: it is \
+         gitignored and saved to S3 on every save; link the path a page needs to it (ln -s ../supporting_docs/media/images/x.mp4 images/x.mp4) \
+         and never git add -f one (operator, 2026-11-14; AGENTS-shared.md 7b).\n---\n"
     )
 }
 
@@ -3808,13 +3874,16 @@ options(box.path = Sys.getenv("NDEXR_SRC"))
 box::use(host = r/host, pg = r/connections/postgres, cp = r/complaints/complaints)
 e <- environment(host$host_run_claude)
 unlockBinding("HOST_RUNS_DIR", e); assign("HOST_RUNS_DIR", Sys.getenv("NDEXR_HOST_RUNS"), envir = e); lockBinding("HOST_RUNS_DIR", e)
-email <- tryCatch({
+# "@anonymous" (send_request_anon) is no account: nobody signed in filed it.
+anon <- identical(owner, "@anonymous")
+email <- if (anon) "anonymous" else tryCatch({
   con <- pg$connection_postgres_direct(); on.exit(pool::poolReturn(con), add = TRUE)
   r <- DBI::dbGetQuery(con, "SELECT email FROM ndexr_users WHERE lower(username) = lower($1) LIMIT 1", params = list(owner))
   if (nrow(r)) r$email[[1]] else ""
 }, error = function(e) "")
 if (!nzchar(email)) out(list(error = paste0("no ndexr account named ", owner)))
-r <- tryCatch(cp$file_complaint(email, domain, page_url = paste0("https://cove.ndexr.io/?domain=", domain),
+page <- if (anon) "https://cove.ndexr.io/view/" else paste0("https://cove.ndexr.io/?domain=", domain)
+r <- tryCatch(cp$file_complaint(email, domain, page_url = page,
                                 what_sucks = what, trying_to = trying, urgency = urgency, files = files),
               error = function(e) out(list(error = conditionMessage(e))))
 out(list(id = r$id, sms_ok = isTRUE(r$sms_ok), n_uploads = r$n_uploads))
@@ -3824,6 +3893,28 @@ fn send_request(domain: &str, what: &str, trying: &str, blocked: bool, files: &[
     send_request_as(&session_owner(), domain, what, trying, blocked, files)
 }
 
+
+/// A request from someone not signed in (operator, 2026-11-14: "users should
+/// be able to file anonymous requests through the messaging system without
+/// being logged in"), from the public view's POST /view/request. Filed as
+/// "anonymous" on cove.ndexr.io only - a stranger's words never land in a
+/// customer's own thread - with no files, and with the contact they chose to
+/// leave (unverified) in the trying-to text. complaints.email is NOT NULL and
+/// file_complaint stores whatever it is given, so "anonymous" is that row's
+/// email; it is no address, and nothing mails it.
+pub fn send_request_anon(what: &str, contact: &str, page: &str) -> Result<i64, String> {
+    let what: String = what.trim().chars().take(4000).collect();
+    let contact: String = contact.trim().chars().filter(|c| !c.is_control()).take(200).collect();
+    let page: String = page.trim().chars().filter(|c| !c.is_control()).take(300).collect();
+    let mut trying = String::from("Filed without signing in, from the public view.");
+    if !page.is_empty() {
+        trying.push_str(&format!("\nPage: {page}"));
+    }
+    if !contact.is_empty() {
+        trying.push_str(&format!("\nContact they left (unverified): {contact}"));
+    }
+    send_request_as("@anonymous", "cove.ndexr.io", &what, &trying, false, &[])
+}
 
 /// `send_request` for a named owner (`cove multiuser`, for a session whose
 /// account cannot read the platform).
@@ -4230,11 +4321,19 @@ pub fn transcribe(data_url: &str) -> Result<String, String> {
     transcribe_as(&owner, data_url)
 }
 
-/// One line of claude's stream-json, as the events the panel shows.
-fn agent_events(line: &str, out: &mut Vec<crate::api::AgentEvent>, cost: &mut Option<f64>) {
+/// One line of claude's stream-json, as the events the panel shows, and the
+/// run's cost and how it is paid for.
+pub(crate) fn agent_events(line: &str, chunk: &mut crate::api::AgentChunk) {
+    let (out, cost) = (&mut chunk.events, &mut chunk.cost);
     let ev = |kind: &str, text: String| crate::api::AgentEvent { kind: kind.into(), text };
     let Ok(v) = serde_json::from_str::<Value>(line) else { return };
     match v["type"].as_str() {
+        // claude names its credential on the init line: "none" is the
+        // person's own signed-in plan (OAuth), a key name is the API. Measured
+        // 2026-11-18 over 40 runs in host_runs: 39 "none", 1 ANTHROPIC_API_KEY.
+        Some("system") if v["subtype"] == "init" => {
+            chunk.subscription = v["apiKeySource"].as_str() == Some("none");
+        }
         Some("assistant") => {
             for c in v["message"]["content"].as_array().into_iter().flatten() {
                 match c["type"].as_str() {
@@ -4282,7 +4381,7 @@ pub fn agent_poll(id: &str, offset: u64) -> Result<crate::api::AgentChunk, Strin
         // Only whole lines: a line still being written waits for the next poll.
         let upto = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
         for line in String::from_utf8_lossy(&buf[..upto]).lines() {
-            agent_events(line, &mut chunk.events, &mut chunk.cost);
+            agent_events(line, &mut chunk);
         }
         chunk.offset = offset + upto as u64;
     }
@@ -4597,6 +4696,18 @@ fn site_stamp(path: &str) -> Result<String, String> {
         let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
         return Ok(format!("reload:{t}:{}", m.len()));
     }
+    // What serves the site counts as the site: its live vhost
+    // (nginx/sites-enabled/<host>). A route switched under a kept App frame
+    // left ndexr.io showing the old redirect's page - Cove's viewer - after
+    // `/` had become the React landing (operator, 2026-11-14: "make sure all
+    // projects are aligned with what they are displayed as and open as").
+    // Unreadable for the person: no part in the stamp, as before.
+    let served = root
+        .file_name()
+        .and_then(|h| std::fs::metadata(Path::new(PLATFORM_DOMAINS).join("../../nginx/sites-enabled").join(h)).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
     let (mut newest, mut count, mut size, mut seen) = (0u128, 0u64, 0u64, 0usize);
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
@@ -4625,7 +4736,7 @@ fn site_stamp(path: &str) -> Result<String, String> {
             size += m.len();
         }
     }
-    Ok(format!("{newest}:{count}:{size}"))
+    Ok(format!("{newest}:{count}:{size}:{served}"))
 }
 
 /// The last 64 KB of a project's app log: `.cove/run/app.log`, where up.sh
@@ -4654,23 +4765,99 @@ fn app_log(dir: &str, build: bool) -> Result<FileText, String> {
             text.drain(..=i);
         }
     }
-    Ok(FileText { path: p.display().to_string(), text: strip_ansi(&text) })
+    Ok(FileText { path: p.display().to_string(), text: keep_colour(&text) })
 }
 
-/// Terminal colour and cursor codes (ESC [ ... letter) out of a log: apps
-/// colour their output for a terminal, and the Logs tab is not one.
-fn strip_ansi(s: &str) -> String {
+/// The shared web server's access log: every site's requests, in nginx.conf's
+/// `detailed` format - `IP - HOST "METHOD PATH PROTO" STATUS BYTES
+/// upstream=… ustatus=… urespt=… rt=… ua="…"`. Readable by root and `adm`.
+const ACCESS_LOG: &str = "/var/log/nginx/access.log";
+
+/// One site's recent requests, newest last (operator, 2026-11-17: "logs
+/// arent helpful if they never say anything ... across all sites, react,
+/// rust, etc"). Every app's traffic passes the web server, so this one
+/// reader gives every project a log that says something, whatever its
+/// language, without a line of the person's code changing. Visitors' IP
+/// addresses and browser strings are left out: a site's owner needs what
+/// was asked and how it went, not who asked. Cove's own reload polling
+/// (`/__live`) is left out too, or it would be most of the log. The format
+/// has no time field, so the lines carry none (order is the log's).
+pub fn site_requests(host: &str) -> Result<FileText, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const SCAN: u64 = 8 * 1024 * 1024;
+    const KEEP: usize = 300;
+    let host = host.trim().to_ascii_lowercase();
+    if host.is_empty() || host.contains(char::is_whitespace) {
+        return Err("no site".into());
+    }
+    let mut f = std::fs::File::open(ACCESS_LOG).map_err(|e| format!("the web server's log cannot be read here ({e})"))?;
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let from = len.saturating_sub(SCAN);
+    f.seek(SeekFrom::Start(from)).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    f.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&bytes);
+    let www = format!("www.{host}");
+    let mut lines: Vec<String> = text.lines().skip(usize::from(from > 0)).filter_map(|l| request_line(l, &host, &www)).collect();
+    if lines.len() > KEEP {
+        lines.drain(..lines.len() - KEEP);
+    }
+    if lines.is_empty() {
+        return Ok(FileText { path: String::new(), text: String::new() });
+    }
+    Ok(FileText { path: format!("web server · {host}"), text: lines.join("\n") })
+}
+
+/// One access-log line as a person reads it - `GET /path  200  1.2 KB
+/// 12 ms` - when it is for `host` (or `www.host`); None otherwise.
+fn request_line(l: &str, host: &str, www: &str) -> Option<String> {
+    let (_, rest) = l.split_once(" - ")?;
+    let (h, rest) = rest.split_once(' ')?;
+    if h != host && h != www {
+        return None;
+    }
+    let rest = rest.strip_prefix('"')?;
+    let (req, rest) = rest.split_once("\" ")?;
+    let mut parts = req.split(' ');
+    let (method, path) = (parts.next()?, parts.next().unwrap_or(""));
+    if path.starts_with("/__live") {
+        return None;
+    }
+    let mut it = rest.split(' ');
+    let status = it.next()?;
+    let bytes: u64 = it.next().and_then(|b| b.parse().ok()).unwrap_or(0);
+    let field = |k: &str| rest.split(' ').find_map(|w| w.strip_prefix(k)).unwrap_or("-");
+    let secs: f64 = field("urespt=").parse().or_else(|_| field("rt=").parse()).unwrap_or(0.0);
+    let size = if bytes >= 1_000_000 { format!("{:.1} MB", bytes as f64 / 1e6) } else if bytes >= 1000 { format!("{:.1} KB", bytes as f64 / 1e3) } else { format!("{bytes} B") };
+    let mut shown: String = path.chars().take(120).collect();
+    if path.chars().count() > 120 {
+        shown.push('…');
+    }
+    let flag = if status.starts_with('5') { "!" } else if status.starts_with('4') { "?" } else { " " };
+    Some(format!("{flag} {method:<6} {shown}  {status}  {size}  {:.0} ms", secs * 1000.0))
+}
+
+/// A log as the Logs tab draws it: colour codes (ESC [ ... m) kept, for
+/// ansi.rs to draw (operator, 2026-11-17: "I'm not seeing color in the text
+/// output of App logs"); cursor and erase codes (ESC [ ... other letter) and
+/// carriage returns dropped, since a scrolled log cannot replay them.
+fn keep_colour(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
     while let Some(c) = it.next() {
         if c == '\u{1b}' {
             if it.peek() == Some(&'[') {
                 it.next();
+                let mut code = String::from("\u{1b}[");
                 while let Some(&n) = it.peek() {
                     it.next();
+                    code.push(n);
                     if n.is_ascii_alphabetic() {
                         break;
                     }
+                }
+                if code.ends_with('m') {
+                    out.push_str(&code);
                 }
             }
             continue;
@@ -4712,10 +4899,49 @@ fn write_file(path: &str, text: &str) -> Result<FileText, String> {
 
 #[cfg(test)]
 mod tests {
-    /// The Logs tab reads .cove/run/app.log (else .run/app.log), from a whole
-    /// line, without terminal colour codes; no log is an empty path.
+
     #[test]
-    fn app_log_tails_the_run_log_without_colour() {
+    fn the_stack_is_found_wherever_it_was_set_up() {
+        let t = std::env::temp_dir().join(format!("cove-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let (mount, home) = (t.join("opt"), t.join("home"));
+        let find = |picked: &str, env: Option<std::path::PathBuf>| super::find_stack_root(picked, &mount, &home, env, "x86_64-pc-linux-gnu");
+        let put = |d: &std::path::Path| {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("use.sh"), "").unwrap();
+        };
+        assert_eq!(find("", None), mount, "nothing here: the mount, for the messages");
+        let picked = t.join("airgap");
+        assert_eq!(find(picked.to_str().unwrap(), None), picked, "nothing here: the picked folder");
+        put(&home.join(".svbt").join("x86_64-pc-linux-gnu"));
+        assert_eq!(find(picked.to_str().unwrap(), None), home.join(".svbt"), "the CLI's default, under its triple");
+        put(&home.join(".ndexr/stack"));
+        assert_eq!(find("", None), home.join(".ndexr/stack"), "Cove's own build before the CLI's");
+        put(&mount);
+        assert_eq!(find("", None), mount, "the mount first");
+        put(&picked);
+        assert_eq!(find(picked.to_str().unwrap(), None), picked, "a picked stack wins");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+    /// The init line says how a run is paid for: "none" is the person's own
+    /// plan, a key name the API (#736); the result line carries the cost.
+    #[test]
+    fn agent_events_reads_cost_and_who_pays() {
+        let mut c = crate::api::AgentChunk::default();
+        super::agent_events(r#"{"type":"system","subtype":"init","apiKeySource":"none","model":"claude-opus-5-5"}"#, &mut c);
+        super::agent_events(r#"{"type":"result","total_cost_usd":1.25,"is_error":false}"#, &mut c);
+        assert!(c.subscription);
+        assert_eq!(c.cost, Some(1.25));
+        let mut k = crate::api::AgentChunk::default();
+        super::agent_events(r#"{"type":"system","subtype":"init","apiKeySource":"ANTHROPIC_API_KEY"}"#, &mut k);
+        assert!(!k.subscription);
+    }
+
+    /// The Logs tab reads .cove/run/app.log (else .run/app.log), from a whole
+    /// line, its colour codes kept for ansi.rs and its cursor codes and
+    /// carriage returns dropped; no log is an empty path.
+    #[test]
+    fn app_log_tails_the_run_log_keeping_colour() {
         let d = std::env::temp_dir().join(format!("cove-applog-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join(".cove/run")).unwrap();
@@ -4723,15 +4949,37 @@ mod tests {
         assert_eq!(super::app_log(p, false).unwrap().path, "");
         std::fs::write(d.join(".cove/run/build.log"), "build: ok\n").unwrap();
         assert_eq!(super::app_log(p, true).unwrap().text, "build: ok\n");
-        std::fs::write(d.join(".cove/run/app.log"), "\u{1b}[32mlistening\u{1b}[0m on 8080\r\nGET / 200\n").unwrap();
+        std::fs::write(d.join(".cove/run/app.log"), "\u{1b}[32mlistening\u{1b}[0m on 8080\u{1b}[2K\r\nGET / 200\n").unwrap();
         let t = super::app_log(p, false).unwrap();
         assert!(t.path.ends_with(".cove/run/app.log"));
-        assert_eq!(t.text, "listening on 8080\nGET / 200\n");
+        assert_eq!(t.text, "\u{1b}[32mlistening\u{1b}[0m on 8080\nGET / 200\n");
         let big = "x".repeat(100) + "\n";
         std::fs::write(d.join(".cove/run/app.log"), big.repeat(1000) + "last line\n").unwrap();
         let t = super::app_log(p, false).unwrap();
         assert!(t.text.len() <= 64 * 1024 && t.text.ends_with("last line\n") && t.text.starts_with('x'));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    // The web server's log line for a site, as a person reads it: no IP, no
+    // browser string; other sites and Cove's /__live polling left out.
+    #[test]
+    fn site_request_lines() {
+        let l = |h: &str, req: &str, st: &str| format!(r#"97.1.2.3 - {h} "{req} HTTP/2.0" {st} 2048 upstream=127.0.0.1:8916 ustatus={st} urespt=0.012 rt=0.013 ua="Mozilla/5.0""#);
+        let got = super::request_line(&l("ndexr.io", "GET /static/app.js", "200"), "ndexr.io", "www.ndexr.io").unwrap();
+        assert!(got.contains("GET") && got.contains("/static/app.js") && got.contains("200") && got.contains("2.0 KB") && got.contains("12 ms"), "{got}");
+        assert!(!got.contains("97.1.2.3") && !got.contains("Mozilla"), "visitor details leaked: {got}");
+        assert!(super::request_line(&l("www.ndexr.io", "GET /", "502"), "ndexr.io", "www.ndexr.io").unwrap().starts_with('!'));
+        assert!(super::request_line(&l("other.ndexr.io", "GET /", "200"), "ndexr.io", "www.ndexr.io").is_none());
+        assert!(super::request_line(&l("ndexr.io", "GET /__live", "200"), "ndexr.io", "www.ndexr.io").is_none());
+    }
+
+    // Live: the real web server log on this host (needs root or `adm`).
+    #[test]
+    #[ignore]
+    fn site_requests_live() {
+        let f = super::site_requests("ndexr.io").expect("read the access log");
+        eprintln!("{}\n{}", f.path, f.text.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"));
+        assert!(!f.text.is_empty(), "ndexr.io has had requests");
     }
 
     /// App reloads for the project's own files, never for .cove/ (stage
@@ -4873,7 +5121,8 @@ mod tests {
         std::fs::write(dir.join("module.r"), "a").unwrap();
         let p = dir.display().to_string();
         let first = site_stamp(&p).unwrap();
-        assert!(first.ends_with(":1:1"), "{first}");
+        // newest:count:size:served - no live vhost for a temp folder, so 0.
+        assert!(first.ends_with(":1:1:0"), "{first}");
         std::fs::write(dir.join(".git").join("index.r"), "ignored").unwrap();
         assert_eq!(site_stamp(&p).unwrap(), first);
         std::fs::write(dir.join("module.r"), "ab").unwrap();
@@ -4977,7 +5226,7 @@ mod tests {
     #[test]
     fn every_project_turn_says_change_the_app_in_place() {
         let port = super::brief_text("du.ndexr.io", "APP_LANGUAGE=rust\nAPP_KIND=port\nAPP_PORT=8941\nAPP_HEALTH=/health\n");
-        for want in ["du.ndexr.io's app is the one in this folder", "in place", "replaces what is there", "127.0.0.1:8941", ".cove/build.sh, then .cove/down.sh and .cove/up.sh", "never send going live to another agent"] {
+        for want in ["du.ndexr.io's app is the one in this folder", "in place", "replaces what is there", "127.0.0.1:8941", ".cove/build.sh, then .cove/down.sh and .cove/up.sh", "never send going live to another agent", "go in supporting_docs/, never git"] {
             assert!(port.contains(want), "missing {want:?} in {port}");
         }
         let module = super::brief_text("x.ndexr.io", "APP_LANGUAGE=r\nAPP_KIND=module\n");
@@ -5054,7 +5303,7 @@ mod tests {
             let runs = match id.split('-').next().unwrap_or("") {
                 "julia" => has("server.jl") && has("static/index.html"),
                 "python" => has("app.py") || has("index.qmd"),
-                "r" => has("run.sh") && has("env.sh") && ["plumber.R", "model.R", "report.Rmd", "index.Rmd", "index.qmd", "recipe.sh"].iter().any(|f| has(f)),
+                "r" => has("run.sh") && has("env.sh") && ["app.R", "plumber.R", "model.R", "report.Rmd", "index.Rmd", "index.qmd", "recipe.sh"].iter().any(|f| has(f)),
                 "ide" => has("run.sh") && has("env.sh"),
                 "rust" => has("Cargo.toml") && has("src/main.rs"),
                 "node" => has("server.js") && has("static/index.html"),
@@ -5075,6 +5324,34 @@ mod tests {
         assert_eq!(super::crate_name("2fast.ndexr.io"), "site-2fast-ndexr-io");
     }
 
+    /// Every new project logs from its first run (operator, 2026-11-18: "each
+    /// needs to, at a minimum, a console print or sorts at app start"): its
+    /// language's helper is laid, and the starter either uses it or, where a
+    /// third-party program is the app (code-server, rserver, quarto),
+    /// run.sh prints the start line in the same format.
+    #[test]
+    fn every_starter_logs_from_its_first_run() {
+        for (shared, helper) in [("_r", "r/log.r"), ("_python", "log.py"), ("_node", "log.js"), ("_julia", "log.jl"), ("_rust", "src/log.rs")] {
+            assert!(super::starter_files(shared).iter().any(|(p, _)| *p == helper), "{shared} lays no {helper}");
+        }
+        for id in crate::starters::FOLDER_STARTERS {
+            let files = super::starter_files(id);
+            let logs = files.iter().any(|(p, b)| {
+                let ext = p.rsplit('.').next().unwrap_or("");
+                match ext {
+                    "r" | "R" | "Rmd" | "qmd" => b.contains("r/log") || b.contains("r / log"),
+                    "py" => b.contains("from log import"),
+                    "js" => b.contains("require('./log')") || b.contains("require(\"./log\")"),
+                    "jl" => b.contains("log.jl"),
+                    "rs" => b.contains("mod log;"),
+                    "sh" => b.contains(" INFO    ["),
+                    _ => false,
+                }
+            });
+            assert!(logs, "{id}: nothing in it logs a start line (templates/starters/_<language>/log.*)");
+        }
+    }
+
     /// The language sets a starter's env.sh loads: env/r4.6_py3.13-release
     /// joins these two (manifests/combos.txt), env/Julia/1.11.7 the third.
     const NEEDS_SETS: &[(&str, &str)] = &[("python", "Python/3.13.15"), ("r", "R/4.6.1-bioc3.23"), ("julia", "Julia/1.11.7")];
@@ -5083,7 +5360,9 @@ mod tests {
     /// as records of their own: present today, but nothing keeps them there.
     /// Each waits on the referral named; when it lands, this test says to
     /// drop the line.
-    const NEEDS_NOT_YET_RECORDS: &[(&str, &str, &str)] = &[];
+    // box: in env/r4.6_py3.13-release (1.2.3) but not a record of the R set
+    // yet - the Shiny-with-box starter needs it (referral #796).
+    const NEEDS_NOT_YET_RECORDS: &[(&str, &str, &str)] = &[("r", "box", "referral #796")];
 
     fn manifest_records(set: &str) -> Option<Vec<(String, bool)>> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../ndexr.ndexr.io/crate/assets/stack-kit/manifest/manifests");
@@ -5369,10 +5648,17 @@ mod tests {
         for bad in ["../x", "a/b", "", "..", "._junk", ".DS_Store"] {
             assert!(upload(&dir, bad, &b""[..]).is_err(), "{bad:?}");
         }
-        let (name, bytes) = download(&a).unwrap();
+        let (name, bytes) = download(&a, "").unwrap();
         assert_eq!((name.as_str(), bytes.as_slice()), ("data.csv", &b"1,2"[..]));
-        let (name, gz) = download(&dir).unwrap();
+        let (name, gz) = download(&dir, "").unwrap();
         assert!(name.ends_with(".tar.gz") && gz.starts_with(&[0x1f, 0x8b]), "{name}");
+        // The choice before a download: either packing, of a file or a folder.
+        let (name, gz) = download(&a, "tar.gz").unwrap();
+        assert!(name == "data.csv.tar.gz" && gz.starts_with(&[0x1f, 0x8b]), "{name}");
+        let (name, z) = download(&dir, "zip").unwrap();
+        assert!(name.ends_with(".zip") && z.starts_with(b"PK\x03\x04"), "{name}");
+        let (name, z) = download(&a, "zip").unwrap();
+        assert!(name == "data.csv.zip" && z.starts_with(b"PK\x03\x04"), "{name}");
         std::fs::remove_dir_all(&d).unwrap();
     }
 

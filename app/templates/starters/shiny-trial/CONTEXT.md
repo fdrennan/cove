@@ -28,6 +28,8 @@ sd 1/sqrt(n), and its variance is chi-squared on n - 1 degrees of freedom over
 n - 1. The t-test sees exactly what it would from n draws, and 5000 trials of
 500 patients cost four numbers each.
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R and Shiny only, from the stack's R; no dataset, key or database.
 Cohen, J. (1988), "Statistical Power Analysis for the Behavioral Sciences",
@@ -35,7 +37,7 @@ Cohen, J. (1988), "Statistical Power Analysis for the Behavioral Sciences",
 Are Inflated", Epidemiology 19(5).
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

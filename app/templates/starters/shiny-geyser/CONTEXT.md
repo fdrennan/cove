@@ -37,6 +37,8 @@ ellipses and log-likelihood trace follow.
 all 272: wait = 33.5 + 10.73 x eruption length, R squared 0.81; EM settles on
 clusters with mean eruptions 2.04 and 4.29 minutes, waits 54.5 and 80.0.
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R and Shiny only, from the stack's R; no dataset file, key or database.
 Azzalini, A. and Bowman, A. W. (1990), "A Look at Some Data on the Old
@@ -48,7 +50,7 @@ Data-Based Bandwidth Selection Method for Kernel Density Estimation", JRSS B
 Analysis".
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

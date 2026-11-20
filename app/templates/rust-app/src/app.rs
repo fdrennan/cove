@@ -58,7 +58,7 @@ impl App {
     }
 
     fn ask<T: serde::de::DeserializeOwned + Send + 'static>(&self, q: &Query, ctx: &egui::Context, done: impl FnOnce(Result<T, String>) + Send + 'static) {
-        let mut req = ehttp::Request::post(format!("{}/api/q", self.base), serde_json::to_vec(q).unwrap_or_default());
+        let mut req = same_origin(ehttp::Request::post(format!("{}/api/q", self.base), serde_json::to_vec(q).unwrap_or_default()));
         req.headers.insert("Content-Type", "application/json");
         let ctx = ctx.clone();
         ehttp::fetch(req, move |r| {
@@ -152,7 +152,7 @@ impl App {
                 *note.lock().unwrap() = Some(format!("uploading {name}…"));
                 let enc: String = name.bytes().map(|b| if b.is_ascii_alphanumeric() || b".-_".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
                 let (note, ctx) = (note.clone(), ctx.clone());
-                ehttp::fetch(ehttp::Request::post(format!("{base}/api/upload?name={enc}"), bytes), move |r| {
+                ehttp::fetch(same_origin(ehttp::Request::post(format!("{base}/api/upload?name={enc}"), bytes)), move |r| {
                     *note.lock().unwrap() = Some(match r {
                         Ok(r) if r.ok => format!("added {name}"),
                         Ok(r) => format!("{name}: {}", String::from_utf8_lossy(&r.bytes)),
@@ -336,4 +336,18 @@ impl eframe::App for App {
             }
         });
     }
+}
+
+/// A request to this app's own server that carries the page's sign-in
+/// cookie. ehttp's fetch omits credentials by default, so behind a login or
+/// admin gate every API call came back as a redirect to sign-in and the page
+/// said "Failed to fetch" while the page itself had loaded (du.ndexr.io
+/// 2026-11-08, kalshi.ndexr.io 2026-11-17).
+#[allow(unused_mut)]
+fn same_origin(mut req: ehttp::Request) -> ehttp::Request {
+    #[cfg(target_arch = "wasm32")]
+    {
+        req.credentials = ehttp::Credentials::SameOrigin;
+    }
+    req
 }

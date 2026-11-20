@@ -32,8 +32,11 @@ run); `./up.sh` and `./down.sh` start and stop it in the background.
 Lorenz, E. N. (1963), "Deterministic Nonperiodic Flow", J. Atmospheric
 Sciences 20(2).
 
+## Logging
+Logging: src/log.rs (`log::info!`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

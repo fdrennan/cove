@@ -32,6 +32,7 @@ if [ -r "$vsix/install-order.txt" ]; then
   done <"$vsix/install-order.txt"
 fi
 
+printf '%s INFO    [run] __HOST__: code-server (VS Code) starting on 127.0.0.1:%s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$PORT"
 exec code-server \
   --bind-addr "127.0.0.1:$PORT" \
   --auth none \

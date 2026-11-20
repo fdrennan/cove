@@ -10,6 +10,7 @@ change this file's first line from "Blank Quarto (Python)" to its name and rewri
 ## Seeing a change
 `quarto preview` renders it again on every save and reloads the open page. The notebook kernel is this Python, written by env.sh into .run/jupyter (the stack registers none Quarto can see).
 Packages come from the stack: env/r4.6_py3.13-release, which also loads Quarto; APP_NEEDS in app.env names them.
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
 
 ## Paths nginx keeps for itself
 A request to /vendor/, /images/, /css/, /javascript/, /shared/, /sites/,

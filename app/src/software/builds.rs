@@ -1120,6 +1120,7 @@ impl SoftwarePane {
             self.pinned = None;
             return;
         }
+        let mut open = self.inventory(ui, cat, px);
         // The package chips below are coloured by the env set they are built for.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -1130,7 +1131,6 @@ impl SoftwarePane {
                 ui.label(RichText::new("■").size(13.0).color(super::Catalog::group_color(g))).on_hover_text(format!("{label}\n{n} packages are in exactly these env manifests"));
             }
         });
-        let mut open = None;
         for c in &cv.boxes {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
@@ -1189,6 +1189,65 @@ impl SoftwarePane {
         if let Some(i) = open {
             self.open(i);
         }
+    }
+
+    /// Everything installed at the pinned moment, per lane: each package's
+    /// first finished build there at or before it, counted by paradigm, and
+    /// found by name (referral #780: "the full inventory installed at that
+    /// moment"). The item a found chip opens, if clicked.
+    fn inventory(&mut self, ui: &mut egui::Ui, cat: &Catalog, px: f64) -> Option<usize> {
+        if self.inv.as_ref().is_none_or(|(h, _)| *h != cat.hash) {
+            self.inv = Some((cat.hash.clone(), Arc::new(cat.installs_by_lane())));
+        }
+        let inv = self.inv.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();
+        let mut open = None;
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Installed by then").strong().color(theme::text_strong()));
+            ui.add(egui::TextEdit::singleline(&mut self.inv_q).hint_text("find a package").desired_width(170.0));
+        });
+        let q = self.inv_q.trim().to_lowercase();
+        for (lane, list) in inv.iter() {
+            let upto = list.partition_point(|(e, _)| (*e as f64) <= px);
+            if upto == 0 {
+                continue;
+            }
+            let mut by = [0usize; 8];
+            for (_, i) in &list[..upto] {
+                by[cat.kind[*i as usize] as usize] += 1;
+            }
+            let name = if lane == "cuda" { "x86_64 + CUDA" } else { lane.as_str() };
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.label(RichText::new(format!("{name} {}", thousands(upto))).monospace().strong().color(theme::text()));
+                for k in super::Kind::ALL.into_iter().chain([super::Kind::Other]).filter(|k| by[*k as usize] > 0) {
+                    ui.label(RichText::new(format!("{} {}", k.label(), thousands(by[k as usize]))).monospace().size(11.5).color(k.color()));
+                }
+            });
+            if q.is_empty() {
+                continue;
+            }
+            let hits: Vec<&(i64, u32)> = list[..upto].iter().filter(|(_, i)| cat.lname[*i as usize].contains(&q)).collect();
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if hits.is_empty() {
+                    ui.label(RichText::new(format!("no \"{q}\" on {name} by then")).size(11.0).color(theme::hush()));
+                }
+                for (e, i) in hits.iter().take(40) {
+                    let i = *i as usize;
+                    let r = super::chip(ui, &cat.items[i].n, cat.set_color(i).unwrap_or(cat.kind[i].color()), false)
+                        .on_hover_text(format!("{} · first built on {name} {} UTC", cat.kind[i].long(), fmt_date(e + cat.t0)));
+                    if r.clicked() {
+                        open = Some(i);
+                    }
+                }
+                if hits.len() > 40 {
+                    ui.label(RichText::new(format!("+{} more", hits.len() - 40)).size(10.5).color(theme::hush()));
+                }
+            });
+        }
+        ui.separator();
+        open
     }
 
     // ── Queue ─────────────────────────────────────────────────────────────
@@ -1337,8 +1396,6 @@ impl SoftwarePane {
 /// Returns the line whose name was clicked, to focus on.
 fn machines_table(ui: &mut egui::Ui, cat: &Catalog, cv: &Curves) -> Option<u16> {
     let mut focus = None;
-    ui.add(egui::Label::new(RichText::new("Tap a moment on the curves for what finished then; tap a name to show only its line.").size(12.5).color(theme::text())).wrap());
-    ui.add_space(6.0);
     let machines = cv.boxes.iter().all(|c| c.machine.is_some());
     let all: usize = cv.boxes.iter().map(|c| c.ends.len()).sum();
     let all_secs: i64 = cv.boxes.iter().map(|c| c.secs.last().copied().unwrap_or(0)).sum();

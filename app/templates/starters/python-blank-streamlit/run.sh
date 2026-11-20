@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./env.sh
 
+printf '%s INFO    [app] __HOST__: Streamlit app starting on 127.0.0.1:%s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$PORT"
 exec python3 -m streamlit run app.py --server.address 127.0.0.1 --server.port "$PORT" --server.headless true \
   --server.runOnSave true --server.fileWatcherType poll --browser.gatherUsageStats false \
   --server.enableCORS false --server.enableXsrfProtection false --global.developmentMode false

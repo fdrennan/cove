@@ -383,19 +383,31 @@ fn text(ui: &mut egui::Ui, s: &str, size: f32, color: Color32, bold: bool) {
 /// 2026-10-18: "when i reference a domain in cove.ndexr.io agents panel ...
 /// they should be able to click over into it if they have access").
 pub fn typed(ui: &mut egui::Ui, s: &str, size: f32, color: Color32, wrap: f32) {
+    typed_parts(ui, &[(s, color)], size, wrap);
+}
+
+/// `typed`, in parts of their own colour: a message of typed and dictated words
+/// (agent.rs heard_parts). Domains are links in every part.
+pub fn typed_parts(ui: &mut egui::Ui, parts: &[(&str, Color32)], size: f32, wrap: f32) {
     let mut links = Vec::new();
-    let runs = mark_domains(vec![(s.to_owned(), Style::default())], &mut links);
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap;
     let font = egui::FontId::proportional(size);
-    for (t, st) in &runs {
-        let fmt = egui::TextFormat {
-            font_id: font.clone(),
-            color: if st.link { theme::primary() } else { color },
-            underline: if st.link { Stroke::new(1.0, theme::primary().gamma_multiply(0.6)) } else { Stroke::NONE },
-            ..Default::default()
-        };
-        job.append(t, 0.0, fmt);
+    let mut base = 0usize;
+    for (s, color) in parts {
+        let mut mine = Vec::new();
+        let runs = mark_domains(vec![((*s).to_owned(), Style::default())], &mut mine);
+        links.extend(mine.into_iter().map(|(r, u)| (r.start + base..r.end + base, u)));
+        base += s.chars().count();
+        for (t, st) in &runs {
+            let fmt = egui::TextFormat {
+                font_id: font.clone(),
+                color: if st.link { theme::primary() } else { *color },
+                underline: if st.link { Stroke::new(1.0, theme::primary().gamma_multiply(0.6)) } else { Stroke::NONE },
+                ..Default::default()
+            };
+            job.append(t, 0.0, fmt);
+        }
     }
     let galley = ui.fonts_mut(|f| f.layout_job(job));
     let resp = ui.add(egui::Label::new(galley.clone()).sense(if links.is_empty() { Sense::hover() } else { Sense::click() }));

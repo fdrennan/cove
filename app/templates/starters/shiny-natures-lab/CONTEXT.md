@@ -32,6 +32,8 @@ its true effects, and every branch reads it.
 - app.env, build.sh - a module app (no port of its own); build.sh checks that
   module.r parses
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## The models
 - Genotypes under inbreeding: a knockout's odds are q^2 + F q (1 - q); first
   cousins' children have F = 1/16.
@@ -61,7 +63,7 @@ Nature 629. BIO, Informa and QLS (2021), "Clinical Development Success Rates
 2011-2020".
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - The essay's "over 11 million" outbred people counts knockout genotypes. Under

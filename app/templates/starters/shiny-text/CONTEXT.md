@@ -22,6 +22,8 @@ the keyness is measured against.
 - app.env, build.sh - a module app (no port of its own); build.sh checks that
   module.r parses
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R and Shiny only, from the stack's R; no dataset, key or database.
 Flesch, R. (1948), "A new readability yardstick", J. Applied Psychology
@@ -29,7 +31,7 @@ Flesch, R. (1948), "A new readability yardstick", J. Applied Psychology
 "Human Behavior and the Principle of Least Effort".
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

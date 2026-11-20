@@ -6,11 +6,12 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const log = require('./log');
 
 const PORT = Number(process.env.PORT || process.env.APP_PORT);
 if (!Number.isInteger(PORT) || PORT <= 0) {
   // env.sh sets PORT from app.env; a missing port is a launch mistake, not a default.
-  console.error('PORT is not set: start with ./run.sh (it reads APP_PORT from app.env)');
+  log.error('PORT is not set: start with ./run.sh (it reads APP_PORT from app.env)');
   process.exit(2);
 }
 const STATIC = path.join(__dirname, 'static');
@@ -64,6 +65,7 @@ function serveStatic(res, urlPath) {
 }
 
 http.createServer((req, res) => {
+  log.request(req, res);
   const url = new URL(req.url, 'http://localhost');
   const route = ROUTES[`${req.method} ${url.pathname}`];
   if (route) {
@@ -75,4 +77,4 @@ http.createServer((req, res) => {
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'method not allowed' });
   serveStatic(res, url.pathname);
-}).listen(PORT, '127.0.0.1', () => console.log(`serving on 127.0.0.1:${PORT}`));
+}).listen(PORT, '127.0.0.1', () => log.info(`__HOST__: site serving on 127.0.0.1:${PORT}`));

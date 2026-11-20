@@ -170,6 +170,7 @@ fn snapshot(app: &App, n: usize) -> String {
 fn stream(app: Arc<App>, req: Request) {
     if app.streams.fetch_add(1, Ordering::SeqCst) >= MAX_STREAMS {
         app.streams.fetch_sub(1, Ordering::SeqCst);
+        crate::log::warn!("event stream refused: {MAX_STREAMS} already open");
         let _ = req.respond(json_reply(503, json!({ "error": "too many open streams; poll /api/snapshot" })));
         return;
     }
@@ -202,6 +203,7 @@ fn stream(app: Arc<App>, req: Request) {
             ok = w.write_all(msg.as_bytes()).and_then(|_| w.flush()).is_ok();
         }
         app.streams.fetch_sub(1, Ordering::SeqCst);
+        crate::log::debug!("event stream closed");
     });
 }
 
@@ -223,6 +225,8 @@ fn blob(q: &[(String, String)]) -> Result<Response<std::io::Take<std::io::Repeat
 
 fn handle(app: &Arc<App>, req: Request) {
     let url = req.url().to_owned();
+    let t0 = Instant::now();
+    let method = req.method().clone();
     let (path, query) = url.split_once('?').unwrap_or((&url, ""));
     let q = params(query);
     // Behind a prefix (a cell's /proxy/<port>/) the page asks beside itself,
@@ -232,12 +236,19 @@ fn handle(app: &Arc<App>, req: Request) {
         .find(|r| path.ends_with(r))
         .unwrap_or(if path.ends_with('/') || path.ends_with("/index.html") { "/" } else { "" });
     let reply = match (req.method(), route) {
-        (Method::Get, "/api/stream") => return stream(Arc::clone(app), req),
+        (Method::Get, "/api/stream") => {
+            crate::log::info!("{method} {path}: event stream opened");
+            return stream(Arc::clone(app), req);
+        }
         (Method::Get, "/api/blob") => {
-            match blob(&q) {
-                Ok(r) => { let _ = req.respond(r); }
-                Err(e) => { let _ = req.respond(bad(e)); }
+            let (status, sent) = match blob(&q) {
+                Ok(r) => (200, req.respond(r)),
+                Err(e) => (400, req.respond(bad(e))),
+            };
+            if let Err(e) = sent {
+                crate::log::warn!("{method} {path}: download cut short: {e}");
             }
+            crate::log::request(&method, path, status, t0);
             return;
         }
         (Method::Get, "/") => Response::from_data(PAGE.as_bytes().to_vec())
@@ -272,14 +283,22 @@ fn handle(app: &Arc<App>, req: Request) {
         (_, "") => json_reply(404, json!({ "error": format!("no route: {path}") })),
         (m, r) => json_reply(405, json!({ "error": format!("{r} does not take {m}") })),
     };
-    let _ = req.respond(reply);
+    let status = reply.status_code().0;
+    if let Err(e) = req.respond(reply) {
+        crate::log::error!("{method} {path}: response not sent: {e}");
+    }
+    if route == "/api/snapshot" && status < 400 {
+        crate::log::debug!("{method} {path} {status} {} ms", t0.elapsed().as_millis());
+    } else {
+        crate::log::request(&method, path, status, t0);
+    }
 }
 
 pub fn serve(port: u16) {
     let server = match Server::http(("127.0.0.1", port)) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            eprintln!("cannot listen on 127.0.0.1:{port}: {e}");
+            crate::log::error!("cannot listen on 127.0.0.1:{port}: {e}");
             std::process::exit(1);
         }
     };
@@ -306,7 +325,7 @@ pub fn serve(port: u16) {
     // Workers answer the short requests; a stream moves to its own thread, a
     // blob holds its worker for as long as it downloads.
     let workers = 6;
-    println!("__HOST__: serving on http://127.0.0.1:{port}");
+    crate::log::info!("__HOST__: Network Observatory serving on 127.0.0.1:{port}");
     let handles: Vec<_> = (0..workers)
         .map(|_| {
             let (s, app) = (Arc::clone(&server), Arc::clone(&app));

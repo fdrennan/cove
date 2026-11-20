@@ -257,8 +257,34 @@ pub fn action(host: &str, dir: &Path, verb: &str) -> Result<crate::api::JobView,
     // settings_tab.rs) exported, so up.sh's run.sh inherits them; a project's
     // own up.sh needs no change for it.
     let vars = if verb == "up" && dir.join(&vars_rel).is_file() { format!("set -a && . ./{vars_rel} && set +a && ") } else { String::new() };
-    let cmd = format!("cd {} && {vars}./{rel}", crate::api::shell_quote(&dir.display().to_string()));
-    crate::stack::jobs::start(slot(host), format!("{verb} {host}"), cmd, None)
+    // Colour asked for though the app writes to a file: the Logs tab draws
+    // it (ansi.rs).
+    // Once Up answers, the record of what it runs on (record.rs, `.cove/
+    // record.json`): read off the running app, so it is what loaded, not
+    // what a script meant to. A record that cannot be taken does not fail Up.
+    let record = match (verb, std::env::current_exe()) {
+        ("up", Ok(exe)) if cfg!(unix) => format!(" && {{ {} record . || true; }}", crate::api::shell_quote(&exe.display().to_string())),
+        _ => String::new(),
+    };
+    let cmd = format!("cd {} && {vars}{} ./{rel}{record}", crate::api::shell_quote(&dir.display().to_string()), crate::ansi::COLOR_ENV);
+    // A failed Build or Up goes home when the person allowed reports (operator,
+    // 2026-11-19: a Julia starter's "Package HTTP not found" - "errors like
+    // these should be sent back if the user allows error reporting"). Named by
+    // what it was and the app's language, never the project's name.
+    let lang = std::fs::read_to_string(cdir.join("app.env")).ok().and_then(|t| t.lines().find_map(|l| l.trim().strip_prefix("APP_LANGUAGE=").map(|v| v.trim().to_owned()))).unwrap_or_default();
+    let stage = format!("cove:app-{verb}");
+    let verb_owned = verb.to_owned();
+    let done: crate::stack::jobs::Done = Box::new(move |ok, v| {
+        if !ok && crate::stack::reporting() {
+            let mut r = v.clone();
+            r.what = format!("{verb_owned} of a {} app", if lang.is_empty() { "Cove" } else { &lang });
+            crate::stack::report_failure(&stage, &mut r);
+            if let Some(last) = r.lines.last() {
+                v.lines.push(last.clone());
+            }
+        }
+    });
+    crate::stack::jobs::start(slot(host), format!("{verb} {host}"), cmd, Some(done))
 }
 
 /// That project's job as far as it got.

@@ -8,5 +8,5 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./env.sh
 
-echo "Monte Carlo Pricer: starting Julia on 127.0.0.1:$PORT (the first start compiles packages and can take a few minutes)"
+printf '%s INFO    [run] Monte Carlo Pricer: starting Julia on 127.0.0.1:%s (the first start compiles packages and can take a few minutes)\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$PORT"
 exec julia --startup-file=no server.jl

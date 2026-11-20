@@ -17,6 +17,36 @@ use serde::de::DeserializeOwned;
 
 use crate::api::Query;
 
+/// The token of the `cove serve` this desktop window talks to over
+/// `Backend::Http` (`--connect` with `--token`, or the person's own server),
+/// sent on every request as `Authorization: Bearer` (server.rs `authed`). A
+/// window has one backend for its whole life, so this is set once at start.
+/// Without it `--connect` could reach only a server that trusts loopback - the
+/// native client sent no cookie and no header (2026-11-16, the first step to
+/// running Cove on a person's own server).
+#[cfg(not(target_arch = "wasm32"))]
+static SERVER_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_server_token(token: &str) {
+    let t = token.trim();
+    if !t.is_empty() {
+        let _ = SERVER_TOKEN.set(t.to_owned());
+    }
+}
+
+/// `req` with this window's server token, when there is one. A browser's
+/// page needs none: its cookie goes with it.
+pub fn with_token(req: ehttp::Request) -> ehttp::Request {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(t) = SERVER_TOKEN.get() {
+        let mut req = req;
+        req.headers.insert("Authorization", format!("Bearer {t}"));
+        return req;
+    }
+    req
+}
+
 #[derive(Clone)]
 pub enum Backend {
     #[cfg(not(target_arch = "wasm32"))]
@@ -60,15 +90,17 @@ impl Backend {
         }
     }
 
-    /// Where the browser downloads `path` from (a file, or a folder as .tar.gz):
-    /// the server's /download, which the person's sign-in rides along to.
-    pub fn download_url(&self, path: &str) -> String {
+    /// Where the browser downloads `path` from, packed as `format` ("zip",
+    /// "tar.gz", or "" for a file as it is and a folder as .tar.gz): the
+    /// server's /download, which the person's sign-in rides along to.
+    pub fn download_url(&self, path: &str, format: &str) -> String {
+        let q = if format.is_empty() { String::new() } else { format!("&format={}", url_encode(format)) };
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Backend::Local => format!("file://{path}"),
-            Backend::Http { base } => format!("{base}/download?path={}", url_encode(path)),
+            Backend::Http { base } => format!("{base}/download?path={}{q}", url_encode(path)),
             #[cfg(not(target_arch = "wasm32"))]
-            Backend::Cell { base, .. } => format!("{base}/download?path={}", url_encode(path)),
+            Backend::Cell { base, .. } => format!("{base}/download?path={}{q}", url_encode(path)),
         }
     }
 
@@ -84,21 +116,22 @@ impl Backend {
         }
     }
 
-    /// `path` from the machine as (file name, bytes) - a folder comes as
-    /// <name>.tar.gz. The desktop app saves them where the person picks.
+    /// `path` from the machine as (file name, bytes), packed as `format`
+    /// (download_url) - a folder comes as <name>.tar.gz by default. The desktop
+    /// app saves them where the person picks.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn download(&self, path: &str, cb: impl FnOnce(Result<(String, Vec<u8>), String>) + Send + 'static) {
-        let path = path.to_owned();
+    pub fn download(&self, path: &str, format: &str, cb: impl FnOnce(Result<(String, Vec<u8>), String>) + Send + 'static) {
+        let (path, format) = (path.to_owned(), format.to_owned());
         match self {
             Backend::Local => {
-                std::thread::spawn(move || cb(crate::host::download(&path)));
+                std::thread::spawn(move || cb(crate::host::download(&path, &format)));
             }
             Backend::Http { .. } | Backend::Cell { .. } => {
-                let mut req = ehttp::Request::get(self.download_url(&path));
+                let mut req = ehttp::Request::get(self.download_url(&path, &format));
                 if let Backend::Cell { session, .. } = self {
                     req.headers.insert("Cookie", format!("ndx_token={}", session.lock().unwrap()));
                 }
-                ehttp::fetch(req, move |res| {
+                ehttp::fetch(with_token(req), move |res| {
                     cb(match res {
                         Ok(r) if r.ok && r.content_type().is_some_and(|t| t.starts_with("text/html")) => Err("signed out - sign in again".into()),
                         Ok(r) if r.ok => {
@@ -151,7 +184,7 @@ impl Backend {
         {
             req.credentials = ehttp::Credentials::SameOrigin;
         }
-        ehttp::fetch(req, move |res| {
+        ehttp::fetch(with_token(req), move |res| {
             done(match res {
                 Ok(r) if r.ok && r.bytes.trim_ascii_start().starts_with(b"<") => Err("signed out - sign in again".into()),
                 Ok(r) if r.ok => serde_json::from_slice::<serde_json::Value>(&r.bytes)
@@ -191,7 +224,7 @@ impl Backend {
             req.credentials = ehttp::Credentials::SameOrigin;
         }
         req.headers.insert("Accept", "application/json");
-        ehttp::fetch(req, move |res| {
+        ehttp::fetch(with_token(req), move |res| {
             done(match res {
                 Ok(r) if r.ok && r.bytes.trim_ascii_start().starts_with(b"<") => Err("signed out - reload the page to sign in".into()),
                 Ok(r) if r.ok => Ok(r.bytes),
@@ -229,7 +262,7 @@ impl Backend {
         }
         req.headers.insert("Content-Type", "text/plain");
         req.headers.insert("X-Cove", "1");
-        ehttp::fetch(req, move |res| {
+        ehttp::fetch(with_token(req), move |res| {
             done(match res {
                 Ok(r) if r.ok => serde_json::from_slice::<serde_json::Value>(&r.bytes)
                     .ok()
@@ -275,7 +308,7 @@ impl Backend {
             req.credentials = ehttp::Credentials::SameOrigin;
         }
         req.headers.insert("Accept", "application/json");
-        ehttp::fetch(req, move |res| {
+        ehttp::fetch(with_token(req), move |res| {
             done(match res {
                 Ok(r) if r.ok && r.bytes.trim_ascii_start().starts_with(b"<") => Err("signed out - reload the page to sign in".into()),
                 Ok(r) if r.ok => Ok(r.bytes),
@@ -312,7 +345,7 @@ impl Backend {
             req.credentials = ehttp::Credentials::SameOrigin;
         }
         req.headers.insert("Accept", "application/json");
-        ehttp::fetch(req, move |res| {
+        ehttp::fetch(with_token(req), move |res| {
             done(match res {
                 Ok(r) if r.ok && r.bytes.trim_ascii_start().starts_with(b"<") => Err("signed out - reload the page to sign in".into()),
                 Ok(r) if r.ok => Ok(r.bytes),
@@ -335,13 +368,26 @@ impl Backend {
             #[cfg(not(target_arch = "wasm32"))]
             Backend::Local => {
                 std::thread::spawn(move || {
+                    // Signed out, with this computer's own Claude ready, the
+                    // agent runs here on it (localagent.rs).
+                    if let Some(r) = crate::localagent::answer(&q) {
+                        cb(r.and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string())));
+                        ctx.request_repaint();
+                        return;
+                    }
                     // Asked here; what only the platform has goes there, as
                     // the signed-in person. The laptop's own files stay its
                     // own: only a refusal goes, never a query that works here.
                     let r = match crate::host::answer(&q) {
-                        Err(e) if needs_platform(e.as_bytes()) => match crate::account::key_session() {
-                            Some(s) => on_platform(&s, serde_json::to_vec(&q).unwrap_or_default()),
-                            None => Err(format!("{e} - sign in to ndexr (account menu) and it is answered there")),
+                        Err(e) if needs_platform(e.as_bytes()) => match (crate::account::key_session(), &q) {
+                            (Some(s), _) => on_platform(&s, serde_json::to_vec(&q).unwrap_or_default()),
+                            // Not signed in, a request still goes: anonymously,
+                            // without its files (server.rs anon_request_response).
+                            (None, Query::SendRequest { what, trying, .. }) => {
+                                let what = if trying.trim().is_empty() { what.clone() } else { format!("{what}\n\n{trying}") };
+                                anon_request(&what, "", "Cove desktop, not signed in").and_then(|id| serde_json::from_value(serde_json::Value::from(id)).map_err(|e| e.to_string()))
+                            }
+                            (None, _) => Err(SIGNED_OUT.to_owned()),
                         },
                         r => r.and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string())),
                     };
@@ -370,7 +416,7 @@ impl Backend {
                 let mut req = post(format!("{base}/api/q"), body.clone());
                 req.headers.insert("Cookie", format!("ndx_token={}", session.lock().unwrap()));
                 let session = session.clone();
-                ehttp::fetch(req, move |res| {
+                ehttp::fetch(with_token(req), move |res| {
                     // What the cell cannot do, the platform does for the same
                     // person (account.rs platform_session).
                     let r = match res {
@@ -409,7 +455,7 @@ fn local_or_platform(here: Result<Vec<u8>, String>, path: &str) -> Result<Vec<u8
     match here {
         Err(e) if needs_platform(e.as_bytes()) => match crate::account::key_session() {
             Some(s) => platform_file(&s, path),
-            None => Err(format!("{e} - sign in to ndexr (account menu) and it is answered there")),
+            None => Err(SIGNED_OUT.to_owned()),
         },
         r => r,
     }
@@ -426,6 +472,39 @@ fn needs_platform(body: &[u8]) -> bool {
 fn on_platform_raw(session: &crate::account::Session, make: impl Fn(&str) -> ehttp::Request) -> Result<ehttp::Response, String> {
     let token = session.lock().unwrap().clone();
     crate::account::platform_request(&token, make)
+}
+
+/// What a query only ndexr answers says on a computer nobody has signed in
+/// from: the agent, Messages, the build views. It was the server's own words
+/// with "sign in" after them - "this needs the platform checked out on this
+/// machine (src/r/host.r)", a red card in Agents on a new laptop (operator's
+/// screenshot, 2026-11-14: "installing on laptop without prior ndexr access,
+/// looks a little weird"). setup.rs connect_button puts Sign in under it.
+pub const SIGNED_OUT: &str = "This runs on ndexr, and this computer is not signed in. Sign in to ndexr to use it - an account is free.";
+
+/// Why POST /view/request said no, from its status alone: nginx's error
+/// pages (ndexr_errors.conf) replace the server's own words on a 4xx with
+/// the platform's HTML 404 page, measured 2026-11-14.
+pub fn anon_refused(status: u16) -> String {
+    match status {
+        429 => "too many requests without signing in just now - try again in a few minutes, or sign in".into(),
+        400 => "say what you need first".into(),
+        s => format!("the request could not be filed (http {s}) - try again, or sign in"),
+    }
+}
+
+/// A request filed with no sign-in at the platform's public view (server.rs
+/// anon_request_response): its number, or why not.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn anon_request(what: &str, contact: &str, page: &str) -> Result<i64, String> {
+    let body = serde_json::to_vec(&serde_json::json!({ "what": what, "contact": contact, "page": page })).unwrap_or_default();
+    let mut req = ehttp::Request::post(format!("{}/view/request", crate::account::cove_base()), body);
+    req.headers.insert("Content-Type", "text/plain");
+    let r = ehttp::fetch_blocking(&req)?;
+    if !r.ok {
+        return Err(anon_refused(r.status));
+    }
+    serde_json::from_slice::<serde_json::Value>(&r.bytes).ok().and_then(|v| v["id"].as_i64()).ok_or_else(|| "no request number came back".into())
 }
 
 /// The question again, at this person's session on the platform's Cove.
@@ -468,7 +547,7 @@ fn post(url: String, body: Vec<u8>) -> ehttp::Request {
 /// One request, its JSON body decoded. The session cookie rides along (same
 /// origin, see `post`), so the gate applies to the UI's every call.
 fn fetch<T: DeserializeOwned + 'static>(req: ehttp::Request, cb: impl FnOnce(Result<T, String>) + Send + 'static) {
-    ehttp::fetch(req, move |res| cb(decode(res)));
+    ehttp::fetch(with_token(req), move |res| cb(decode(res)));
 }
 
 /// A reply as the answer it carries, or the words for what went wrong.

@@ -108,6 +108,8 @@ avatar <- function(name, size = 48, square = FALSE) {
 # ── nav ──────────────────────────────────────────────────────────────────────
 
 ui_nav <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, textInput, uiOutput])
   ns <- shiny$NS(id)
   item <- function(key, label, badge = NULL) {
@@ -130,6 +132,8 @@ ui_nav <- function(id) {
 
 # The bar reports what was searched and the unread count it is handed.
 server_nav <- function(id, unread) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer, renderUI, reactive, tags, observeEvent, showNotification])
   shiny$moduleServer(id, function(input, output, session) {
     output$badge <- shiny$renderUI({
@@ -147,6 +151,8 @@ server_nav <- function(id, unread) {
 # ── profile ──────────────────────────────────────────────────────────────────
 
 ui_profile <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags])
   me <- FEED$me
   shiny$tags$aside(class = "lf-left",
@@ -163,6 +169,8 @@ ui_profile <- function(id) {
 }
 
 server_profile <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer])
   shiny$moduleServer(id, function(input, output, session) NULL)
 }
@@ -170,6 +178,8 @@ server_profile <- function(id) {
 # ── feed ─────────────────────────────────────────────────────────────────────
 
 ui_feed <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, uiOutput, textAreaInput, actionButton])
   ns <- shiny$NS(id)
   shiny$tags$main(class = "lf-mid",
@@ -185,6 +195,8 @@ ui_feed <- function(id) {
 }
 
 server_feed <- function(id, query) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactiveVal, reactive, renderUI, observeEvent, tags, HTML, invalidateLater, updateTextAreaInput],
     htmltools[htmlEscape]
@@ -269,6 +281,8 @@ server_feed <- function(id, query) {
 # ── side ─────────────────────────────────────────────────────────────────────
 
 ui_side <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags])
   shiny$tags$aside(class = "lf-right",
     shiny$tags$section(class = "card promo",
@@ -285,6 +299,8 @@ ui_side <- function(id) {
 }
 
 server_side <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer])
   shiny$moduleServer(id, function(input, output, session) NULL)
 }
@@ -361,6 +377,8 @@ FEED_CSS <- "
 
 #' @export
 ui_module <- function(id, request) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[NS, tagList, tags, HTML],
     r / shell / shell
@@ -392,8 +410,10 @@ ui_module <- function(id, request) {
 }
 
 .server_inner <- function(id = "__HOST__", parent_session) {
-  box::use(r / shell / shell, shiny = shiny[reactiveVal, observe])
+  box::use(r / shell / shell, ./r/log, shiny = shiny[reactiveVal, observe])
   shell$server_shell(id, parent_session, inner = function(input, output, session) {
+    log$log_session(session)
+    log$log_info("__HOST__: module server starting")
     # The bar's search narrows the feed; the feed's unread count is the bar's badge.
     unread <- shiny$reactiveVal(0L)
     query <- server_nav("nav", function() unread())

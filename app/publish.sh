@@ -6,7 +6,12 @@
 #   ./build-linux.sh (Linux)  → dist/linux-<arch>/cove.tar.gz
 #   ./build-deb.sh   (Linux)  → dist/deb/cove_<version>_<arch>.deb
 #   ./build-windows.sh (Linux, cross) → dist/windows-<arch>/cove.{zip,tar.gz}
-#   ./publish.sh [--dry-run]
+#   ./publish.sh [--dry-run] [platform...]     e.g. linux-x86_64 deb; none = every dist/ folder
+#
+# Name the platforms that were built for this version: dist/ keeps every
+# platform's last build, and publishing all of it would label an old Mac or
+# Windows build with the new version (2026-11-14: the feed sat at 0.1.8 from
+# 2026-11-03, so a new laptop installed a Cove eleven days old).
 #
 # Layout (s3://ndexr/ndexr/cove/ is served at https://repo.ndexr.io/ndexr/cove/):
 #   <platform>/<version>/<file>, <file>.sha256    immutable, every release kept
@@ -29,14 +34,22 @@ here="$(cd "$(dirname "$0")" && pwd)"
 bucket="${NDEXR_DIST_BUCKET:-s3://ndexr/ndexr/cove}"
 public="${NDEXR_DIST_URL:-https://repo.ndexr.io/ndexr/cove}"
 version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$here/Cargo.toml" | head -1)"
-dry=""; [[ "${1:-}" == --dry-run ]] && dry="--dryrun"
+dry=""; [[ "${1:-}" == --dry-run ]] && { dry="--dryrun"; shift; }
 
 sha() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 bytes() { wc -c < "$1" | tr -d ' '; }
 put() { aws s3 cp $dry --only-show-errors "$@"; }
 
 shopt -s nullglob
-platforms=("$here"/dist/*/)
+if (( $# )); then
+  platforms=()
+  for p in "$@"; do
+    [[ -d "$here/dist/$p" ]] || { echo "no dist/$p - build it first" >&2; exit 1; }
+    platforms+=("$here/dist/$p/")
+  done
+else
+  platforms=("$here"/dist/*/)
+fi
 (( ${#platforms[@]} )) || { echo "nothing in dist/ — run build-dmg.sh or build-linux.sh first" >&2; exit 1; }
 
 for dir in "${platforms[@]}"; do
@@ -81,7 +94,13 @@ done
 # and a Linux publish never clobber each other's entry.
 entries=()
 for p in $(aws s3 ls "$bucket/" | awk '/PRE/ {sub("/","",$2); print $2}'); do
-  r="$(aws s3 cp "$bucket/$p/latest/release.json" - 2>/dev/null)" || continue
+  # A read that fails is retried, and a platform still unread keeps the old
+  # manifest: skipping it dropped darwin from the download page once (a Linux
+  # publish, 2026-11-19) while its files were all there.
+  r="$(aws s3 cp "$bucket/$p/latest/release.json" - 2>/dev/null || { sleep 2; aws s3 cp "$bucket/$p/latest/release.json" - 2>/dev/null; })" || {
+    aws s3 ls "$bucket/$p/latest/release.json" >/dev/null 2>&1 || continue
+    echo "✗ could not read $p/latest/release.json - manifest.json left as it was" >&2; exit 1
+  }
   entries+=("\"$p\":$r")
 done
 manifest="$(mktemp)"

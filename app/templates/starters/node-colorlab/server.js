@@ -7,13 +7,14 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const log = require('./log');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT || process.env.APP_PORT);
 if (!Number.isInteger(PORT) || PORT <= 0) {
   // env.sh sets PORT from app.env; a missing port is a launch mistake, not a default.
-  console.error('PORT is not set: start with ./run.sh (it reads APP_PORT from app.env)');
+  log.error('PORT is not set: start with ./run.sh (it reads APP_PORT from app.env)');
   process.exit(2);
 }
 const ROOT = __dirname;
@@ -158,6 +159,7 @@ function readBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
+  log.request(req, res);
   const url = new URL(req.url, 'http://localhost');
   const p = url.pathname;
   try {
@@ -175,11 +177,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'method not allowed' });
     return serveStatic(res, p);
   } catch (e) {
-    console.error(e);
+    log.error(`${req.method} ${p}:`, e);
     return send(res, 500, { error: e.message });
   }
 });
 
 // 127.0.0.1 only: nginx in front decides who reaches it.
-server.listen(PORT, '127.0.0.1', () => console.log(`Color Laboratory on http://127.0.0.1:${PORT}`));
+server.listen(PORT, '127.0.0.1', () => log.info(`__HOST__: Color Laboratory serving on 127.0.0.1:${PORT}`));
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => server.close(() => process.exit(0)));

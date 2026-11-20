@@ -42,6 +42,8 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import adjusted_mutual_info_score
 from sklearn.preprocessing import normalize
 
+from log import log
+
 HERE = Path(__file__).parent
 CORPUS = json.loads((HERE / "corpus.json").read_text(encoding="utf-8"))
 # The title is part of the document: it is the densest statement of the theme.
@@ -230,6 +232,7 @@ def neighbours(f: Features, tp: Topics, q, n, skip=None):
 # ---- routes ----------------------------------------------------------------------------
 
 app = FastAPI(title="Topic map · __HOST__", docs_url=None, redoc_url=None)
+log.info("__HOST__: Topic Map starting on 127.0.0.1:%s, %d documents in %d fields", os.environ.get("PORT"), len(CORPUS), len(FIELDS))
 
 
 @app.get("/health")
@@ -254,6 +257,8 @@ def menu():
 @app.post("/api/model")
 def model(s: Settings):
     f, tp, xy, fit_ms, map_ms = fitted(s)
+    log.info("%s, k=%d: %d terms, NPMI %.3f, AMI %.3f (fit %.0f ms, map %.0f ms)",
+             s.method, s.k, len(f.terms), tp.npmi, tp.ami, fit_ms, map_ms)
     return {
         "docs": [{"i": i, "x": round(float(xy[i, 0]), 4), "y": round(float(xy[i, 1]), 4),
                   "topic": int(tp.dom[i]), "mix": [round(float(v), 4) for v in tp.mix[i]]}
@@ -273,6 +278,7 @@ def sweep(s: Settings):
     for k in range(2, K_MAX + 1):
         tp = topics(s.fkey(), s.method, k, s.seed)
         rows.append({"k": k, "npmi": round(tp.npmi, 3), "umass": round(tp.umass, 3), "ami": round(tp.ami, 3)})
+    log.info("sweep %s, k=2-%d: NPMI highest at k=%d", s.method, K_MAX, max(rows, key=lambda r: r["npmi"])["k"])
     return {"rows": rows}
 
 

@@ -114,7 +114,7 @@ impl Recents {
             req.credentials = ehttp::Credentials::SameOrigin;
         }
         req.headers.insert("Accept", "application/json");
-        ehttp::fetch(req, move |r| {
+        ehttp::fetch(crate::backend::with_token(req), move |r| {
             let got = match r {
                 Ok(r) if r.ok => serde_json::from_slice::<Vec<Recent>>(&r.bytes).map_err(|e| e.to_string()),
                 Ok(r) => Err(format!("{} {}", r.status, r.status_text)),
@@ -140,7 +140,7 @@ impl Recents {
             req.credentials = ehttp::Credentials::SameOrigin;
         }
         let gone = id.to_owned();
-        ehttp::fetch(req, move |r| {
+        ehttp::fetch(crate::backend::with_token(req), move |r| {
             if r.is_ok_and(|r| r.ok) {
                 if let Some(Ok(v)) = slot.lock().unwrap().as_mut() {
                     v.retain(|s| s.id != gone);

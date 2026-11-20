@@ -62,6 +62,8 @@ ink <- function(mar = c(3.6, 4.4, 3, 1.2)) {
 # ── live ─────────────────────────────────────────────────────────────────────
 
 ui_live <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, plotOutput, uiOutput, actionButton])
   ns <- shiny$NS(id)
   tags$section(
@@ -82,6 +84,8 @@ ui_live <- function(id) {
 
 # Returns the history, for the inside branch.
 server_live <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactiveVal, observe, observeEvent, invalidateLater, isolate, renderPlot, renderUI, req, tags,
                   updateActionButton, actionButton],
@@ -171,6 +175,8 @@ server_live <- function(id) {
 # ── inside ───────────────────────────────────────────────────────────────────
 
 ui_inside <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, plotOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -181,6 +187,8 @@ ui_inside <- function(id) {
 }
 
 server_inside <- function(id, hist) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, renderPlot, req],
     graphics[plot.new, plot.window, axis, rect, polygon, lines, mtext, legend]
@@ -286,6 +294,8 @@ mtext_fit <- function(text, side = 3, line = 0, adj = 0.5, cex = 1, font = 1, at
 
 #' @export
 ui_module <- function(id, request) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[NS, tagList, tags, HTML],
     r / shell / shell
@@ -310,8 +320,10 @@ ui_module <- function(id, request) {
 }
 
 .server_inner <- function(id = "__HOST__", parent_session) {
-  box::use(r / shell / shell)
+  box::use(r / shell / shell, ./r/log)
   shell$server_shell(id, parent_session, inner = function(input, output, session) {
+    log$log_session(session)
+    log$log_info("__HOST__: module server starting")
     x <- server_live("live")
     server_inside("inside", x)
   })

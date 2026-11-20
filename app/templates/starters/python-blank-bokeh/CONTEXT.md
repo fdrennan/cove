@@ -10,6 +10,7 @@ change this file's first line from "Blank Bokeh" to its name and rewrite this pa
 ## Seeing a change
 `bokeh serve --dev` reloads the app and the page on every save.
 Packages come from the stack: env/Python/3.13.15 (`ml env/Python/3.13.15`); APP_NEEDS in app.env names them, and env.sh refuses to start without them.
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
 
 ## Paths nginx keeps for itself
 A request to /vendor/, /images/, /css/, /javascript/, /shared/, /sites/,

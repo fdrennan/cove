@@ -164,6 +164,8 @@ fn mandelbrot(q: &[(&str, &str)]) -> Result<Reply, String> {
 
 fn handle(mut req: Request, started: Instant, threads: usize) {
     let url = req.url().to_owned();
+    let t0 = Instant::now();
+    let method = req.method().clone();
     let (path, query) = url.split_once('?').unwrap_or((&url, ""));
     let q = params(query);
     // Behind a prefix (a cell's /proxy/<port>/) the page asks beside itself,
@@ -193,20 +195,24 @@ fn handle(mut req: Request, started: Instant, threads: usize) {
         (_, "") => json_reply(404, json!({ "error": format!("no route: {path}") })),
         (m, r) => json_reply(405, json!({ "error": format!("{r} does not take {m}") })),
     };
-    let _ = req.respond(reply);
+    let status = reply.status_code().0;
+    if let Err(e) = req.respond(reply) {
+        crate::log::error!("{method} {path}: response not sent: {e}");
+    }
+    crate::log::request(&method, path, status, t0);
 }
 
 pub fn serve(port: u16) {
     let server = match Server::http(("127.0.0.1", port)) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            eprintln!("cannot listen on 127.0.0.1:{port}: {e}");
+            crate::log::error!("cannot listen on 127.0.0.1:{port}: {e}");
             std::process::exit(1);
         }
     };
     let started = Instant::now();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
-    println!("__HOST__: serving on http://127.0.0.1:{port} ({threads} workers)");
+    crate::log::info!("__HOST__: scientific API serving on 127.0.0.1:{port} ({threads} workers)");
     let workers: Vec<_> = (0..threads)
         .map(|_| {
             let s = Arc::clone(&server);

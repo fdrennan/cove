@@ -14,6 +14,7 @@
 #                          millis, threads}
 #   GET  /health        "ok"
 
+include(joinpath(@__DIR__, "log.jl"))
 using HTTP, JSON3, Optim, ForwardDiff, LinearAlgebra
 
 const ROOT = @__DIR__
@@ -277,7 +278,7 @@ function guarded(handler)
             handler(req)
         catch err
             bad = err isa ArgumentError || err isa MethodError || err isa InexactError || err isa KeyError
-            bad || @error "request failed" exception = (err, catch_backtrace())
+            bad || Log.error("$(req.method) $(req.target) failed: $(message(err))")
             json((error = message(err),); status = bad ? 400 : 500)
         end
     end
@@ -285,11 +286,23 @@ end
 
 const app = guarded(router)
 
+const WARM = time()
 # Draw and race once in-process so the first visitor does not wait for the
 # compiler; one surface warms them all, since they share the Surface type.
 app(HTTP.Request("GET", "/api/surface?id=rosenbrock&n=40"))
 app(HTTP.Request("POST", "/api/race", ["Content-Type" => "application/json"], "{\"iters\":50}"))
 
-println("Optimizer Race listening on http://127.0.0.1:$PORT with $(Threads.nthreads()) threads")
-flush(stdout)
-HTTP.serve(app, "127.0.0.1", PORT)
+Log.info("compiled the handlers in $(round(time() - WARM; digits = 1)) s")
+
+# One log line per request: method, path, status, milliseconds.
+function logged(handler)
+    return function (req)
+        t0 = time()
+        res = handler(req)
+        Log.request(req, res.status, t0)
+        res
+    end
+end
+
+Log.info("__HOST__: Optimizer Race serving on 127.0.0.1:$PORT with $(Threads.nthreads()) threads")
+HTTP.serve(logged(app), "127.0.0.1", PORT)

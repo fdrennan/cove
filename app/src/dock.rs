@@ -1,5 +1,6 @@
-//! Cove's windows: up to three columns, each up to three windows, each
-//! window a strip of tabs (operator, 2026-10-19: "instead of 2x2 tab
+//! Cove's windows: up to four columns, each up to four windows, each
+//! window a strip of tabs (operator, 2026-11-18: "we want to be able to go
+//! 4x4"; it was 3x3 from 2026-10-19: "instead of 2x2 tab
 //! locations want to be able to go up to 3x3 where you can stretch windows to
 //! those locations, only 3x3 if have two open and move on to middle for
 //! example, should be able to get sucked into existing tab location").
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::ide::Tab;
 
 /// At most this many columns, and windows in a column.
-pub const MAX: usize = 3;
+pub const MAX: usize = 4;
 
 /// A window's place: (column, row).
 pub type At = (usize, usize);
@@ -172,7 +173,7 @@ impl Grid {
         g
     }
 
-    /// Whether `d` keeps the layout within 3×3.
+    /// Whether `d` keeps the layout within MAX × MAX.
     pub fn fits(&self, t: Tab, d: Drop) -> bool {
         let g = self.dropped(t, d);
         g.cols.len() <= MAX && g.cols.iter().all(|c| c.len() <= MAX)
@@ -240,7 +241,7 @@ impl Grid {
             *self = Grid::default();
             return;
         }
-        // More than 3×3 (a hand-edited store): the extras join the last place.
+        // More than MAX × MAX (a hand-edited store): the extras join the last place.
         while self.cols.len() > MAX {
             let extra = self.cols.pop().unwrap();
             self.widths.pop();
@@ -328,7 +329,10 @@ mod tests {
         assert_eq!(g.cols.len(), 3);
         assert_eq!(g.find(Tab::Plots), Some((1, 0)));
         assert!(g.widths.iter().all(|w| (*w - 1.0 / 3.0).abs() < 1e-4), "{:?}", g.widths);
-        assert!(!g.fits(Tab::Viewer, Drop::Col(3)), "3 columns at most");
+        // A fourth column fits now (4×4); a fifth does not.
+        let four = g.dropped(Tab::Viewer, Drop::Col(3));
+        assert_eq!(four.cols.len(), 4);
+        assert!(!four.fits(Tab::Install, Drop::Col(4)), "4 columns at most");
         // The last tab out of a column closes it, and the others take its room.
         let back = g.dropped(Tab::Plots, Drop::Join(0, 0));
         assert_eq!(back.cols.len(), 2);
@@ -341,7 +345,9 @@ mod tests {
         assert_eq!(tabs(&g)[1].len(), 3);
         assert_eq!(g.find(Tab::Viewer), Some((1, 0)));
         assert_eq!(g.find(Tab::Plots), Some((1, 2)));
-        assert!(!g.fits(Tab::Account, Drop::Row(1, 0)), "3 windows a column at most");
+        let four = g.dropped(Tab::Account, Drop::Row(1, 0));
+        assert_eq!(tabs(&four)[1].len(), 4, "a fourth window in a column fits");
+        assert!(!four.fits(Tab::Install, Drop::Row(1, 0)), "4 windows a column at most");
         // Moving a window's only tab within its own column is not a new window.
         assert!(g.fits(Tab::Plots, Drop::Row(1, 0)));
     }

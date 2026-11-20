@@ -9,6 +9,7 @@ the nearest neighbour, and the energy drift - the integrator's error made
 visible, since a frictionless pendulum keeps its energy exactly.
 """
 import base64
+import os
 import time
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from scipy.integrate import solve_ivp
+
+from log import log
 
 HERE = Path(__file__).parent
 G = 9.81
@@ -127,6 +130,7 @@ def b64(a: np.ndarray) -> str:
 # ---- routes -----------------------------------------------------------------------------
 
 app = FastAPI(title="Double Pendulum Lab · __HOST__", docs_url=None, redoc_url=None)
+log.info("__HOST__: Double Pendulum Lab starting on 127.0.0.1:%s", os.environ.get("PORT"))
 
 
 @app.get("/health", response_class=PlainTextResponse)
@@ -165,6 +169,7 @@ def run(r: Run):
                     t_eval=t_eval, rtol=rtol, atol=rtol * 1e-2)
     solve_ms = (time.perf_counter() - t0) * 1000
     if not sol.success:
+        log.error("integration failed (%s, %d pendulums, rtol %g): %s", r.method, n, rtol, sol.message)
         raise HTTPException(500, f"integration failed: {sol.message}")
 
     y = sol.y
@@ -184,6 +189,8 @@ def run(r: Run):
     worst = drift.max(axis=0)
 
     fit = lyapunov(t_eval, dist[0], r.l1 + r.l2)
+    log.info("integrated %d pendulums over %g s with %s in %.0f ms (%d evaluations), energy drift %.1e",
+             n, r.duration, r.method, solve_ms, sol.nfev, float(worst.max()))
     return {
         "n": n, "frames": frames, "fps": FPS, "duration": r.duration,
         "l1": r.l1, "l2": r.l2, "m1": r.m1, "m2": r.m2,

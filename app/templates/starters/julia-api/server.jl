@@ -9,6 +9,7 @@
 #   GET  /ode/lotka-volterra      ?alpha&beta&gamma&delta&prey&predator&tmax -> the series
 #   GET  /health                  "ok"
 
+include(joinpath(@__DIR__, "log.jl"))
 using HTTP, JSON3
 using Statistics, StatsBase, Distributions, GLM, OrdinaryDiffEq
 
@@ -209,7 +210,7 @@ function guarded(handler)
         catch err
             client = err isa BadRequest || err isa ArgumentError || err isa MethodError ||
                      err isa InexactError || err isa DomainError
-            client || @error "request failed" exception = (err, catch_backtrace())
+            client || Log.error("$(req.method) $(req.target) failed: $(message(err))")
             json((error = message(err),); status = client ? 400 : 500)
         end
     end
@@ -217,12 +218,12 @@ end
 
 const app = guarded(router)
 
+const WARM = time()
 # Answer each endpoint once in-process before listening: on this host the
 # compiler's first pass over them takes about a minute, and a visitor who
 # arrives during it would wait as long (measured 2026-10-25: answering lazily
 # made the page's first five calls take 47 s each).
-println("Scientific API: compiling the endpoints")
-flush(stdout)
+Log.info("compiling the endpoints")
 # Bodies go in as bytes, the type a request off the socket carries.
 let post(path, b) = app(HTTP.Request("POST", path, ["Content-Type" => "application/json"], Vector{UInt8}(JSON3.write(b))))
     # JSON arrays of whole numbers, of decimals and of both parse to three
@@ -238,6 +239,17 @@ let post(path, b) = app(HTTP.Request("POST", path, ["Content-Type" => "applicati
     end
 end
 
-println("Scientific API listening on http://127.0.0.1:$PORT")
-flush(stdout)
-HTTP.serve(app, "127.0.0.1", PORT)
+Log.info("compiled the handlers in $(round(time() - WARM; digits = 1)) s")
+
+# One log line per request: method, path, status, milliseconds.
+function logged(handler)
+    return function (req)
+        t0 = time()
+        res = handler(req)
+        Log.request(req, res.status, t0)
+        res
+    end
+end
+
+Log.info("__HOST__: Scientific API serving on 127.0.0.1:$PORT")
+HTTP.serve(logged(app), "127.0.0.1", PORT)

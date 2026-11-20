@@ -84,8 +84,18 @@ pub enum Query {
         report: bool,
     },
     StackApply { cvmfs: CvmfsSettings },
+    /// Bring a language set's packages to this machine (`ndexr pkgs sync
+    /// <set>`, as root, into /opt/ndexr/site-library): CernVM-FS carries the
+    /// modules, not the sets' packages, so a laptop's env/Julia/1.11.7 had
+    /// none (operator, 2026-11-19: "why isnt our deployed julia seeing its
+    /// packages?"). A job like `StackSetup`, followed by `StackJob`.
+    StackPkgs { set: String },
     StackTest { proxy: String },
     StackJob,
+    /// The stack installed on this machine (stack.rs `local_install`): the
+    /// build's state and steps from its own files in <dir>/.build, its last
+    /// log lines, and the modules it has. Read from disk - no network.
+    LocalInstall,
     /// `quarto render` an .qmd / .Rmd / .ipynb in the picked modules, as a
     /// job; `RenderJob` reports it and names the HTML it wrote.
     Render { path: String },
@@ -259,6 +269,12 @@ pub enum Query {
     /// writes, as up.sh redirects it - the Logs tab follows it.
     /// `build` true: the last Build's output (.cove/run/build.log) instead.
     AppLog { path: String, #[serde(default)] build: bool },
+    /// The requests the web server has answered for one of the person's own
+    /// sites (host.rs `site_requests`): what every app - Shiny, React, Rust,
+    /// Python, Julia - is doing, read from the one place all of them pass
+    /// through, so no app's code has to log anything. Answered as root by
+    /// `cove multiuser` for the person's own domains only.
+    SiteRequests { host: String },
     /// Find in files (host.rs `grep`): every line under `root` that matches.
     Grep { root: String, query: String, case: bool, regex: bool },
     /// `ndexr glimpse` of a folder (host.rs `glimpse`): its tree and each
@@ -293,6 +309,9 @@ pub enum Query {
     /// "pull" a short-lived login that pulls only this owner's images
     /// (ImageLogin).
     Image { host: String, verb: String },
+    /// The project's record (record.rs): `capture` reads it off the running
+    /// app and saves `.cove/record.json`; otherwise the saved one (RecordView).
+    Record { host: String, capture: bool },
     /// The Git window (gitview.rs): the files one version changed against its
     /// first parent - each with how (A, M, D, R, or ? for not yet tracked) and
     /// lines added and removed. `sha` "" is what changed since the last saved
@@ -328,6 +347,15 @@ pub enum Query {
         host: String,
         #[serde(default)]
         on: Option<bool>,
+    },
+    /// One of my projects' page password (route.ndexr.io's lock, in Cove's
+    /// Connections): set it with `password`, remove it with an empty one.
+    /// Answered by `cove multiuser` for the owner, someone it is shared with
+    /// to manage, or an admin; the password is never logged.
+    SitePassword {
+        host: String,
+        #[serde(default)]
+        password: String,
     },
     /// Delete's last step, after Archive removed the folder: give up the
     /// name - registry row, ownership and vhost (assets/release-project.sh,
@@ -779,6 +807,10 @@ pub struct KernelView {
     pub plots: usize,
     /// The kernel's working directory.
     pub cwd: String,
+    /// The shell kernel's environment as of its last command, as a file a
+    /// bash can source (kernel.rs DRIVER_SH save_env); "" for the others.
+    #[serde(default)]
+    pub env_file: String,
     /// The last object shown in the data viewer, and how many have been shown
     /// (a new one opens a viewer tab).
     #[serde(default)]
@@ -940,6 +972,10 @@ pub struct AgentChunk {
     /// The run's cost, once it reported one.
     #[serde(default)]
     pub cost: Option<f64>,
+    /// Paid by the person's own plan, not the API: `cost` is then what the
+    /// turns would have cost on the API, not money spent (referral #736).
+    #[serde(default)]
+    pub subscription: bool,
 }
 
 /// A terminal's output since an offset (`Query::Term`).
@@ -956,6 +992,10 @@ pub struct TermChunk {
     pub alive: bool,
     /// Whose Claude `claude` runs on in it.
     pub note: String,
+    /// The program in the terminal's foreground ("R", "vim"), "" while its
+    /// shell waits at the prompt: a line typed then reaches the shell.
+    #[serde(default)]
+    pub running: String,
 }
 
 /// One turn of a domain thread: what was asked, and what came back.
@@ -1043,6 +1083,15 @@ pub struct Settings {
     /// this machine (`stack_dir`), never CVMFS or a download.
     #[serde(default)]
     pub airgap: bool,
+    /// May a failed stack build or setup send an anonymous report to ndexr
+    /// (operator, 2026-11-14: "cove should ask the user if we can send back
+    /// anonymous statistics about the build to improve the service and send
+    /// those errors when they come up to requests"). None = not asked yet;
+    /// asked once (app.rs report_consent). Yes passes `--report-errors` to the
+    /// CLI, which files each failure as an anonymous request (crate
+    /// telemetry.rs). Never sent in airgap mode.
+    #[serde(default)]
+    pub report: Option<bool>,
     /// Read from settings saved before the one module, never written: the
     /// first of them that is set becomes `module` (`one_module`).
     #[serde(default, skip_serializing)]
@@ -1149,6 +1198,91 @@ pub struct SettingsView {
     /// coupled to our CVMFS distribution - no stack folder to choose).
     #[serde(default)]
     pub stack: StackView,
+}
+
+/// Where this computer's Cove gets the ndexr stack - asked until chosen,
+/// whatever else was skipped (operator, 2026-11-14: "the user is still not
+/// asked if they would like to install the stack locally, consume the stack
+/// locally, or log in to use the remote stack versions - all three must be
+/// allowed and for the user to choose which mode").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackMode {
+    /// Built or copied onto this computer (~/.ndexr/stack, or a folder with
+    /// use.sh): works with no connection to ndexr.io.
+    Installed,
+    /// stack.ndexr.io over CernVM-FS, mounted at /opt/ndexr/stack.
+    Cvmfs,
+    /// Signed in: Cove runs on the person's cell and uses the stack there.
+    Remote,
+}
+
+impl StackMode {
+    pub const ALL: [StackMode; 3] = [StackMode::Installed, StackMode::Cvmfs, StackMode::Remote];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            StackMode::Installed => "installed",
+            StackMode::Cvmfs => "cvmfs",
+            StackMode::Remote => "remote",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<StackMode> {
+        StackMode::ALL.into_iter().find(|m| m.key() == s.trim())
+    }
+
+    /// As the status bar says it.
+    pub fn words(self) -> &'static str {
+        match self {
+            StackMode::Installed => "Stack · installed here",
+            StackMode::Cvmfs => "Stack · CernVM-FS here",
+            StackMode::Remote => "Stack · remote, on your cell",
+        }
+    }
+}
+
+/// The stack installed on this machine and the build making it (operator,
+/// 2026-11-14: "installed local must have tools for monitoring the local
+/// install through the packages/builds sections"). Everything here is read
+/// from the build's own files (`ndexr stack up --dir`: .build/up.json, up.log,
+/// up.timeline.json) and the stack's module tree.
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+pub struct LocalInstall {
+    /// The folder the build writes to (~/.ndexr/stack).
+    pub dir: String,
+    /// The stack in use and whether it is this folder.
+    pub root: String,
+    pub root_is_dir: bool,
+    /// starting · running · waiting · done · failed · stopped, or "" - never built.
+    pub state: String,
+    /// The step now (kit, prefix, ndexr-cli, suite, cove, packages) and all of them.
+    pub step: String,
+    pub steps: Vec<String>,
+    pub started: i64,
+    pub finished: i64,
+    pub rc: Option<i64>,
+    /// The supervisor is alive (up.pid names a live process).
+    pub alive: bool,
+    /// Timeline counts, and the steps running, failed and newest.
+    pub done: usize,
+    pub failed: usize,
+    pub running: Vec<LocalStep>,
+    pub failures: Vec<LocalStep>,
+    pub recent: Vec<LocalStep>,
+    /// The log's last lines.
+    pub tail: Vec<String>,
+    /// Modules installed in the stack in use (name/version), newest first by name.
+    pub modules: Vec<String>,
+}
+
+#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+pub struct LocalStep {
+    pub kind: String,
+    pub name: String,
+    pub version: String,
+    pub status: String,
+    pub started: i64,
+    pub finished: i64,
 }
 
 /// The ndexr stack as this machine sees it: stack.ndexr.io on CVMFS, mounted
@@ -1302,6 +1436,94 @@ pub struct Version {
 }
 
 /// A project's container image as ndexr reports it (`ndexr image status`,
+/// A project's record (record.rs, `.cove/record.json`): the exact software
+/// it ran on, read off the running app, so it can be reopened or deployed
+/// later on the same artifacts. The stack's fields are the image record's
+/// (ndexr image, `io.ndexr.stack.*`), so a project and its image say it alike.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectRecord {
+    pub schema: u32,
+    pub project: String,
+    pub recorded_at: String,
+    pub recorded_by: String,
+    pub source: RecordSource,
+    pub contract: RecordContract,
+    pub platform: RecordPlatform,
+    pub stack: RecordStack,
+    /// The language module's toolchain (`foss-2024a`, `GCCcore-13.3.0`).
+    pub toolchain: String,
+    /// Lmod's LOADEDMODULES in the running app, in load order.
+    pub modules: Vec<String>,
+    /// The language's own packages the app can load, with where they came from.
+    pub packages: Vec<RecordPackage>,
+    /// The project's own lock files, by hash (Cargo.lock, Manifest.toml, ...).
+    pub locks: Vec<RecordLock>,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordSource {
+    /// The project's git HEAD when recorded, and whether files differed from it.
+    pub commit: String,
+    pub dirty: bool,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordContract {
+    pub language: String,
+    pub kind: String,
+    pub port: Option<u16>,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordPlatform {
+    pub arch: String,
+    pub os: String,
+    pub kernel: String,
+    pub glibc: String,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordStack {
+    pub mount: String,
+    pub repository: String,
+    /// The CVMFS revision (`user.revision`) the app ran against.
+    pub revision: Option<String>,
+    pub triple: String,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordPackage {
+    pub language: String,
+    pub name: String,
+    pub version: String,
+    /// The library it loads from: the stack's site library or the person's own.
+    pub from: String,
+}
+
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordLock {
+    pub file: String,
+    pub sha256: String,
+}
+
+/// What Settings › Record shows: the saved record, and where the stack is now.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordView {
+    pub record: Option<ProjectRecord>,
+    /// The stack's revision on this machine now, to set beside the record's.
+    pub stack_now: Option<String>,
+    /// Why there is no record (a module app, nothing running), when there is none.
+    pub note: String,
+}
+
 /// docs/container-images.md).
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1432,6 +1654,44 @@ pub struct JobView {
     /// `view_address`), which serves the page with everything beside it.
     #[serde(default)]
     pub view: String,
+}
+
+impl JobView {
+    /// The line that says why it failed: the first preflight item `ndexr
+    /// install cvmfs` marked ✘, with the → remedy under it, else the last
+    /// line. The CLI ends a failed preflight with "preflight failed - fix
+    /// the ✘ items above", which said nothing about what to fix (operator,
+    /// 2026-11-14, a new laptop).
+    pub fn why(&self) -> String {
+        let lines = &self.lines;
+        match lines.iter().position(|l| l.trim_start().starts_with('✘')) {
+            Some(i) => {
+                let item = lines[i].trim().trim_start_matches('✘').split_whitespace().collect::<Vec<_>>().join(" ");
+                match lines.get(i + 1).map(|l| l.trim()).filter(|l| l.starts_with('→')) {
+                    Some(fix) => format!("{item} {fix}"),
+                    None => item,
+                }
+            }
+            // A script's own "ERROR:" line (the CVMFS stage's "[ndexr] ERROR:
+            // no apt-get and no dnf/microdnf" on Gentoo) says more than the
+            // diagnostics that follow it.
+            // Else the last thing the job itself said, before the diagnostics
+            // Cove appends after it ("--- why /opt/ndexr/stack has no use.sh",
+            // stack.rs why_unmounted): report #196 (2026-11-19) headlined a
+            // CernVM-FS journal warning from those diagnostics, while the
+            // CLI's own last line - "could not download ... this computer's
+            // DNS or network failed" - was the cause.
+            None => {
+                let own = &lines[..lines.iter().position(|l| l.starts_with("--- why")).unwrap_or(lines.len())];
+                lines
+                    .iter()
+                    .find(|l| l.contains("ERROR:") || l.contains("ERROR "))
+                    .or_else(|| own.iter().rev().find(|l| !l.trim().is_empty() && !l.contains("TERM environment variable not set") && !l.starts_with("Sent to ndexr") && !l.starts_with("(the report was not sent") && !l.starts_with("(not reported")))
+                    .map(|l| l.trim().to_owned())
+                    .unwrap_or_default()
+            }
+        }
+    }
 }
 
 /// One proxy tried against each of our servers.
@@ -2156,6 +2416,23 @@ impl InboxView {
 /// What a request may carry: a few screenshots, a recording, a document.
 pub const REQUEST_FILES_MAX: usize = 24 << 20;
 
+/// `trying` with the system information after it, when the person allowed
+/// it (operator, 2026-11-14: "a box which allows to send system information
+/// ... must be granted permission ... defaults to no"). Cut to the 4000
+/// characters a request's field holds, the person's own words first.
+pub fn with_system(trying: &str, system: &str) -> String {
+    const ROOM: usize = 4000;
+    let system = system.trim();
+    if system.is_empty() {
+        return trying.chars().take(ROOM).collect();
+    }
+    let words: String = trying.chars().take(ROOM / 2).collect();
+    let head = "System information (sent with the person's permission):\n";
+    let left = ROOM.saturating_sub(words.chars().count() + head.len() + 2);
+    let sys: String = system.chars().take(left).collect();
+    if words.trim().is_empty() { format!("{head}{sys}") } else { format!("{words}\n\n{head}{sys}") }
+}
+
 /// A file sent with a request: its name and its bytes as a data URL
 /// (`data:image/png;base64,…`) or bare base64.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -2213,6 +2490,20 @@ pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_preflight_names_the_failed_item() {
+        let out: Vec<String> = ["  \u{2714} arch          x86_64", "  ✘ fuse          /dev/fuse missing — the mount cannot work here", "                → containers need --device /dev/fuse", "", "Error: preflight failed — fix the ✘ items above"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(super::JobView { lines: out, ..Default::default() }.why(), "fuse /dev/fuse missing — the mount cannot work here → containers need --device /dev/fuse");
+        assert_eq!(super::JobView { lines: vec!["one".into(), "two".into(), "".into()], ..Default::default() }.why(), "two");
+        // A fresh Gentoo: the stage's own ERROR line, not the logout's TERM complaint.
+        let gentoo: Vec<String> = ["$ ndexr install cvmfs --yes", "[ndexr] CVMFS: stack.ndexr.io at /opt/ndexr/stack", "[ndexr] ERROR: no apt-get and no dnf/microdnf — cannot install the CVMFS client", "--- why /opt/ndexr/stack has no use.sh", "  not mounted", "TERM environment variable not set."].iter().map(|s| s.to_string()).collect();
+        assert_eq!(super::JobView { lines: gentoo, ..Default::default() }.why(), "[ndexr] ERROR: no apt-get and no dnf/microdnf — cannot install the CVMFS client");
+        // Report #196: no marked line, so the CLI's own last word - not the
+        // CernVM-FS journal noise the diagnostics end on.
+        let dns: Vec<String> = ["$ ndexr install cvmfs --yes", "curl: (6) Could not resolve host: repo.ndexr.io", "could not download https://repo.ndexr.io/ndexr/install/cvmfs.sh.sha256 to check the configurator - this computer's DNS or network failed; Set up again tries once more", "--- why /opt/ndexr/stack has no use.sh", "  not mounted", "Nov 19 22:49:54 h cvmfs2[36519]: configuration repository directory does not exist: /cvmfs/cvmfs-config.cern.ch/etc/cvmfs/config.d"].iter().map(|s| s.to_string()).collect();
+        assert!(super::JobView { lines: dns, ..Default::default() }.why().starts_with("could not download https://repo.ndexr.io"));
+    }
+
 
     #[test]
     fn a_posit_mark_is_found_as_the_gate_finds_it() {
@@ -2409,6 +2700,11 @@ pub struct AccountView {
     pub cell_last_seen: Option<String>,
     #[serde(default)]
     pub idle_timeout_min: Option<i64>,
+    /// The account's sites stay up with no visitors: it pays (billing's
+    /// tier), or its timeout is 0. Else they rest after idle_timeout_min and
+    /// wake on the next visit (api.ndexr.io account.r, 2026-11-17).
+    #[serde(default)]
+    pub always_awake: bool,
     /// A username, uid, ports and personal domain exist.
     #[serde(default)]
     pub ready: bool,
@@ -2512,4 +2808,19 @@ pub struct OfferedShare {
 pub struct TakenName {
     pub host: String,
     pub owner: String,
+}
+
+#[cfg(test)]
+mod with_system_tests {
+    use super::with_system;
+
+    #[test]
+    fn system_information_goes_only_when_given_and_fits_the_field() {
+        assert_eq!(with_system("I was building", ""), "I was building", "not allowed: nothing added");
+        let t = with_system("I was building", "Cove: v1 · linux");
+        assert!(t.starts_with("I was building\n\nSystem information (sent with the person's permission):\nCove: v1"), "{t}");
+        assert!(with_system("", "Cove: v1").starts_with("System information"));
+        let long = with_system(&"w".repeat(5000), &"s".repeat(5000));
+        assert!(long.chars().count() <= 4000 && long.contains("System information"), "{}", long.chars().count());
+    }
 }

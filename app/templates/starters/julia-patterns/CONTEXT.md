@@ -31,8 +31,11 @@ Pearson, J. E. (1993), "Complex patterns in a simple system", Science
 his Du = 2e-5, Dv = 1e-5 on a 2.5-wide square of 256 cells (0.2097 and 0.105
 per cell).
 
+## Logging
+Logging: log.jl (`Log.info`), one format across languages; LOG_LEVEL=DEBUG for more. /api/frame lines are DEBUG.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

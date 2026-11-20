@@ -249,9 +249,6 @@ pub fn branch_strip(ui: &mut egui::Ui, dims: &Dims, branch: &mut Vec<(Dim, u16)>
         if let Some(n) = cut {
             branch.truncate(n);
         }
-        if branch.is_empty() {
-            ui.label(RichText::new("· tap a line's name under the curves to show only it").size(11.0).color(theme::text()));
-        }
     });
 }
 

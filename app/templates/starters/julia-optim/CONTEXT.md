@@ -70,8 +70,11 @@ are still crawling along the valley at 5,000. Himmelblau from (-4, -4),
 - Mogensen, P. K. and Riseth, A. N. (2018), "Optim: A mathematical
   optimization package for Julia", JOSS 3(24).
 
+## Logging
+Logging: log.jl (`Log.info`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

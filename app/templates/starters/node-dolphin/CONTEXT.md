@@ -28,6 +28,9 @@ server that keeps shared state on disk with the standard library alone.
 - app.env, build.sh, up.sh, down.sh, run.sh, env.sh - the app contract
   (APP-CONTRACT.md); Node from the stack (`ml nodejs`)
 
+## Logging
+log.js (`const log = require('./log')`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
 As published at route.ndexr.io.
 

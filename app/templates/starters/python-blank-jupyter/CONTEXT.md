@@ -17,6 +17,7 @@ name and rewrite this paragraph.
 Each save of notebook.ipynb runs it again, and the open page reloads when the
 run is done. A notebook that fails keeps the last good page and shows the
 error above it. `./build.sh` runs it once, so a failing cell stops the build.
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
 
 ## The kernel
 The notebook runs on the stack's Python (env/r4.6_py3.13-release), as the

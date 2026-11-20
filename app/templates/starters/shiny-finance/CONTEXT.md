@@ -18,13 +18,15 @@ capped) prices from the same simulated paths.
 - app.env, build.sh - a module app (no port of its own); build.sh checks that
   module.r parses
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R and Shiny only, from the stack's R; no dataset, key or database.
 Black, F. and Scholes, M. (1973), "The Pricing of Options and Corporate
 Liabilities", J. Political Economy 81(3).
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

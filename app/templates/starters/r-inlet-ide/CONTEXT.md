@@ -22,6 +22,8 @@ paragraph.
   go back.
 - app.env, build.sh, up.sh, down.sh, env.sh - how it is checked, started, stopped
 
+Logging: run.sh writes its start line in the one format across languages (r/log.r for R code here: log$log_info; LOG_LEVEL=DEBUG for more); rserver's own logs stay its own.
+
 ## Seeing a change
 A theme or snippet shows on reload of the page; a preference on the next
 session (Session > Restart R, or Down then Up).

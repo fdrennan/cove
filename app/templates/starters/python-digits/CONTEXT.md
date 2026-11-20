@@ -30,6 +30,8 @@ from the stack's env set (env/Python/3.13.15, else env/r4.6_py3.13-release);
 nothing is pip-installed. app.py pins BLAS/OpenMP to one thread: with one
 thread per core, logistic regression on this box took 78 s instead of 0.2 s.
 
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 - The data: UCI Optical Recognition of Handwritten Digits (Alpaydin & Kaynak,
   1998; C. Kaynak, MSc thesis, Bogazici University, 1995), shipped in
@@ -46,7 +48,7 @@ thread per core, logistic regression on this box took 78 s instead of 0.2 s.
 - scikit-learn: Pedregosa et al., JMLR 12 (2011).
 
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

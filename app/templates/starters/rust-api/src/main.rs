@@ -1,5 +1,6 @@
 //! __HOST__: a scientific HTTP API. `app serve <port>` serves on 127.0.0.1.
 
+mod log;
 mod num;
 mod server;
 

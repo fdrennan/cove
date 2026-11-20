@@ -20,12 +20,15 @@
 //! - Container image: a versioned image of the project that ndexr builds,
 //!   publishes to ECR and keeps (Query::Image, docs/container-images.md);
 //!   what it needs to run, and how to pull and run it.
+//! - Record: the exact software the running app uses - stack revision,
+//!   toolchain, modules, packages, platform - read off its process and saved
+//!   in `.cove/record.json` (Query::Record, record.rs).
 
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, RichText};
 
-use crate::api::{AppAccessView, AppStatus, DomainInfo, FileText, ImageLogin, ImageStatus, JobView, Query};
+use crate::api::{AppAccessView, AppStatus, DomainInfo, FileText, ImageLogin, ImageStatus, JobView, Query, RecordView};
 use crate::backend::Backend;
 use crate::theme;
 
@@ -44,8 +47,6 @@ pub enum Act {
     Publish(String),
     /// Build, Up or Down the open project (Ide::app_action), as the app strip does.
     Run(String),
-    /// Make the project another type (dotcove.rs TYPES): its APP_LANGUAGE.
-    SetType(String),
 }
 
 #[derive(Default)]
@@ -69,6 +70,10 @@ pub struct SettingsPane {
     image_job: Slot<Result<JobView, String>>,
     image_login: Slot<Result<ImageLogin, String>>,
     image_asked: f64,
+    /// The project's record (record.rs), and the package filter over it.
+    record: Slot<Result<RecordView, String>>,
+    record_asked: bool,
+    record_find: String,
 }
 
 impl SettingsPane {
@@ -76,6 +81,8 @@ impl SettingsPane {
         self.host = d.host.clone();
         self.loaded = false;
         self.edit.clear();
+        self.record_asked = false;
+        *self.record.lock().unwrap() = None;
         *self.vars.lock().unwrap() = None;
         *self.note.lock().unwrap() = None;
         // Who can view it, for the summary (an empty level reads it).
@@ -164,6 +171,7 @@ impl SettingsPane {
             (Section::Visibility, if d.target.is_empty() { "Not on the web".to_owned() } else { "On the web".to_owned() }),
             (Section::Variables, self.vars_state(app)),
             (Section::Image, self.image_state()),
+            (Section::Record, self.record_state()),
         ];
         let nav_w = if ui.available_width() < 560.0 { 136.0 } else { 172.0 };
         egui::Panel::left(egui::Id::new(("settings-nav", &d.host)))
@@ -195,6 +203,10 @@ impl SettingsPane {
                         }
                         Section::Image => {
                             self.image_section(ui, ctx, backend);
+                            None
+                        }
+                        Section::Record => {
+                            self.record_section(ui, ctx, backend);
                             None
                         }
                     };
@@ -397,6 +409,7 @@ pub enum Section {
     Visibility,
     Variables,
     Image,
+    Record,
 }
 
 impl Section {
@@ -408,6 +421,7 @@ impl Section {
             Section::Visibility => "Visibility",
             Section::Variables => "Variables",
             Section::Image => "Container image",
+            Section::Record => "Record",
         }
     }
 }
@@ -419,6 +433,117 @@ const LEVELS: [(&str, &str, &str); 3] = [
 ];
 
 impl SettingsPane {
+    fn ask_record(&mut self, capture: bool, backend: &Backend, ctx: &egui::Context) {
+        self.record_asked = true;
+        let (slot, c) = (self.record.clone(), ctx.clone());
+        if capture {
+            *slot.lock().unwrap() = None;
+        }
+        backend.query(Query::Record { host: self.host.clone(), capture }, ctx, move |r: Result<RecordView, String>| {
+            *slot.lock().unwrap() = Some(r);
+            c.request_repaint();
+        });
+    }
+
+    fn record_state(&self) -> String {
+        match &*self.record.lock().unwrap() {
+            Some(Ok(RecordView { record: Some(r), stack_now, .. })) => match (&r.stack.revision, stack_now) {
+                (Some(a), Some(b)) if a != b => format!("Stack moved {a} → {b}"),
+                (Some(a), _) => format!("Stack revision {a}"),
+                _ => "Recorded".to_owned(),
+            },
+            Some(Ok(_)) => "Not recorded yet".to_owned(),
+            Some(Err(_)) => "Not available".to_owned(),
+            None => "Not asked yet".to_owned(),
+        }
+    }
+
+    /// Settings › Record: the exact software the app runs on (operator,
+    /// 2026-11-18: "improve run and record"; ndexr.io's step 5). Recorded by
+    /// Up and by Record now, read off the running app; the stack's revision
+    /// set beside this machine's, so a drift is named, not found later.
+    fn record_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend) {
+        if !self.record_asked {
+            self.ask_record(false, backend, ctx);
+        }
+        heading(ui, "Record", "The exact software the running app uses, kept with the project's versions.");
+        let view = self.record.lock().unwrap().clone();
+        let mut capture = false;
+        ui.horizontal(|ui| {
+            capture = ui.add(theme::primary_button("Record now").min_size(egui::vec2(104.0, 30.0))).on_hover_text("read it off the running app and save .cove/record.json (Up does this too)").clicked();
+            if view.is_none() {
+                ui.spinner();
+            }
+        });
+        if capture {
+            self.ask_record(true, backend, ctx);
+        }
+        ui.add_space(10.0);
+        let v = match view {
+            None => return,
+            Some(Err(e)) => {
+                badge(ui, &e, theme::warn());
+                return;
+            }
+            Some(Ok(v)) => v,
+        };
+        if !v.note.is_empty() {
+            badge(ui, &v.note, theme::amber());
+            ui.add_space(8.0);
+        }
+        let Some(r) = v.record else {
+            ui.label(RichText::new("No record yet: Up the app, or Record now while it runs.").size(13.5).color(theme::text()));
+            return;
+        };
+        match (&r.stack.revision, &v.stack_now) {
+            (Some(a), Some(b)) if a != b => badge(ui, &format!("Recorded at stack revision {a}; this machine's is {b}"), theme::amber()),
+            (Some(a), _) => badge(ui, &format!("Stack revision {a}, as recorded"), theme::ok()),
+            _ => badge(ui, "Not on the ndexr stack", theme::warn()),
+        }
+        ui.add_space(10.0);
+        let mut langs: Vec<(String, usize)> = Vec::new();
+        for p in &r.packages {
+            match langs.iter_mut().find(|(l, _)| *l == p.language) {
+                Some((_, n)) => *n += 1,
+                None => langs.push((p.language.clone(), 1)),
+            }
+        }
+        let mut rows: Vec<(&str, String, bool)> = vec![
+            ("Recorded", format!("{} · {}", r.recorded_at, r.recorded_by), false),
+            ("Stack", format!("{} {} at {}", r.stack.repository, r.stack.triple, r.stack.mount), true),
+            ("Toolchain", if r.toolchain.is_empty() { "-".into() } else { r.toolchain.clone() }, true),
+            ("Modules", r.modules.len().to_string(), false),
+            ("Packages", if langs.is_empty() { "0".into() } else { langs.iter().map(|(l, n)| format!("{n} {l}")).collect::<Vec<_>>().join(" · ") }, false),
+            ("Platform", format!("{} · {} · kernel {} · glibc {}", r.platform.arch, r.platform.os, r.platform.kernel, r.platform.glibc), false),
+            ("Source", format!("{:.12}{}", r.source.commit, if r.source.dirty { " + unsaved edits" } else { "" }), true),
+        ];
+        for l in &r.locks {
+            rows.push(("Lock", format!("{} {:.16}", l.file, l.sha256), true));
+        }
+        facts(ui, "settings-record", &rows);
+        ui.add_space(10.0);
+        egui::CollapsingHeader::new(RichText::new(format!("Modules ({})", r.modules.len())).strong()).id_salt("record-modules").show(ui, |ui| {
+            for m in &r.modules {
+                ui.label(RichText::new(m).monospace().size(12.0).color(theme::text()));
+            }
+        });
+        if !r.packages.is_empty() {
+            egui::CollapsingHeader::new(RichText::new(format!("Packages ({})", r.packages.len())).strong()).id_salt("record-packages").show(ui, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.record_find).hint_text("find a package").desired_width(200.0));
+                let q = self.record_find.trim().to_lowercase();
+                egui::Grid::new("record-pkgs").num_columns(3).spacing([14.0, 2.0]).striped(true).show(ui, |ui| {
+                    for p in r.packages.iter().filter(|p| q.is_empty() || p.name.to_lowercase().contains(&q)) {
+                        ui.label(RichText::new(&p.name).monospace().size(12.0).color(theme::text_strong()));
+                        ui.label(RichText::new(&p.version).monospace().size(12.0).color(theme::text()));
+                        let from = if p.from.starts_with("/opt/ndexr/") { "stack" } else if p.from.is_empty() { "" } else { "your library" };
+                        ui.label(RichText::new(from).size(12.0).color(theme::text())).on_hover_text(&p.from);
+                        ui.end_row();
+                    }
+                });
+            });
+        }
+    }
+
     fn ask_image(&mut self, verb: &str, backend: &Backend, ctx: &egui::Context) {
         let c = ctx.clone();
         match verb {
@@ -758,29 +883,16 @@ fn info_section(ui: &mut egui::Ui, d: &DomainInfo, app: Option<&AppStatus>) -> O
     rows.push(("Address", url, true));
     rows.push(("Environment", if d.env.is_empty() { "the platform default".to_owned() } else { d.env.clone() }, true));
     rows.push(("Folder", d.path.clone(), true));
+    // What the project is, said and not picked (operator, 2026-11-14: "Type
+    // shouldnt be a selection in Info"; a ComboBox here, 2026-11-01, changed
+    // .cove/app.env's APP_LANGUAGE). The project's code decides what it is;
+    // an agent or .cove/app.env can still change it.
+    if let Some(a) = app {
+        let ty = crate::dotcove::TYPES.iter().find(|t| t.0 == a.language).map_or_else(|| if a.language.is_empty() { "not set".to_owned() } else { a.language.clone() }, |t| t.2.to_owned());
+        rows.push(("Type", ty, false));
+    }
     facts(ui, "settings-info", &rows);
-    // The project's type, one pick away (operator, 2026-11-01: "should be
-    // able to swap out project types with a selectize in the cove"): every
-    // type's scripts are in .cove/, so a pick changes one line of
-    // .cove/app.env. The app's own code stays as it is.
-    let Some(a) = app else { return None };
-    let mut act = None;
-    ui.add_space(14.0);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Type").size(13.0).color(theme::text()));
-        ui.add_space(12.0);
-        let now = crate::dotcove::TYPES.iter().find(|t| t.0 == a.language).map_or_else(|| if a.language.is_empty() { "not set".to_owned() } else { a.language.clone() }, |t| t.2.to_owned());
-        egui::ComboBox::from_id_salt("settings-type").width(300.0).selected_text(RichText::new(now).size(13.5).color(theme::text_strong())).show_ui(ui, |ui| {
-            for (lang, _, name) in crate::dotcove::TYPES {
-                if ui.selectable_label(a.language == *lang, RichText::new(*name).size(13.0)).clicked() && a.language != *lang {
-                    act = Some(Act::SetType((*lang).to_owned()));
-                }
-            }
-        });
-    });
-    ui.add_space(4.0);
-    ui.label(RichText::new("Builds, starts and stops it with that type's scripts in .cove/. Your code stays as it is: a new type needs its own app file (app.py, server.js, server.jl, src/main.rs or module.r).").size(13.0).color(theme::text()));
-    act
+    None
 }
 
 fn runtime_section(ui: &mut egui::Ui, app: Option<&AppStatus>) -> Option<Act> {

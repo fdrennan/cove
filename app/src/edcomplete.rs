@@ -231,7 +231,8 @@ impl EdComplete {
         }
         let slot = self.slot.clone();
         let seq = self.seq;
-        let text = if lang == "rust" { h.text.clone() } else { String::new() };
+        // R's too: the host reads its box::use lines (boxcomplete.rs).
+        let text = if lang == "rust" || lang == "r" { h.text.clone() } else { String::new() };
         let q = Query::CodeComplete { path: h.path.to_owned(), lang: lang.to_owned(), line: line.to_owned(), col, text, row };
         backend.query(q, ctx, move |r: Result<Completion, String>| {
             *slot.lock().unwrap() = Some((seq, r));

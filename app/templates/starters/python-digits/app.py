@@ -35,6 +35,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 
+from log import log
+
 HERE = Path(__file__).parent
 GRID = 64          # side of the ink grid the page sends
 FRAME = 32         # optdigits bitmaps are 32x32 before 4x4 block counting
@@ -84,9 +86,12 @@ def train_all() -> None:
             "fit_ms": round(fit_ms, 1),
             "confusion": confusion_matrix(yte, pred, labels=range(10)).tolist(),
         }
+        log.info("fitted %s in %.0f ms: test accuracy %.3f", spec["label"], fit_ms, report[key]["test_acc"])
     STATE.update(models=fitted, report=report, test_images=img_te, test_labels=yte,
                  n_train=len(ytr), n_test=len(yte),
                  train_s=round(time.perf_counter() - t_all, 2))
+    log.success("%d models trained on %d digits (%d held out) in %.2f s",
+                len(fitted), len(ytr), len(yte), STATE["train_s"])
 
 
 def resize_area(a: np.ndarray, h: int, w: int) -> np.ndarray:
@@ -148,6 +153,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Digit Lab · __HOST__", docs_url=None, redoc_url=None, lifespan=lifespan)
+log.info("__HOST__: Digit Lab starting on 127.0.0.1:%s, training %d models first", os.environ.get("PORT"), len(MODELS))
 
 
 @app.get("/health")

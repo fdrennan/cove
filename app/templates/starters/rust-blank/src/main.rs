@@ -1,8 +1,10 @@
 //! __HOST__: `app serve <port>` serves on 127.0.0.1. run.sh starts it again when
 //! ./build.sh makes a new binary; files in static/ are read on each request.
 
+mod log;
+
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tiny_http::{Header, Response, Server};
 
 fn secs(t: SystemTime) -> f64 {
@@ -62,8 +64,9 @@ fn main() {
     };
     let started = secs(SystemTime::now());
     let server = Server::http(("127.0.0.1", port)).expect("bind");
-    println!("serving on 127.0.0.1:{port}");
+    log::info!("__HOST__: blank Rust app serving on 127.0.0.1:{port}");
     for req in server.incoming_requests() {
+        let t0 = Instant::now();
         let path = req.url().split('?').next().unwrap_or("/").to_owned();
         let (status, body, ty) = match path.as_str() {
             "/health" => (200, br#"{"ok":true}"#.to_vec(), "application/json"),
@@ -77,6 +80,10 @@ fn main() {
         for (k, v) in [("Content-Type", ty), ("Cache-Control", "no-cache")] {
             resp.add_header(Header::from_bytes(k.as_bytes(), v.as_bytes()).expect("header"));
         }
-        let _ = req.respond(resp);
+        let method = req.method().clone();
+        match req.respond(resp) {
+            Ok(()) => log::request(&method, &path, status, t0),
+            Err(e) => log::error!("{method} {path}: response not sent: {e}"),
+        }
     }
 }

@@ -37,6 +37,8 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import adjusted_rand_score
 from sklearn.neighbors import kneighbors_graph
 
+from log import log
+
 HERE = Path(__file__).parent
 N_CELLS = 3000
 N_PCS_MAX = 50
@@ -384,6 +386,7 @@ def r3(a) -> list:
 
 
 app = FastAPI(title="Cell Atlas · __HOST__", docs_url=None, redoc_url=None)
+log.info("__HOST__: Cell Atlas starting on 127.0.0.1:%s, %d simulated cells", os.environ.get("PORT"), N_CELLS)
 
 
 @app.get("/health")
@@ -439,6 +442,8 @@ def run(r: Run):
     truth = s["truth"][kept]
     single = truth < len(TYPES)
     ari = adjusted_rand_score(truth[single], labels[single])
+    log.info("pipeline: %d of %d cells pass QC, %d clusters (%s), %s embedding, ARI %.3f, %.0f ms",
+             len(kept), N_CELLS, r.n_clusters, r.method, r.embedding, ari, sum(ms.values()))
     table = np.zeros((r.n_clusters, len(TRUTH)), dtype=int)
     np.add.at(table, (labels, truth), 1)
 

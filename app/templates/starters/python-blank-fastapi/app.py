@@ -1,4 +1,5 @@
 """__HOST__: a blank FastAPI app. uvicorn reloads it on every save."""
+import os
 import time
 from pathlib import Path
 
@@ -6,8 +7,11 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from log import log
+
 HERE = Path(__file__).parent
 STARTED = time.time()
+log.info("__HOST__: FastAPI app starting on 127.0.0.1:%s", os.environ.get("PORT"))
 
 app = FastAPI(title="__HOST__")
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")

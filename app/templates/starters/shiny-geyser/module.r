@@ -140,7 +140,11 @@ proc_started <- function() {
     f <- strsplit(sub("^.*\\) ", "", s), " ")[[1]]
     btime <- as.numeric(sub("^btime ", "", grep("^btime ", readLines("/proc/stat", warn = FALSE), value = TRUE)))
     as.POSIXct(btime + as.numeric(f[20]) / 100, origin = "1970-01-01")
-  }, error = function(e) GEYSER$loaded)
+  }, error = function(e) {
+    box::use(./r/log)
+    log$log_warn("no /proc start time ({conditionMessage(e)}); using the module's load time")
+    GEYSER$loaded
+  })
 }
 
 env_info <- function() {
@@ -180,6 +184,8 @@ ink <- function(mar = c(3.6, 4.4, 3, 1.2)) {
 # ── density ──────────────────────────────────────────────────────────────────
 
 ui_density <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, sliderInput, selectInput, radioButtons, actionButton, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   b <- GEYSER$bw$eruptions
@@ -206,6 +212,8 @@ ui_density <- function(id) {
 }
 
 server_density <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, observeEvent, updateSliderInput, updateActionButton, renderPlot, renderUI, tags],
     graphics[hist, plot.new, plot.window, axis, rect, lines, polygon, rug, mtext, legend, abline]
@@ -274,6 +282,8 @@ server_density <- function(id) {
 # ── mixture ──────────────────────────────────────────────────────────────────
 
 ui_mixture <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, selectInput, actionButton, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -298,6 +308,8 @@ ui_mixture <- function(id) {
 }
 
 server_mixture <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactiveVal, observe, observeEvent, invalidateLater, isolate, renderPlot, renderUI,
                   updateActionButton, tags],
@@ -387,6 +399,8 @@ server_mixture <- function(id) {
 # ── predict ──────────────────────────────────────────────────────────────────
 
 ui_predict <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, sliderInput, selectInput, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -404,6 +418,8 @@ ui_predict <- function(id) {
 }
 
 server_predict <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, renderPlot, renderUI, tags],
     graphics[plot.new, plot.window, axis, points, lines, polygon, segments, mtext, legend, abline, text]
@@ -458,6 +474,8 @@ server_predict <- function(id) {
 # ── environment ──────────────────────────────────────────────────────────────
 
 ui_env <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -467,6 +485,8 @@ ui_env <- function(id) {
 }
 
 server_env <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer, renderUI, tags])
   moduleServer(id, function(input, output, session) {
     output$env <- renderUI({
@@ -547,6 +567,8 @@ mtext_fit <- function(text, side = 3, line = 0, adj = 0.5, cex = 1, font = 1, at
 
 #' @export
 ui_module <- function(id, request) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[NS, tagList, tags, HTML],
     r / shell / shell
@@ -573,8 +595,10 @@ ui_module <- function(id, request) {
 }
 
 .server_inner <- function(id = "__HOST__", parent_session) {
-  box::use(r / shell / shell)
+  box::use(r / shell / shell, ./r/log)
   shell$server_shell(id, parent_session, inner = function(input, output, session) {
+    log$log_session(session)
+    log$log_info("__HOST__: module server starting")
     server_density("density")
     server_mixture("mixture")
     server_predict("predict")

@@ -71,8 +71,11 @@ ephemeris. Kepler, J. (1609), Astronomia Nova. Meeus, J. (1998), Astronomical
 Algorithms, 2nd ed., Willmann-Bell, chapters 30 (Kepler's equation) and 33.
 Small-body elements: JPL Small-Body Database, rounded.
 
+## Logging
+log.js (`const log = require('./log')`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

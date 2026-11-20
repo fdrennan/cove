@@ -8,6 +8,12 @@ A blank interactive document: R Markdown whose output reacts. Prose and
 code as in any report, with Shiny inputs and outputs inside it. A save
 shows on the next load of the page.
 
+```{r, include = FALSE}
+# r/log.r: one line per visitor's session, in Cove's log format.
+box::use(./r/log)
+log$log_session(session)
+```
+
 ```{r, echo = FALSE}
 sliderInput("n", "Points", min = 10, max = 1000, value = 200, step = 10)
 ```

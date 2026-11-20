@@ -178,7 +178,7 @@ fn header(name: &str, value: &str) -> Header {
 
 /// This machine is the platform (its checkout and .env are here). A cell's
 /// server is not.
-fn has_platform() -> bool {
+pub(crate) fn has_platform() -> bool {
     crate::host::platform_root().join(".env").is_file()
 }
 
@@ -238,6 +238,12 @@ fn authed(ctx: &Ctx, req: &Request) -> bool {
             return true;
         }
     }
+    // The desktop app's way in (backend.rs with_token): the same token, as a
+    // header. Compared in constant time, as the cookie is.
+    let bearer = req.headers().iter().find(|h| h.field.equiv("Authorization")).and_then(|h| h.value.as_str().strip_prefix("Bearer ").map(str::trim).map(str::to_owned));
+    if bearer.is_some_and(|t| same(&t, &ctx.token)) {
+        return true;
+    }
     req.headers().iter().filter(|h| h.field.equiv("Cookie")).any(|h| {
         h.value.as_str().split(';').any(|c| {
             c.trim().split_once('=').is_some_and(|(k, v)| k == COOKIE && same(v, &ctx.token))
@@ -286,7 +292,7 @@ fn handle(ctx: &Ctx, mut req: Request) {
     if method == Method::Get && path == "/download" {
         let resp = match query_param(&url, "path").and_then(|p| url_decode(&p)) {
             None => text(400, "no path"),
-            Some(p) => match crate::host::download(&p) {
+            Some(p) => match crate::host::download(&p, &query_param(&url, "format").and_then(|f| url_decode(&f)).unwrap_or_default()) {
                 Ok((name, bytes)) => Response::from_data(bytes)
                     .with_header(header("Content-Type", "application/octet-stream"))
                     .with_header(header("Content-Disposition", &format!("attachment; filename=\"{}\"", name.replace(['"', '\\', '\r', '\n'], "_"))))
@@ -445,6 +451,64 @@ fn notices_response() -> Response<std::io::Cursor<Vec<u8>>> {
     text(200, NOTICES).with_header(header("Content-Type", "text/plain; charset=utf-8"))
 }
 
+/// What a request from someone not signed in carries (POST /view/request).
+#[derive(serde::Deserialize)]
+struct AnonRequest {
+    what: String,
+    #[serde(default)]
+    contact: String,
+    #[serde(default)]
+    page: String,
+}
+
+/// Anonymous requests let through: at most 3 from one address in 10 minutes
+/// and 30 from everyone in an hour. Behind the router tunnel every visitor
+/// is 127.0.0.1 (nginx's X-Real-IP then names the tunnel), so the hourly cap
+/// is the one that holds.
+fn anon_allowed(who: &str, now: std::time::Instant) -> bool {
+    use std::sync::Mutex;
+    use std::time::Duration;
+    static SEEN: Mutex<Vec<(String, std::time::Instant)>> = Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap();
+    seen.retain(|(_, t)| now.duration_since(*t) < Duration::from_secs(3600));
+    let mine = seen.iter().filter(|(w, t)| w == who && now.duration_since(*t) < Duration::from_secs(600)).count();
+    if mine >= 3 || seen.len() >= 30 {
+        return false;
+    }
+    seen.push((who.to_owned(), now));
+    true
+}
+
+/// POST /view/request: a request filed by someone not signed in (host.rs
+/// send_request_anon). Public, so the body is small, the words are text and
+/// the rate is capped; it answers the request's number. CORS-open like the
+/// rest of /view/, and a plain-text body needs no preflight.
+pub fn anon_request_response(req: &mut Request) -> Response<std::io::Cursor<Vec<u8>>> {
+    let open = |r: Response<std::io::Cursor<Vec<u8>>>| r.with_header(header("Access-Control-Allow-Origin", "*"));
+    if *req.method() == Method::Options {
+        return open(text(204, "")).with_header(header("Access-Control-Allow-Methods", "POST")).with_header(header("Access-Control-Allow-Headers", "Content-Type"));
+    }
+    if *req.method() != Method::Post {
+        return open(text(405, "POST a request"));
+    }
+    let mut body = Vec::new();
+    let _ = req.as_reader().take(32 << 10).read_to_end(&mut body);
+    let Ok(r) = serde_json::from_slice::<AnonRequest>(&body) else {
+        return open(text(400, "send {\"what\": \"...\"} as JSON"));
+    };
+    if r.what.trim().is_empty() {
+        return open(text(400, "say what you need first"));
+    }
+    let who = req.headers().iter().find(|h| h.field.equiv("X-Real-IP")).map(|h| h.value.as_str().to_owned()).or_else(|| req.remote_addr().map(|a| a.ip().to_string())).unwrap_or_default();
+    if !anon_allowed(&who, std::time::Instant::now()) {
+        return open(text(429, "too many requests without signing in just now - try again in a few minutes, or sign in"));
+    }
+    open(match crate::host::send_request_anon(&r.what, &r.contact, &r.page) {
+        Ok(id) => json(200, &serde_json::json!({ "id": id })),
+        Err(e) => text(500, &e),
+    })
+}
+
 pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<std::io::Cursor<Vec<u8>>>> {
     let path = url.split('?').next().unwrap_or("/");
     if path == "/view" {
@@ -457,6 +521,13 @@ pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<
     let open = |r: Response<std::io::Cursor<Vec<u8>>>| r.with_header(header("Access-Control-Allow-Origin", "*"));
     Some(match tail {
         "third-party-notices" => open(notices_response()),
+        // The one-line installer, the same file ndexr.io/install.sh serves
+        // (packaging/install.sh): cove.ndexr.io's front page offers it too,
+        // and / itself is behind the sign-in (operator, 2026-11-14: "make
+        // sure we are updating cove.ndexr.io for front page and installation").
+        "install.sh" => open(Response::from_data(include_bytes!("../packaging/install.sh").to_vec())
+            .with_header(header("Content-Type", "text/x-shellscript; charset=utf-8"))
+            .with_header(header("Cache-Control", "no-cache"))),
         "software.json" => open(software_response(req)),
         "builds.json" => open(builds_response()),
         "kernels.json" => open(kernels_response()),
@@ -979,5 +1050,20 @@ mod tests {
         assert_eq!(super::url_decode("/home/a%20b/r%26d.html").as_deref(), Some("/home/a b/r&d.html"));
         assert_eq!(super::url_decode("%zz"), None);
         assert_eq!(super::url_decode(&crate::backend::url_encode("/x/é ü.html")).as_deref(), Some("/x/é ü.html"));
+    }
+
+    #[test]
+    fn anonymous_requests_are_capped_per_address_and_overall() {
+        let t = std::time::Instant::now();
+        for _ in 0..3 {
+            assert!(super::anon_allowed("1.2.3.4", t));
+        }
+        assert!(!super::anon_allowed("1.2.3.4", t), "a fourth from one address in ten minutes");
+        let mut others = 0;
+        while super::anon_allowed(&format!("10.0.0.{others}"), t) {
+            others += 1;
+        }
+        assert_eq!(others, 27, "thirty an hour from everyone");
+        assert!(super::anon_allowed("1.2.3.4", t + std::time::Duration::from_secs(3601)), "the hour passes");
     }
 }

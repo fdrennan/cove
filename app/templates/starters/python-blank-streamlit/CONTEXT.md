@@ -11,6 +11,7 @@ change this file's first line from "Blank" to its name and rewrite this paragrap
 ## Seeing a change
 Streamlit reruns on every save and the page updates itself.
 Packages come from the stack: env/Python/3.13.15 (`ml env/Python/3.13.15`).
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
 
 ## Paths nginx keeps for itself
 A request to /vendor/, /images/, /css/, /javascript/, /shared/, /sites/,

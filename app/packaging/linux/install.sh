@@ -28,27 +28,22 @@ refresh() {
 }
 
 if [[ "${1:-}" == --uninstall ]]; then
-  rm -rf "$bin" "$lib" "$desktop" "$icon"
+  rm -rf "$bin" "$lib" "$desktop" "$icon" "$prefix/share/cove"
   refresh
   echo "✓ removed cove from $prefix"
   exit 0
 fi
 
 install -Dm755 "$here/bin/cove" "$bin"
-# The App panel's webview links WebKitGTK 4.1, so cove does not start without
-# it - and a stock desktop install often lacks it (Pop!_OS 22.04 laptop,
-# 2026-10-15: "error while loading shared libraries: libwebkit2gtk-4.1.so.0").
-missing="$(ldd "$bin" 2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' ')"
-if [[ -n "$missing" ]]; then
-  echo "  ! cove needs libraries this machine lacks: $missing"
-  if command -v apt-get >/dev/null; then echo "    sudo apt install libwebkit2gtk-4.1-0"
-  elif command -v dnf >/dev/null; then echo "    sudo dnf install webkit2gtk4.1"
-  elif command -v pacman >/dev/null; then echo "    sudo pacman -S webkit2gtk-4.1"
-  else echo "    install WebKitGTK 4.1 (webkit2gtk-4.1) from your distribution"
-  fi
-fi
 if [[ -f "$here/lib/cove/bin/ndexr" ]]; then
   install -Dm755 "$here/lib/cove/bin/ndexr" "$lib/bin/ndexr"
+fi
+# The browser UI `cove serve` hands out (<prefix>/share/cove/web, as the .deb
+# puts it at /usr/share/cove/web): Cove in a browser, here or on a server.
+if [[ -f "$here/share/cove/web/index.html" ]]; then
+  rm -rf "$prefix/share/cove/web"
+  mkdir -p "$prefix/share/cove"
+  cp -r "$here/share/cove/web" "$prefix/share/cove/web"
 fi
 # Absolute Exec= so the launcher works even when $PREFIX/bin is not on the
 # session PATH (common for ~/.local/bin under GNOME).
@@ -57,17 +52,23 @@ sed "s|^Exec=.*|Exec=$bin|" "$here/share/applications/io.ndexr.cove.desktop" |
 install -Dm644 "$here/share/icons/hicolor/scalable/apps/io.ndexr.cove.svg" "$icon"
 refresh
 
-echo "✓ installed $bin"
-case ":$PATH:" in *":$prefix/bin:"*) ;; *) echo "  note: $prefix/bin is not on PATH — launch from the app menu or add it" ;; esac
+# The App panel's webview links WebKitGTK 4.1, so cove does not start without
+# it - and a stock desktop install often lacks it (Pop!_OS 22.04 laptop,
+# 2026-10-15: "error while loading shared libraries: libwebkit2gtk-4.1.so.0").
+# One command to fix it, not a list of sonames (operator, 2026-11-14: installs
+# "should look and feel cleaner").
+if ldd "$bin" 2>/dev/null | grep -q "not found"; then
+  if command -v apt-get >/dev/null; then fix="sudo apt install libwebkit2gtk-4.1-0"
+  elif command -v dnf >/dev/null; then fix="sudo dnf install webkit2gtk4.1"
+  elif command -v pacman >/dev/null; then fix="sudo pacman -S webkit2gtk-4.1"
+  elif command -v zypper >/dev/null; then fix="sudo zypper install libwebkit2gtk-4_1-0"
+  else fix="install WebKitGTK 4.1 (webkit2gtk-4.1) from your distribution"
+  fi
+  printf '\n  ! Cove needs WebKitGTK 4.1, which this machine does not have yet:\n\n      %s\n\n' "$fix"
+fi
 
-# Signed in, Cove runs R, Python and the shell on your ndexr cell (remote
-# first, every machine). Linux on an arch the stack is built for can also
-# build the environments here, from source (host.rs STACK_ARCHES).
-case "$(uname -m)" in
-  x86_64|aarch64)
-    echo "  Linux $(uname -m) is supported: sign in to run on your ndexr cell, or build the"
-    echo "  environments on this machine from source in Cove › Software › Install"
-    echo "  (the bundled ndexr CLI does the build; Tools › Global Options › Environment mounts the prebuilt stack instead)." ;;
-  *)
-    echo "  Linux $(uname -m) has no ndexr stack build: sign in and Cove runs on your ndexr cell." ;;
-esac
+# Run by the one-line installer (packaging/install.sh), which says the rest.
+[[ -n "${COVE_QUIET:-}" ]] && exit 0
+echo "✓ Cove is installed: $bin"
+echo "  Start it: cove   (or open Cove from your applications)"
+case ":$PATH:" in *":$prefix/bin:"*) ;; *) echo "  $prefix/bin is not on your PATH yet - open a new terminal, or use the app menu" ;; esac

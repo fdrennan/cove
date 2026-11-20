@@ -95,6 +95,9 @@ pub struct Inbox {
     pub domains: Vec<String>,
     draft: String,
     chat_draft: String,
+    /// Not signed in: a request to send anyway, and how to reach them.
+    anon_what: String,
+    anon_contact: String,
     /// What came of the last thing done: Ok(a word to show, or ""), or why not.
     sent: Slot<Result<String, String>>,
     note: Option<String>,
@@ -282,14 +285,17 @@ impl Inbox {
         // capped at 600 it ended a third of the way up and an open request's
         // reply box drew past its edge (operator, 2026-11-01).
         let phone = screen.width() < 600.0;
-        let w = (screen.width() - if phone { 12.0 } else { 40.0 }).min(860.0);
-        let h = if phone { screen.height() - 76.0 } else { (screen.height() - 90.0).min(600.0) };
+        // Room for a list beside a whole thread: 860 × 600 left the open
+        // request half of that, its log wrapped into a strip (operator's
+        // screenshot, 2026-11-16).
+        let w = (screen.width() - if phone { 12.0 } else { 48.0 }).min(1180.0);
+        let h = if phone { screen.height() - 76.0 } else { (screen.height() - 96.0).min(780.0) };
         // In front of the windows, always: Builds' charts paint on the
         // foreground layer and had covered it (operator, 2026-10-18).
         let id = egui::Id::new("messages-window");
         ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, id));
         let mut window = egui::Window::new("Messages").id(id).order(egui::Order::Foreground).open(&mut open).collapsible(false);
-        window = if phone { window.resizable(false).fixed_size([w, h]).anchor(egui::Align2::CENTER_TOP, [0.0, 40.0]) } else { window.resizable(true).default_size([w, h]) };
+        window = if phone { window.resizable(false).fixed_size([w, h]).anchor(egui::Align2::CENTER_TOP, [0.0, 40.0]) } else { window.resizable(true).default_size([w, h]).min_size([640.0f32.min(w), 420.0f32.min(h)]) };
         window.show(ctx, |ui| {
             let Some(view) = view else {
                 ui.spinner();
@@ -298,7 +304,9 @@ impl Inbox {
             let v = match view {
                 Ok(v) => v,
                 Err(e) => {
-                    ui.label(RichText::new(e).color(theme::alt()));
+                    ui.label(RichText::new(&e).color(theme::alt()));
+                    crate::setup::connect_button(ui, &e, true);
+                    self.anon_compose(ui, ctx, backend);
                     return;
                 }
             };
@@ -309,19 +317,21 @@ impl Inbox {
                     (Tab::Chat, if unread_people > 0 { format!("Chat · {unread_people} new") } else { "Chat".to_owned() }),
                 ];
                 for (t, label) in tabs {
-                    if ui.selectable_label(self.tab == t, label).clicked() && self.tab != t {
+                    if crate::software::segment(ui, &label, "", self.tab == t).clicked() && self.tab != t {
                         self.tab = t;
                         self.asked = f64::NEG_INFINITY;
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(format!("signed in as {}{}", v.me, if v.admin { " · admin" } else { "" })).size(11.0).color(theme::muted()));
+                    ui.label(RichText::new(format!("{}{}", v.me, if v.admin { " · admin" } else { "" })).size(12.0).color(theme::text()));
                 });
             });
             if let Some(n) = &self.note {
-                ui.label(RichText::new(n).size(11.5).color(theme::alt()));
+                ui.label(RichText::new(n).size(12.0).color(theme::alt()));
             }
+            ui.add_space(4.0);
             ui.separator();
+            ui.add_space(2.0);
             match self.tab {
                 Tab::Requests => self.requests(ui, ctx, backend, &v),
                 Tab::Chat => self.chat(ui, ctx, backend, &v),
@@ -347,21 +357,22 @@ impl Inbox {
         ui.horizontal_wrapped(|ui| {
             if v.admin {
                 let before = self.mine_only;
-                ui.selectable_value(&mut self.mine_only, false, "everyone's");
-                ui.selectable_value(&mut self.mine_only, true, "mine");
+                if crate::software::segment(ui, "Everyone's", "", !self.mine_only).clicked() {
+                    self.mine_only = false;
+                }
+                if crate::software::segment(ui, "Mine", "", self.mine_only).clicked() {
+                    self.mine_only = true;
+                }
                 if before != self.mine_only {
                     self.asked = f64::NEG_INFINITY;
                     self.picked = None;
                 }
                 ui.separator();
             }
-            ui.selectable_value(&mut self.show, Show::Active, "open");
-            ui.selectable_value(&mut self.show, Show::Done, "done");
-            ui.selectable_value(&mut self.show, Show::Every, "all");
-            if !narrow {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new("new requests: ? Help in the toolbar").size(11.0).color(theme::hush()));
-                });
+            for (s, word) in [(Show::Active, "Open"), (Show::Done, "Done"), (Show::Every, "All")] {
+                if crate::software::segment(ui, word, "", self.show == s).clicked() {
+                    self.show = s;
+                }
             }
         });
         let list: Vec<&RequestView> = v
@@ -383,15 +394,25 @@ impl Inbox {
             }
             return;
         }
-        ui.columns(2, |c| {
-            self.request_list(&mut c[0], v, &list, h);
-            let picked = self.picked.and_then(|id| v.requests.iter().find(|r| r.id == id)).cloned();
-            match picked {
-                Some(r) => self.request(&mut c[1], ctx, backend, v, &r),
-                None => {
-                    c[1].label(RichText::new("Pick a request.").color(theme::muted()));
+        // The list a column of its own width, the open request the rest:
+        // halves gave the thread too little (2026-11-16).
+        let list_w = (ui.available_width() * 0.34).clamp(260.0, 380.0);
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(egui::vec2(list_w, h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                self.request_list(ui, v, &list, h);
+            });
+            let (line, _) = ui.allocate_exact_size(egui::vec2(1.0, h), egui::Sense::hover());
+            ui.painter().vline(line.center().x, line.y_range(), egui::Stroke::new(1.0, theme::pane_brd()));
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), h), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.add_space(2.0);
+                let picked = self.picked.and_then(|id| v.requests.iter().find(|r| r.id == id)).cloned();
+                match picked {
+                    Some(r) => self.request(ui, ctx, backend, v, &r),
+                    None => {
+                        ui.label(RichText::new("Pick a request.").color(theme::muted()));
+                    }
                 }
-            }
+            });
         });
     }
 
@@ -425,8 +446,9 @@ impl Inbox {
                 for r in list {
                     let on = self.picked == Some(r.id);
                     let resp = egui::Frame::new()
-                        .fill(if on { theme::surface_hi() } else { Color32::TRANSPARENT })
-                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .fill(if on { theme::primary().gamma_multiply(0.16) } else { Color32::TRANSPARENT })
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::symmetric(10, 8))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
@@ -443,8 +465,8 @@ impl Inbox {
                                 }
                             });
                             let first = r.what.lines().next().unwrap_or("");
-                            ui.add(egui::Label::new(RichText::new(first).size(12.5).color(theme::text_strong())).truncate());
-                            ui.label(RichText::new(format!("{} · {}", r.domain, r.created)).size(10.5).color(theme::hush()));
+                            ui.add(egui::Label::new(RichText::new(first).size(13.0).color(theme::text_strong())).truncate());
+                            ui.add(egui::Label::new(RichText::new(format!("{} · {}", r.domain, r.created)).size(11.5).color(theme::text())).truncate());
                         })
                         .response
                         .interact(egui::Sense::click());
@@ -465,15 +487,20 @@ impl Inbox {
         if r.mine && r.unread && self.seen.insert((r.id, r.messages.len())) {
             self.act(backend, ctx, InboxAct::Seen { id: r.id });
         }
+        // Its first line as the heading, then whose and where, then what can
+        // be done - each its own line.
+        let title = r.what.lines().next().unwrap_or("").trim();
+        ui.add(egui::Label::new(RichText::new(title).size(15.5).strong().color(theme::text_strong())).wrap());
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(format!("#{}", r.id)).monospace().color(theme::muted()));
-            ui.label(RichText::new(status_word(&r.status)).strong().color(status_color(&r.status)));
-            ui.label(RichText::new(&r.domain).size(11.5).color(theme::text()));
+            ui.label(RichText::new(format!("#{}", r.id)).monospace().size(12.0).color(theme::text()));
+            ui.label(RichText::new(status_word(&r.status)).size(12.0).strong().color(status_color(&r.status)));
+            ui.label(RichText::new(format!("· {}", r.domain)).size(12.0).color(theme::text()));
+            if !r.mine {
+                let who = if r.email.is_empty() { r.username.clone() } else { format!("{} · {}", r.username, r.email) };
+                ui.label(RichText::new(format!("· from {who}")).size(12.0).color(theme::text()));
+            }
         });
-        if !r.mine {
-            let who = if r.email.is_empty() { r.username.clone() } else { format!("{} · {}", r.username, r.email) };
-            ui.label(RichText::new(format!("from {who}")).size(11.5).color(theme::text()));
-        }
+        ui.add_space(4.0);
         // What can be done with it, above the thread so it is never scrolled
         // away. For an admin, one obvious first move: hand it to Exec.
         let mut to: Option<&str> = None;
@@ -509,7 +536,7 @@ impl Inbox {
                 }
                 ui.separator();
                 for (s, label) in [("working", "Working"), ("resolved", "Resolved"), ("wontfix", "Won't fix"), ("open", "Reopen")] {
-                    if r.status != s && ui.small_button(label).clicked() {
+                    if r.status != s && ui.add(egui::Button::new(label).min_size(egui::vec2(0.0, 28.0))).clicked() {
                         to = Some(s);
                     }
                 }
@@ -1141,6 +1168,34 @@ impl Inbox {
         }
     }
 
+    /// Messages with no sign-in: threads and chat need an account, a request
+    /// does not (operator, 2026-11-14: "users should be able to file
+    /// anonymous requests through the messaging system without being logged
+    /// in"). It goes to cove.ndexr.io as anonymous (backend.rs anon_request);
+    /// the answer comes back only to a contact they choose to leave.
+    fn anon_compose(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend) {
+        ui.add_space(8.0);
+        ui.label(RichText::new("Send a request without signing in").size(14.0).strong().color(theme::text_strong()));
+        ui.label(RichText::new("What you need, or what is broken. It reaches the people who build Cove, filed as anonymous.").size(12.5).color(theme::text()));
+        ui.add(egui::TextEdit::multiline(&mut self.anon_what).hint_text("what you need…").desired_rows(4).desired_width(f32::INFINITY));
+        ui.add(egui::TextEdit::singleline(&mut self.anon_contact).hint_text("an email for the answer (optional)").desired_width(f32::INFINITY));
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!self.anon_what.trim().is_empty(), theme::primary_button("Send request")).clicked() {
+                let what = std::mem::take(&mut self.anon_what);
+                let contact = self.anon_contact.trim().to_owned();
+                let trying = if contact.is_empty() { String::new() } else { format!("Contact they left (unverified): {contact}") };
+                let (slot, c) = (self.sent.clone(), ctx.clone());
+                backend.query(Query::SendRequest { domain: "cove.ndexr.io".into(), what, trying, blocked: false, files: Vec::new() }, ctx, move |r: Result<serde_json::Value, String>| {
+                    *slot.lock().unwrap() = Some(r.map(|id| format!("sent - request #{id}, filed as anonymous")));
+                    c.request_repaint();
+                });
+            }
+            if let Some(n) = &self.note {
+                ui.label(RichText::new(n).size(12.5).color(theme::text_strong()));
+            }
+        });
+    }
+
     /// A new request from the team conversation, about the domain open here.
     fn new_request(&self, backend: &Backend, ctx: &egui::Context, what: String, files: Vec<crate::api::Attachment>) {
         let domain = self.here.as_ref().map_or_else(|| "cove.ndexr.io".to_owned(), |(h, _)| h.clone());
@@ -1350,7 +1405,7 @@ fn human(n: i64) -> String {
 fn bubble(ui: &mut egui::Ui, who: &str, at: &str, body: &str, mine: bool, team: bool) {
     let layout = if mine { egui::Layout::right_to_left(egui::Align::Min) } else { egui::Layout::left_to_right(egui::Align::Min) };
     ui.with_layout(layout, |ui| {
-        let w = (ui.available_width() * 0.82).max(160.0);
+        let w = (ui.available_width() * 0.94).max(160.0);
         egui::Frame::new()
             .fill(if mine { theme::surface_hi() } else { theme::bg() })
             .stroke(egui::Stroke::new(1.0, if team { theme::primary().gamma_multiply(0.6) } else { theme::pane_brd() }))
@@ -1360,7 +1415,11 @@ fn bubble(ui: &mut egui::Ui, who: &str, at: &str, body: &str, mine: bool, team: 
                 ui.set_max_width(w);
                 ui.vertical(|ui| {
                     ui.label(RichText::new(format!("{who} · {at}")).size(10.5).color(if team { theme::primary() } else { theme::muted() }));
-                    ui.add(egui::Label::new(RichText::new(body).color(theme::text())).wrap());
+                    // A log pasted into a request (a build's output) reads as one:
+                    // monospace, in its own lines, not prose wrapped into a strip.
+                    let log = body.lines().count() > 6 || body.split_whitespace().any(|w| w.len() > 60);
+                    let t = if log { RichText::new(body).monospace().size(11.5) } else { RichText::new(body).size(13.0) };
+                    ui.add(egui::Label::new(t.color(theme::text())).wrap());
                 });
             });
     });

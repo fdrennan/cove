@@ -21,6 +21,7 @@ added here appears there with its heatmap, histograms and scatter.
 built-in tables are complete and a detective should see what gaps do to the
 numbers: every statistic here skips missing values pairwise, as pandas does.
 """
+import os
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -32,6 +33,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from scipy import stats
 from sklearn import datasets as skd
+
+from log import log as applog   # /api/column has a `log` parameter (log scale)
 
 HERE = Path(__file__).parent
 # Dark categorical slots 1-3 of the validated reference palette: they pass every
@@ -97,6 +100,8 @@ def table(name: str, missing: float, seed: int) -> pd.DataFrame:
         for c in df.columns:
             if c != target:
                 df.loc[rng.random(len(df)) < missing, c] = np.nan if df[c].dtype.kind == "f" else None
+    applog.info("loaded %s: %d rows x %d columns, %.0f%% of feature cells blanked (seed %d)",
+                name, len(df), df.shape[1], missing * 100, seed)
     return df
 
 
@@ -212,6 +217,7 @@ def findings(df, cols, corr, name, z, k):
 # ---- routes ----------------------------------------------------------------------------
 
 app = FastAPI(title="Dataset Detective · __HOST__", docs_url=None, redoc_url=None)
+applog.info("__HOST__: Dataset Detective starting on 127.0.0.1:%s, %d datasets", os.environ.get("PORT"), len(DATASETS))
 
 
 @app.get("/health")

@@ -29,8 +29,11 @@ z(1 - z) for complex lambda and z", Annals of the New York Academy of
 Sciences 357. Bezanson, J. et al. (2017), "Julia: A Fresh Approach to
 Numerical Computing", SIAM Review 59(1).
 
+## Logging
+Logging: log.jl (`Log.info`), one format across languages; LOG_LEVEL=DEBUG for more. /render lines are DEBUG.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

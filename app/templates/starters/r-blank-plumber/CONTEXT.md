@@ -7,6 +7,8 @@ change this file's first line from "Blank Plumber" to its name and rewrite this 
 - app.env, build.sh, up.sh, down.sh, run.sh, env.sh - how the app is checked,
   started and stopped
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Seeing a change
 Plumber does not reload itself; run.sh restarts it whenever an .R file changes.
 Packages come from the stack: env/r4.6_py3.13-release (`ml env/r4.6_py3.13-release`); APP_NEEDS in app.env names them, and env.sh refuses to start without them.

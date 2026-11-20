@@ -13,6 +13,7 @@ rewrite this paragraph.
 ## Seeing a change
 Voilà runs the notebook for each visit: save, then reload the page.
 `./build.sh` runs it once, so a failing cell stops the build.
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
 
 ## State (2026-11-07)
 Voilà does not start on the stack's Python set yet: its install dropped the

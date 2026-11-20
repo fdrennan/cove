@@ -40,6 +40,8 @@ Python, fastapi, uvicorn, numpy and scikit-learn come
 from the stack's env set (env/Python/3.13.15, else env/r4.6_py3.13-release);
 nothing is pip-installed.
 
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 - The corpus was written for this starter, from the textbook record of each
   field's results (Hubble-era cosmology, Hodgkin-Huxley, Snow's cholera map,
@@ -58,7 +60,7 @@ nothing is pip-installed.
 - scikit-learn: Pedregosa, F. et al. (2011), JMLR 12, 2825-2830.
 
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

@@ -46,6 +46,8 @@ same ones; a log response is scored on the log scale.
 Checks: `lm(mpg ~ wt, mtcars)` gives slope -5.3445 and R2 0.7528;
 `glm(am ~ wt, binomial)` gives 12.040 and -4.024.
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R (stats, graphics, datasets) and Shiny only, from the stack's R; no
 download, key or database.
@@ -61,7 +63,7 @@ Akaike, H. (1974), "A New Look at the Statistical Model Identification",
 IEEE Trans. Automatic Control 19(6).
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

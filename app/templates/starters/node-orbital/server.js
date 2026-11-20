@@ -9,6 +9,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const log = require("./log");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const O = require("./static/orbits.js");
@@ -16,7 +17,7 @@ const O = require("./static/orbits.js");
 const PORT = Number(process.env.PORT);
 if (!Number.isInteger(PORT) || PORT <= 0) {
   // env.sh sets PORT from app.env APP_PORT; a port typed here would collide with another app's.
-  console.error("PORT is not set: start with ./run.sh, which reads it from app.env");
+  log.error("PORT is not set: start with ./run.sh, which reads it from app.env");
   process.exit(2);
 }
 const STATIC = path.join(__dirname, "static");
@@ -168,6 +169,7 @@ function serveStatic(res, urlPath) {
 }
 
 const server = http.createServer((req, res) => {
+  log.request(req, res);
   const url = new URL(req.url, "http://localhost");
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "GET only", "text/plain");
   if (url.pathname === "/health") return send(res, 200, "ok", "text/plain");
@@ -182,5 +184,5 @@ const server = http.createServer((req, res) => {
   serveStatic(res, url.pathname);
 });
 
-server.listen(PORT, "127.0.0.1", () => console.log(`Orbital serving on 127.0.0.1:${PORT} (${process.version})`));
+server.listen(PORT, "127.0.0.1", () => log.info(`__HOST__: Orbital serving on 127.0.0.1:${PORT} (node ${process.version})`));
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => server.close(() => process.exit(0)));

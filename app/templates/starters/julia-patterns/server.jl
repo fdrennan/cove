@@ -22,6 +22,7 @@
 # frame. The table holds at most MAX_SIMS grids; a new page evicts the one
 # idle longest, which then restarts from a fresh seed on its next frame.
 
+include(joinpath(@__DIR__, "log.jl"))
 using HTTP, JSON3, Random
 
 const ROOT = @__DIR__
@@ -229,7 +230,7 @@ function guarded(handler)
             handler(req)
         catch err
             bad = err isa ArgumentError || err isa MethodError || err isa InexactError
-            bad || @error "request failed" exception = (err, catch_backtrace())
+            bad || Log.error("$(req.method) $(req.target) failed: $(message(err))")
             json((error = message(err),); status = bad ? 400 : 500)
         end
     end
@@ -237,6 +238,7 @@ end
 
 const app = guarded(router)
 
+const WARM = time()
 # Run a small grid through a reset, a drop and a few steps in-process so the
 # first visitor does not wait for the compiler, then forget it.
 app(HTTP.Request("POST", "/api/frame", ["Content-Type" => "application/json"],
@@ -244,6 +246,23 @@ app(HTTP.Request("POST", "/api/frame", ["Content-Type" => "application/json"],
 app(HTTP.Request("GET", "/api/info"))
 lock(() -> delete!(SIMS, "warmup-grid"), SIMS_LOCK)
 
-println("Pattern Lab listening on http://127.0.0.1:$PORT with $(Threads.nthreads()) threads")
-flush(stdout)
-HTTP.serve(app, "127.0.0.1", PORT)
+Log.info("compiled the handlers in $(round(time() - WARM; digits = 1)) s")
+
+# One log line per request. /api/frame runs every animation frame,
+# so its lines are DEBUG (LOG_LEVEL=DEBUG shows them).
+function logged(handler)
+    return function (req)
+        t0 = time()
+        res = handler(req)
+        path = first(split(req.target, '?'))
+        if res.status < 400 && (path == "/api/frame")
+            Log.debug("$(req.method) $path $(res.status) $(round(Int, (time() - t0) * 1000)) ms")
+        else
+            Log.request(req, res.status, t0)
+        end
+        res
+    end
+end
+
+Log.info("__HOST__: Pattern Lab serving on 127.0.0.1:$PORT with $(Threads.nthreads()) threads")
+HTTP.serve(logged(app), "127.0.0.1", PORT)

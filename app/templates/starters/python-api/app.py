@@ -4,6 +4,7 @@ numpy and scipy do the work; FastAPI validates the input, answers in JSON and
 writes the interactive reference at /docs. Every answer carries `ms`, the
 server's own compute time.
 """
+import os
 import time
 from functools import wraps
 from pathlib import Path
@@ -17,7 +18,10 @@ from pydantic import BaseModel, Field, FiniteFloat
 from scipy import stats
 from scipy.integrate import solve_ivp
 
+from log import log
+
 HERE = Path(__file__).parent
+log.info("__HOST__: Scientific API (FastAPI) starting on 127.0.0.1:%s", os.environ.get("PORT"))
 
 app = FastAPI(
     title="Scientific API · __HOST__",
@@ -156,6 +160,7 @@ def logistic(r: float = Query(0.8, gt=0, le=50, allow_inf_nan=False, description
     t = np.linspace(0, t_end, n)
     sol = solve_ivp(lambda _t, y: r * y * (1 - y / K), (0, t_end), [y0], t_eval=t, rtol=1e-8, atol=1e-10)
     if not sol.success:
+        log.error("ode/logistic: solve_ivp failed (r=%s K=%s y0=%s): %s", r, K, y0, sol.message)
         raise HTTPException(500, sol.message)
     exact = K / (1 + (K - y0) / y0 * np.exp(-r * t))
     return {"r": r, "K": K, "y0": y0, "t": clean(sol.t), "y": clean(sol.y[0]),

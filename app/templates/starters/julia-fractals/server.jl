@@ -10,6 +10,7 @@
 # `scale` is the width of one pixel in the complex plane; (cx, cy) is the
 # centre of the image.
 
+include(joinpath(@__DIR__, "log.jl"))
 using HTTP, JSON3
 
 const ROOT = @__DIR__
@@ -128,7 +129,7 @@ function guarded(handler)
         try
             handler(req)
         catch err
-            err isa ArgumentError || @error "request failed" exception = (err, catch_backtrace())
+            err isa ArgumentError || Log.error("$(req.method) $(req.target) failed: $(message(err))")
             json((error = message(err),); status = err isa ArgumentError ? 400 : 500)
         end
     end
@@ -136,10 +137,28 @@ end
 
 const app = guarded(router)
 
+const WARM = time()
 # Draw one small frame of each kind in-process so the first visitor does not wait for the compiler.
 app(HTTP.Request("GET", "/render?kind=mandelbrot&w=64&h=40"))
 app(HTTP.Request("GET", "/render?kind=julia&w=64&h=40"))
 
-println("Fractal Explorer listening on http://127.0.0.1:$PORT with $(Threads.nthreads()) threads")
-flush(stdout)
-HTTP.serve(app, "127.0.0.1", PORT)
+Log.info("compiled the handlers in $(round(time() - WARM; digits = 1)) s")
+
+# One log line per request. /render answers every pan and zoom,
+# so its lines are DEBUG (LOG_LEVEL=DEBUG shows them).
+function logged(handler)
+    return function (req)
+        t0 = time()
+        res = handler(req)
+        path = first(split(req.target, '?'))
+        if res.status < 400 && (path == "/render")
+            Log.debug("$(req.method) $path $(res.status) $(round(Int, (time() - t0) * 1000)) ms")
+        else
+            Log.request(req, res.status, t0)
+        end
+        res
+    end
+end
+
+Log.info("__HOST__: Fractal Explorer serving on 127.0.0.1:$PORT with $(Threads.nthreads()) threads")
+HTTP.serve(logged(app), "127.0.0.1", PORT)

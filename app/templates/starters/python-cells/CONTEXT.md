@@ -49,6 +49,8 @@ Python, fastapi, uvicorn, numpy, scipy and scikit-learn come from the
 stack's env set (env/Python/3.13.15, else env/r4.6_py3.13-release); nothing is
 pip-installed.
 
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Luecken, M. D. and Theis, F. J. (2019), "Current best practices in
 single-cell RNA-seq analysis: a tutorial", Molecular Systems Biology 15(6).
@@ -77,7 +79,7 @@ Pedregosa, F. et al. (2011), "Scikit-learn: Machine Learning in Python",
 J. Machine Learning Research 12.
 
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

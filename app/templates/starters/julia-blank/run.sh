@@ -18,4 +18,5 @@ while :; do
   wait "$child" 2>/dev/null || true
   # Stopped by itself, with nothing changed: wait for the save that fixes it.
   while [ "$(stamp)" = "$seen" ]; do sleep 1; done
+  printf '%s INFO    [run] server.jl changed - restarting\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
 done

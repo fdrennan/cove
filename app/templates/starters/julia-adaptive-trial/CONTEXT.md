@@ -60,8 +60,11 @@ randomisation in clinical trials", European Journal of Cancer 43(5).
 Berry, S. M., Carlin, B. P., Lee, J. J. and Müller, P. (2010), "Bayesian
 Adaptive Methods for Clinical Trials", Chapman & Hall/CRC.
 
+## Logging
+Logging: log.jl (`Log.info`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

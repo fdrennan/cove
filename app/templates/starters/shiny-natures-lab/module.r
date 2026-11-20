@@ -178,6 +178,8 @@ pop_choices <- stats::setNames(names(NL$pops), NL$pops)
 # ── trial ────────────────────────────────────────────────────────────────────
 
 ui_trial <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, selectInput, sliderInput, actionButton, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -203,6 +205,8 @@ ui_trial <- function(id) {
 }
 
 server_trial <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, renderPlot, renderUI, tags],
     graphics[plot.new, plot.window, axis, points, abline, mtext, text, segments, rect]
@@ -302,6 +306,8 @@ supported_p <- function(rs) {
 }
 
 ui_pipeline <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, sliderInput, actionButton, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -322,6 +328,8 @@ ui_pipeline <- function(id) {
 }
 
 server_pipeline <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, renderPlot, renderUI, tags],
     graphics[plot.new, plot.window, axis, rect, text, mtext, legend]
@@ -384,6 +392,8 @@ power_at <- function(n, q, b1, b2, alpha) {
 }
 
 ui_ancestry <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, selectInput, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -403,6 +413,8 @@ ui_ancestry <- function(id) {
 }
 
 server_ancestry <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, renderPlot, renderUI, tags],
     graphics[plot.new, plot.window, axis, lines, abline, mtext, text, points]
@@ -484,6 +496,8 @@ REPORTED <- data.frame(label = c("Pakistan, first 10,000 (2017)", "Pakistan, 80,
                        n = c(1e4, 8e4), genes = c(1317, 5000))
 
 ui_knockouts <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, sliderInput, selectInput, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -504,6 +518,8 @@ ui_knockouts <- function(id) {
 }
 
 server_knockouts <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, renderPlot, renderUI, tags],
     graphics[plot.new, plot.window, axis, lines, points, abline, mtext, text, legend]
@@ -614,6 +630,8 @@ mtext_fit <- function(text, side = 3, line = 0, adj = 0.5, cex = 1, font = 1, at
 
 #' @export
 ui_module <- function(id, request) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[NS, tagList, tags, HTML],
     r / shell / shell
@@ -640,8 +658,10 @@ ui_module <- function(id, request) {
 }
 
 .server_inner <- function(id = "__HOST__", parent_session) {
-  box::use(r / shell / shell)
+  box::use(r / shell / shell, ./r/log)
   shell$server_shell(id, parent_session, inner = function(input, output, session) {
+    log$log_session(session)
+    log$log_info("__HOST__: module server starting")
     server_trial("trial")
     server_pipeline("pipeline")
     server_ancestry("ancestry")

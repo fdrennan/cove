@@ -60,6 +60,8 @@ ink <- function(mar = c(3.6, 4.4, 3, 1.2)) {
 # ── paths ────────────────────────────────────────────────────────────────────
 
 ui_paths <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, sliderInput, radioButtons, actionButton, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -83,6 +85,8 @@ ui_paths <- function(id) {
 
 # Returns the simulation, for the evidence branch.
 server_paths <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, renderPlot, renderUI, tags],
     graphics[plot.new, plot.window, axis, lines, matlines, abline, mtext, text, rect]
@@ -141,6 +145,8 @@ server_paths <- function(id) {
 # ── evidence ─────────────────────────────────────────────────────────────────
 
 ui_evidence <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, plotOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -151,6 +157,8 @@ ui_evidence <- function(id) {
 }
 
 server_evidence <- function(id, sim) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, renderPlot],
     graphics[plot.new, plot.window, axis, lines, polygon, abline, mtext, rect, hist, legend]
@@ -261,6 +269,8 @@ mtext_fit <- function(text, side = 3, line = 0, adj = 0.5, cex = 1, font = 1, at
 
 #' @export
 ui_module <- function(id, request) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[NS, tagList, tags, HTML],
     r / shell / shell
@@ -285,8 +295,10 @@ ui_module <- function(id, request) {
 }
 
 .server_inner <- function(id = "__HOST__", parent_session) {
-  box::use(r / shell / shell)
+  box::use(r / shell / shell, ./r/log)
   shell$server_shell(id, parent_session, inner = function(input, output, session) {
+    log$log_session(session)
+    log$log_info("__HOST__: module server starting")
     x <- server_paths("paths")
     server_evidence("evidence", x)
   })

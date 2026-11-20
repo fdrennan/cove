@@ -13,6 +13,7 @@ observatory, the contract check and /docs all pick them up.
 """
 import asyncio
 import json
+import logging
 import math
 import os
 import platform
@@ -31,6 +32,8 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
+
+from log import log
 
 HERE = Path(__file__).parent
 STARTED = datetime.now(timezone.utc)
@@ -298,6 +301,24 @@ app = FastAPI(
                   {"name": "observatory", "description": "what the page reads"}],
 )
 app.add_middleware(Recorder)
+log.info("__HOST__: API Observatory starting on 127.0.0.1:%s, watching %d sample endpoints",
+         os.environ.get("PORT"), len(SAMPLES))
+
+BURSTS = 0   # load and contract runs in progress: their own /sample/ calls
+
+
+class BurstAtDebug(logging.Filter):
+    """A load run sends up to 200,000 requests to /sample/: while one runs, those
+    access lines are DEBUG (the observatory records each one), the rest INFO."""
+    def filter(self, r):
+        if BURSTS and r.args and str(r.args[2]).startswith("/sample/"):
+            r.levelno, r.levelname = logging.DEBUG, "DEBUG"
+            return logging.getLogger().isEnabledFor(logging.DEBUG)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(BurstAtDebug())
+logging.getLogger("httpx").setLevel(logging.WARNING)   # it logs every request the load generator sends
 
 
 @app.get("/health", include_in_schema=False)
@@ -437,6 +458,7 @@ async def load(request: Request,
     url = f"http://{host}:{port}{SAMPLES[endpoint][0]}"
 
     async def gen():
+        global BURSTS
         if LOAD.locked():
             yield sse("busy", {"detail": "a load run is in progress"})
             return
@@ -473,6 +495,7 @@ async def load(request: Request,
                         lat.append((time.perf_counter() - t) * 1000)
                         codes[code] += 1
 
+                BURSTS += 1
                 tasks = [asyncio.create_task(worker()) for _ in range(concurrency)]
                 try:
                     while True:
@@ -481,9 +504,13 @@ async def load(request: Request,
                             break
                         yield sse("tick", progress(False))
                 finally:
+                    BURSTS -= 1
                     for t in tasks:
                         t.cancel()
             final = progress(True)
+            log.info("load run on %s: %d requests in %.1f s (%.0f/s, x%d), %d errors, p95 %s ms",
+                     SAMPLES[endpoint][0], final["done"], final["elapsed"], final["rps"], concurrency,
+                     final["errors"], None if final["p95"] is None else round(final["p95"], 1))
         # sent after the lock is released, so a client that starts its next run on
         # `done` does not find this one still holding it
         yield sse("done", final)
@@ -495,20 +522,27 @@ async def load(request: Request,
 async def contract(request: Request, calls: int = Query(25, ge=1, le=500)):
     """Call every sample endpoint `calls` times over loopback and validate each answer
     against its declared model - the same check the middleware runs on all traffic."""
+    global BURSTS
     host, port = request.scope["server"]
     out = []
-    async with httpx.AsyncClient(base_url=f"http://{host}:{port}", timeout=30) as client:
-        for key, (path, label) in SAMPLES.items():
-            params = {"n": 100_000} if key == "cpu" else {"page": 3} if key == "items" else None
-            res = await asyncio.gather(*(client.get(path, params=params) for _ in range(calls)))
-            verdicts = [check(path, r.status_code, r.content) for r in res]
-            failed = [e for ok, e in verdicts if ok is False]
-            out.append({"path": path, "label": label, "calls": calls,
-                        "checked": sum(ok is not None for ok, _ in verdicts),
-                        "passed": sum(ok is True for ok, _ in verdicts),
-                        "failed": len(failed), "first_error": failed[0] if failed else None,
-                        "models": {str(s): m.__name__ for s, m in CONTRACTS[path].items()},
-                        "statuses": dict(Counter(str(r.status_code) for r in res))})
+    BURSTS += 1
+    try:
+        async with httpx.AsyncClient(base_url=f"http://{host}:{port}", timeout=30) as client:
+            for key, (path, label) in SAMPLES.items():
+                params = {"n": 100_000} if key == "cpu" else {"page": 3} if key == "items" else None
+                res = await asyncio.gather(*(client.get(path, params=params) for _ in range(calls)))
+                verdicts = [check(path, r.status_code, r.content) for r in res]
+                failed = [e for ok, e in verdicts if ok is False]
+                out.append({"path": path, "label": label, "calls": calls,
+                            "checked": sum(ok is not None for ok, _ in verdicts),
+                            "passed": sum(ok is True for ok, _ in verdicts),
+                            "failed": len(failed), "first_error": failed[0] if failed else None,
+                            "models": {str(s): m.__name__ for s, m in CONTRACTS[path].items()},
+                            "statuses": dict(Counter(str(r.status_code) for r in res))})
+    finally:
+        BURSTS -= 1
+    log.info("contract check: %d calls to each of %d endpoints, %d answers broke their model",
+             calls, len(out), sum(e["failed"] for e in out))
     return {"endpoints": out}
 
 

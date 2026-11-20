@@ -20,4 +20,5 @@ while :; do
   kill "$child" 2>/dev/null || true
   wait "$child" 2>/dev/null || true
   while [ "$(stamp)" = "$seen" ] && ! kill -0 "$child" 2>/dev/null; do sleep 1; done
+  printf '%s INFO    [run] %s changed - restarting\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" 'server.js or src/'
 done

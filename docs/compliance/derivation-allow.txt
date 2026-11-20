@@ -7,6 +7,9 @@
 #
 # R's own API, called the only way it can be called
 }, error = function(e) "")
+# tryCatch's error handler, the only way R spells one (starter logging, 2026-11-18).
+error = function(e) {
+}, error = function(e) {
 args <- commandArgs(TRUE)
 if (!requireNamespace("reticulate", quietly = TRUE))
 try(silent = TRUE, {

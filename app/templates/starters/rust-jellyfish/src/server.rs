@@ -88,7 +88,7 @@ fn save(rows: &[Value]) {
         .and_then(|_| std::fs::write(&tmp, serde_json::to_vec_pretty(rows).unwrap_or_default()))
         .and_then(|_| std::fs::rename(&tmp, SCORES));
     if let Err(e) = written {
-        eprintln!("scores not written: {e}");
+        crate::log::error!("scores not written to {SCORES}: {e}");
     }
 }
 
@@ -118,6 +118,7 @@ fn record(board: &Mutex<Vec<Value>>, body: &Value) -> Result<Value, String> {
         rows.truncate(KEEP);
         save(&rows);
     }
+    crate::log::info!("score {score}: {}", if kept { format!("rank {rank}") } else { "not kept".into() });
     Ok(json!({ "rank": if kept { Some(rank) } else { None }, "kept": kept, "board": rows.iter().take(10).collect::<Vec<_>>() }))
 }
 
@@ -147,6 +148,7 @@ fn handle(mut req: Request, board: &Mutex<Vec<Value>>, started: Instant) {
     let url = req.url().to_owned();
     let path = url.split_once('?').map_or(url.as_str(), |(p, _)| p);
     let method = req.method().clone();
+    let t0 = Instant::now();
     let reply = match (&method, path) {
         (Method::Get, "/" | "/index.html") => file_reply(Path::new("web/index.html")),
         (Method::Get, "/health") => json_reply(200, json!({ "ok": true, "service": "__HOST__", "uptime_s": started.elapsed().as_secs() })),
@@ -164,20 +166,24 @@ fn handle(mut req: Request, board: &Mutex<Vec<Value>>, started: Instant) {
         },
         _ => json_reply(404, json!({ "error": format!("no route: {method} {path}") })),
     };
-    let _ = req.respond(reply);
+    let status = reply.status_code().0;
+    if let Err(e) = req.respond(reply) {
+        crate::log::error!("{method} {path}: response not sent: {e}");
+    }
+    crate::log::request(&method, path, status, t0);
 }
 
 pub fn serve(port: u16) {
     let server = match Server::http(("127.0.0.1", port)) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            eprintln!("cannot listen on 127.0.0.1:{port}: {e}");
+            crate::log::error!("cannot listen on 127.0.0.1:{port}: {e}");
             std::process::exit(1);
         }
     };
     let started = Instant::now();
     let board = Arc::new(Mutex::new(load()));
-    println!("__HOST__: Jellyfish Drift on http://127.0.0.1:{port} ({} runs on the board)", board.lock().map_or(0, |b| b.len()));
+    crate::log::info!("__HOST__: Jellyfish Drift serving on 127.0.0.1:{port} ({} runs on the board)", board.lock().map_or(0, |b| b.len()));
     let handles: Vec<_> = (0..4)
         .map(|_| {
             let (s, board) = (Arc::clone(&server), Arc::clone(&board));

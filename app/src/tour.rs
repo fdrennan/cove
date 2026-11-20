@@ -196,12 +196,22 @@ pub static STEPS: &[Step] = &[
     // 1 · the workspace
     Step {
         id: "ws-project",
-        targets: |_| t(&["project-button"]),
-        title: "Your projects",
-        body: |_| "Every application is a project. This button opens one, starts a new one, or goes back to a recent one.".into(),
+        targets: |_| t(&["project-tabs", "project-button"]),
+        title: "Your projects are tabs",
+        body: |_| "Every application is a project, and each open project is a tab, as in a browser. Click a tab to switch to it. + at the end opens Projects, where you go to a project, create one, or star one as a favorite. Right-click a tab to pin, favorite, reload or close it; ⌄ lists every tab, your favorites and the ones closed lately.".into(),
         done: None,
         skip: never,
-        find: "On a phone it is in the Cove ▾ menu.",
+        find: "The tabs run along the top of the window.",
+        on_start: none,
+    },
+    Step {
+        id: "ws-agents",
+        targets: |_| t(&["tab:Agents", "pane:Agents"]),
+        title: "The agent",
+        body: |_| "Agents is the agent working beside your code in this project. Say what you want in words: it changes the project's own application in place, runs it, and answers here. Each reply shows when it was written, and Listen reads it aloud.".into(),
+        done: None,
+        skip: never,
+        find: "Agents is a tab in one of the windows; on a phone, the switcher beside the Cove menu.",
         on_start: none,
     },
     Step {
@@ -218,7 +228,7 @@ pub static STEPS: &[Step] = &[
         id: "ws-console",
         targets: |_| t(&["tab:Console", "tab:Terminal"]),
         title: "Console and terminal",
-        body: |_| "The Console runs R, Python, Julia and the shell one line at a time. The Terminal is a full shell in your project.".into(),
+        body: |_| "The Console runs R, with Python through reticulate, one line at a time; an environment with no R gives a shell console. The Terminal is a full shell in your project.".into(),
         done: None,
         skip: never,
         find: "Console is a tab in one of the windows.",
@@ -228,7 +238,7 @@ pub static STEPS: &[Step] = &[
         id: "ws-packages",
         targets: |_| t(&["tab:Software", "tab:Environment"]),
         title: "Packages",
-        body: |_| "Packages is the software your project can use: every R, Python, Julia and Rust package built for this stack, with where it came from.".into(),
+        body: |_| "Packages is the software your project can use: every module and every R, Python, Julia and Rust package built for the stack, with where it came from. When the stack is built on this computer, This computer at the top shows the install and its build.".into(),
         done: None,
         skip: never,
         find: "Packages is a tab in one of the windows.",
@@ -238,7 +248,7 @@ pub static STEPS: &[Step] = &[
         id: "ws-app",
         targets: |_| t(&["tab:App"]),
         title: "Your application",
-        body: |_| "App shows the running application, live, beside its code.".into(),
+        body: |_| "App shows the running application, live, beside its code. Click its name at the top to reload it.".into(),
         done: None,
         skip: never,
         find: "App is a tab in one of the windows.",
@@ -246,12 +256,32 @@ pub static STEPS: &[Step] = &[
     },
     Step {
         id: "ws-run",
-        targets: |_| t(&["app-strip", "tab:App"]),
+        targets: |_| t(&["app-state", "app-strip", "tab:App"]),
         title: "Run controls",
-        body: |_| "Build, Up and Down run the project's .cove/build.sh, up.sh and down.sh - the same scripts an agent or a terminal would.".into(),
+        body: |_| "At the top of App, above the site: the app's state (click it for the last job's log), then Start, Restart, Stop and Build, which run the project's .cove/up.sh, down.sh and build.sh - the same scripts an agent or a terminal would. Logs shows the app's own output.".into(),
         done: None,
         skip: never,
-        find: "The run controls show above the windows when a project has its own server.",
+        find: "The run controls are at the top of the App tab.",
+        on_start: |_| Some(Act::Bring(crate::ide::Tab::App)),
+    },
+    Step {
+        id: "ws-modes",
+        targets: |_| t(&["modes"]),
+        title: "Beyond the workspace",
+        body: |_| "Workspace is where your projects are. Connections lists every app you may open - yours, shared with you and public. Builds shows the build machines and every build, live. Atlas maps the whole stack, kernel to application. Account is you: your cell, Claude, your domains and keys.".into(),
+        done: None,
+        skip: never,
+        find: "The modes are in the top bar; on a phone, along the bottom.",
+        on_start: none,
+    },
+    Step {
+        id: "ws-status",
+        targets: |_| t(&["status-bar"]),
+        title: "The status bar",
+        body: |_| "Along the bottom: Messages, Claude, and where the stack comes from - mounted with CernVM-FS, remote on your cell, or built on this computer; click it to change. On the right: the runtime (R and Python, click for the detail), Save, and Help (F1).".into(),
+        done: None,
+        skip: |s| s.narrow,
+        find: "",
         on_start: none,
     },
     // 2-4 · a new project
@@ -259,17 +289,17 @@ pub static STEPS: &[Step] = &[
         id: "new",
         targets: |_| t(&["project-button"]),
         title: "Create your first project",
-        body: |_| "Every application begins with a project. Click the project button and type a name for it.".into(),
+        body: |_| "Every application begins with a project. Click + at the end of the tabs to open Projects.".into(),
         done: Some(|s, _| s.naming || s.choosing.is_some()),
         skip: never,
-        find: "On a phone the project button is in the Cove ▾ menu.",
+        find: "+ is at the end of the project tabs, along the top.",
         on_start: none,
     },
     Step {
         id: "name",
         targets: |_| t(&["new-project-dialog"]),
         title: "Name it",
-        body: |_| "Type a short name - letters, digits and hyphens. It becomes the project's address, <name>.ndexr.io. Then Create.".into(),
+        body: |_| "Projects searches as you type: a name you have opens it, a new one offers + Create. Use letters, digits and hyphens - it becomes the project's address, <name>.ndexr.io. Press Enter or + Create.".into(),
         done: Some(|s, _| s.choosing.is_some()),
         skip: |s| s.choosing.is_some(),
         find: "",
@@ -324,7 +354,7 @@ pub static STEPS: &[Step] = &[
         title: "Run it",
         body: |s| {
             if let Some(e) = &s.job_failed {
-                return format!("It did not start: {e}\n\nOpen the log to see why - fix it here or ask the agent, then press Up again.");
+                return format!("It did not start: {e}\n\nOpen the log to see why - fix it here or ask the agent, then press Start again.");
             }
             if !s.port_app() {
                 return "A Shiny project runs on the platform as soon as it is saved - nothing to start. Open App to see it.".into();
@@ -333,14 +363,14 @@ pub static STEPS: &[Step] = &[
                 return "Starting… its output shows in the log; a first start can take a minute while packages load.".into();
             }
             if !s.built && s.verbs.iter().any(|v| v == "build") {
-                return "Ready to see your project come alive? Click Build to compile it, then Up.".into();
+                return "Ready to see your project come alive? Click Build to compile it, then Start.".into();
             }
-            "Ready to see your project come alive? Click Up.".into()
+            "Ready to see your project come alive? Click Start, above the site in App.".into()
         },
         done: Some(|s, _| s.running && (s.app_shown || s.port_app())),
         skip: |s| s.project.is_none(),
-        find: "The run controls show above the windows; on a phone, in the Cove ▾ menu under Project.",
-        on_start: |s| (!s.port_app()).then_some(Act::Bring(crate::ide::Tab::App)),
+        find: "The run controls are at the top of the App tab.",
+        on_start: |_| Some(Act::Bring(crate::ide::Tab::App)),
     },
     // 7 · use it
     Step {
@@ -385,22 +415,32 @@ pub static STEPS: &[Step] = &[
     },
     Step {
         id: "rerun",
-        targets: |s| if s.running { t(&["app:down", "app-strip"]) } else if !s.built { t(&["app:build", "app-strip"]) } else { t(&["app:up", "app-strip"]) },
+        targets: |s| {
+            if s.running && s.language != "rust" {
+                t(&["app:restart", "app:down", "app-strip"])
+            } else if s.running {
+                t(&["app:down", "app-strip"])
+            } else if !s.built {
+                t(&["app:build", "app-strip"])
+            } else {
+                t(&["app:up", "app-strip"])
+            }
+        },
         title: "Run it again",
         body: |s| {
             if let Some(e) = &s.job_failed {
-                return format!("It did not start: {e}\n\nOpen the log, fix it, then Up again.");
+                return format!("It did not start: {e}\n\nOpen the log, fix it, then Start again.");
             }
             if s.language == "rust" {
-                "A Rust app runs what was compiled: Down, Build, then Up to see your change.".into()
+                "A Rust app runs what was compiled: Stop, Build, then Start to see your change.".into()
             } else {
-                "Your app has its own server: Down, then Up, and it starts with your change.".into()
+                "Your app has its own server: Restart stops it and starts it with your change.".into()
             }
         },
         done: Some(|s, start| s.ups > start.ups && s.running),
         skip: |s| !s.port_app(),
-        find: "The run controls show above the windows.",
-        on_start: none,
+        find: "The run controls are at the top of the App tab.",
+        on_start: |_| Some(Act::Bring(crate::ide::Tab::App)),
     },
     Step {
         id: "seen",
@@ -415,17 +455,17 @@ pub static STEPS: &[Step] = &[
     // 9 · the environment
     Step {
         id: "env",
-        targets: |_| t(&["env-picker", "tab:Software"]),
+        targets: |_| t(&["env-picker", "stack-chip", "tab:Software"]),
         title: "What it runs on",
         body: |s| {
             let env = if s.env_module.is_empty() { "a named environment".to_owned() } else { s.env_module.clone() };
             format!(
-                "Your project keeps five things apart:\n· its source - the files you edit\n· its packages - the libraries it uses\n· its runtime - {env}, the R, Python, Julia or Rust it runs on\n· running it - Build, Up and Down\n· provenance - where every package came from, kept by the stack\n\nPackages lists what is available and where each one was built."
+                "Your project keeps five things apart:\n· its source - the files you edit\n· its packages - the libraries it uses\n· its runtime - {env}, the R, Python, Julia or Rust it runs on\n· running it - Start, Stop and Build\n· provenance - where every package came from, kept by the stack\n\nThe runtime chip at the bottom shows what this session runs; Packages lists what is available and where each one was built."
             )
         },
         done: None,
         skip: never,
-        find: "The environment is shown at the top of the window; Packages is a tab.",
+        find: "The runtime is in the status bar at the bottom; Packages is a tab.",
         on_start: none,
     },
     // 10 · its address
@@ -442,7 +482,7 @@ pub static STEPS: &[Step] = &[
                 "down" => "it is not answering right now",
                 _ => "its access is being checked",
             };
-            format!("Your application answers at https://{host}/ - {who}. Open ↗ shows it in its own browser tab. Who may see it is the project's setting; to share it with a person, use Messages. The project button switches between your projects.")
+            format!("Your application answers at https://{host}/ - {who}. Open ↗ shows it in its own browser tab. Who may see it is the project's setting; to share it with a person, use Messages. The tabs along the top switch between your projects.")
         },
         done: None,
         skip: |s| s.project.is_none(),
@@ -464,13 +504,15 @@ pub const TOURS: &[Tour] = &[
         id: "first",
         title: "Take the first-project tour",
         keywords: "start begin first project tour new create run edit everything",
-        steps: &["ws-project", "ws-editor", "ws-console", "ws-packages", "ws-app", "ws-run", "new", "name", "choose", "editor", "run", "preview", "change", "rerun", "seen", "env", "domain"],
+        steps: &["ws-project", "ws-agents", "ws-editor", "ws-console", "ws-packages", "ws-app", "ws-run", "ws-modes", "ws-status", "new", "name", "choose", "editor", "run", "preview", "change", "rerun", "seen", "env", "domain"],
     },
-    Tour { id: "workspace", title: "Show me around the workspace", keywords: "workspace layout windows panes tabs where", steps: &["ws-project", "ws-editor", "ws-console", "ws-packages", "ws-app", "ws-run"] },
+    Tour { id: "workspace", title: "Show me around the workspace", keywords: "workspace layout windows panes tabs where agent agents status bar modes", steps: &["ws-project", "ws-agents", "ws-editor", "ws-console", "ws-packages", "ws-app", "ws-run", "ws-modes", "ws-status"] },
+    Tour { id: "tabs", title: "Projects, tabs and favorites", keywords: "tabs tab favorites favourite star pin switch open projects reopen closed", steps: &["ws-project", "new", "name"] },
     Tour { id: "new", title: "Create a new project", keywords: "new project create start template starter language", steps: &["new", "name", "choose", "editor"] },
     Tour { id: "run", title: "How to run an application", keywords: "run start up build down launch preview server shiny app", steps: &["run", "preview"] },
     Tour { id: "change", title: "Change my application", keywords: "edit change modify save code reload", steps: &["change", "rerun", "seen"] },
-    Tour { id: "files", title: "Understanding files and packages", keywords: "files packages libraries dependencies environment install module", steps: &["ws-editor", "editor", "env"] },
+    Tour { id: "files", title: "Understanding files and packages", keywords: "files packages libraries dependencies environment install module", steps: &["ws-editor", "editor", "ws-packages", "env"] },
+    Tour { id: "stack", title: "Where the stack comes from", keywords: "stack cvmfs cernvm mount local build airgap remote cell runtime", steps: &["ws-status", "env"] },
     Tour { id: "here", title: "Tour the project open now", keywords: "this project current open tour", steps: &["editor", "run", "preview", "change", "rerun", "seen", "domain"] },
     Tour { id: "domain", title: "Application domains and sharing", keywords: "domain address url share publish deploy public password sign in", steps: &["domain"] },
 ];
@@ -824,7 +866,7 @@ impl Walk {
         card(ctx, "tour-welcome", at, |ui| {
             ui.label(RichText::new("Welcome to your workspace").size(20.0).strong().color(theme::text_strong()));
             ui.add_space(4.0);
-            ui.add(egui::Label::new(RichText::new("Everything you need to build, run, and share scientific applications lives here. Let's create your first project.").size(14.0).color(theme::text())).wrap());
+            ui.add(egui::Label::new(RichText::new("Build, run and share scientific applications here, with an agent beside you. Your projects open as tabs along the top. Let's create your first one.").size(14.0).color(theme::text())).wrap());
             ui.add_space(10.0);
             ui.horizontal_wrapped(|ui| {
                 if ui.add(theme::primary_button("Start guided tour")).clicked() {
@@ -842,7 +884,7 @@ impl Walk {
                 }
             });
             ui.add_space(4.0);
-            ui.label(RichText::new("Help › Take the first-project tour starts it again any time.").size(12.0).color(theme::hush()));
+            ui.label(RichText::new("Help (F1) › Show me how starts it again any time.").size(12.5).color(theme::text()));
         });
         if close {
             self.prefs.welcomed = true;
@@ -941,15 +983,20 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+Shift+F10", "restart the console's language"),
     ("Ctrl+L", "clear the console"),
     ("F11", "full screen"),
+    ("F1", "Help: show me how, shortcuts, troubleshooting"),
+    ("← →", "the previous or next project tab"),
+    ("Middle-click", "close a project tab"),
     ("Esc", "leave a walkthrough"),
 ];
 
 const TROUBLE: &[(&str, &str)] = &[
-    ("Up does nothing, or says it exited", "Open the log under the run controls: the last lines say why. A Rust app needs Build before Up; a first Julia start compiles packages for a few minutes."),
-    ("The App tab is blank", "The address at the top of App reloads it. If it says down, the app is not running - press Up. If it asks you to sign in, that is the site's access setting."),
+    ("Start does nothing, or says it exited", "Click the app's state at the top of App for the last job's log, or Logs for the app's own output: the last lines say why. A Rust app needs Build before Start; a first Julia start compiles packages for a few minutes."),
+    ("The App tab is blank", "The project's name at the top of App reloads it. If it says Stopped, the app is not running - press Start, beside it. If it asks you to sign in, that is the site's access setting."),
     ("A package is missing", "Packages lists what your environment has. Ask the agent to add it to your project, or send a request from Help."),
-    ("My change does not show", "Save the file (Ctrl+S). A Shiny project reloads on save; a project with its own server needs Down, then Up."),
+    ("R, Python or a module is not found", "The stack chip in the status bar says where the stack comes from. Mounting it with CernVM-FS is the default; click the chip to set it up or change it."),
+    ("My change does not show", "Save the file (Ctrl+S). A Shiny project reloads on save; a project with its own server needs Restart."),
     ("The console stopped answering", "Ctrl+Shift+F10 restarts it in the same environment."),
+    ("I am not signed in", "A request still goes: Help › Send a request, or Messages, files it as anonymous - leave an email if you want the answer. Threads, chat and the agent need an account."),
 ];
 
 /// A floating card above everything; returns where it was drawn.
@@ -1035,6 +1082,35 @@ mod tests {
         // The welcome's "Tour this project" and the finish card start these.
         for id in ["first", "here", "files", "domain", "run", "new", "change"] {
             assert!(tour(id).is_some(), "{id}");
+        }
+    }
+
+    /// Every target a step names is marked somewhere in the UI. The project
+    /// button was drawn by a function nothing called once the tabs took its
+    /// place (2026-11-14), and the first step of every tour pointed at nothing.
+    #[test]
+    fn every_target_is_marked_somewhere() {
+        let src = [include_str!("ide.rs"), include_str!("app.rs")].concat();
+        let mut kinds = vec![Seen::default(), port_project()];
+        let mut r = port_project();
+        r.running = true;
+        kinds.push(r.clone());
+        r.language = "rust".into();
+        r.built = false;
+        kinds.push(r);
+        for s in STEPS {
+            for seen in &kinds {
+                for id in (s.targets)(seen) {
+                    let found = if let Some(tab) = id.strip_prefix("tab:").or_else(|| id.strip_prefix("pane:")) {
+                        src.contains(&format!("Tab::{tab} =>"))
+                    } else if id.starts_with("file:") {
+                        src.contains("tour::mark(ui, &format!(\"file:{full}\")")
+                    } else {
+                        src.contains(&format!("\"{id}\""))
+                    };
+                    assert!(found, "step {} points at {id}, which nothing marks", s.id);
+                }
+            }
         }
     }
 

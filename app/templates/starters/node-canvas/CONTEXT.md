@@ -66,8 +66,11 @@ Watch the live stream from a shell: `curl -N 127.0.0.1:$APP_PORT/api/events`.
 - WHATWG HTML Living Standard, §9.2 "Server-sent events" - the EventSource
   protocol `/api/events` speaks, with reconnection built into the browser.
 
+## Logging
+log.js (`const log = require('./log')`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it. Every reader can edit: there are no per-card permissions.
 
 ## Open

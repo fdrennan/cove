@@ -157,6 +157,7 @@ fn reset(sim: &Mutex<Sim>, q: &[(&str, &str)]) -> Result<Value, String> {
     let epoch = s.epoch + 1;
     *s = fresh;
     s.epoch = epoch;
+    crate::log::info!("universe {epoch}: {} with {} bodies, seed {seed}, built in {} ms", preset.name(), s.n(), t.elapsed().as_millis());
     Ok(json!({ "preset": preset.name(), "n": s.n(), "n_heavy": s.n_heavy(), "seed": seed,
                "epoch": epoch, "elapsed_us": t.elapsed().as_micros() as u64 }))
 }
@@ -175,6 +176,8 @@ fn drop_body(sim: &Mutex<Sim>, q: &[(&str, &str)]) -> Result<Value, String> {
 
 fn handle(req: Request, sim: &Mutex<Sim>, started: Instant, threads: usize) {
     let url = req.url().to_owned();
+    let t0 = Instant::now();
+    let method = req.method().clone();
     let (path, query) = url.split_once('?').unwrap_or((&url, ""));
     let q = params(query);
     // Behind a prefix (a cell's /proxy/<port>/) the page asks beside itself,
@@ -205,14 +208,22 @@ fn handle(req: Request, sim: &Mutex<Sim>, started: Instant, threads: usize) {
         (_, "") => json_reply(404, json!({ "error": format!("no route: {path}") })),
         (m, r) => json_reply(405, json!({ "error": format!("{r} does not take {m}") })),
     };
-    let _ = req.respond(reply);
+    let status = reply.status_code().0;
+    if let Err(e) = req.respond(reply) {
+        crate::log::error!("{method} {path}: response not sent: {e}");
+    }
+    if route == "/frame" && status < 400 {
+        crate::log::debug!("{method} {path} {status} {} ms", t0.elapsed().as_millis());
+    } else {
+        crate::log::request(&method, path, status, t0);
+    }
 }
 
 pub fn serve(port: u16) {
     let server = match Server::http(("127.0.0.1", port)) {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            eprintln!("cannot listen on 127.0.0.1:{port}: {e}");
+            crate::log::error!("cannot listen on 127.0.0.1:{port}: {e}");
             std::process::exit(1);
         }
     };
@@ -223,7 +234,7 @@ pub fn serve(port: u16) {
     // Few HTTP workers: frames serialise on the one universe anyway, and the
     // cores belong to the force loop.
     let workers = 4;
-    println!("__HOST__: serving on http://127.0.0.1:{port} ({threads} compute threads)");
+    crate::log::info!("__HOST__: Particle Universe serving on 127.0.0.1:{port} ({threads} compute threads)");
     let handles: Vec<_> = (0..workers)
         .map(|_| {
             let (s, sim) = (Arc::clone(&server), Arc::clone(&sim));

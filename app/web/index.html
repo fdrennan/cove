@@ -475,6 +475,47 @@
   // keeps the whole of it; a second is cut every `secs` so each piece is a
   // file of its own to transcribe while the talking goes on. seg() hands the
   // pieces over in order, final() the whole once stopped, err() why it failed.
+  // Paste on a phone (operator, 2026-11-16: "I can't tap to paste in the agent
+  // thread window"). egui types through a hidden input, so iOS never offers its
+  // Paste menu over Cove's boxes. A real <button>, transparent, lies over the
+  // composer's own Paste (src/paste.rs places it every frame): a tap on it is a
+  // user gesture, which is what lets clipboard.readText() run (iOS shows its
+  // own small "Paste" to confirm). Touch screens only - a desk has Ctrl/⌘+V.
+  window.covePaste = (function () {
+    var coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    var btns = {}, placed = {}, got = [];
+    function el(id) {
+      if (btns[id]) return btns[id];
+      var b = document.createElement("button");
+      b.setAttribute("aria-label", "Paste");
+      b.style.cssText = "position:absolute;z-index:5;opacity:0;border:0;padding:0;margin:0;background:transparent;display:none;touch-action:manipulation;cursor:pointer";
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        if (!navigator.clipboard || !navigator.clipboard.readText) { got.push([id, "ERROR:this browser does not let a page read the clipboard"]); return; }
+        navigator.clipboard.readText()
+          .then(function (t) { got.push([id, t]); })
+          .catch(function (err) { got.push([id, "ERROR:" + (err && err.message || err)]); });
+      });
+      document.body.appendChild(b);
+      btns[id] = b;
+      return b;
+    }
+    return {
+      wanted: function () { return coarse ? "1" : ""; },
+      place: function (id, x, y, w, h) {
+        var b = el(id);
+        b.style.left = x + "px"; b.style.top = y + "px"; b.style.width = w + "px"; b.style.height = h + "px";
+        b.style.display = "block";
+        placed[id] = 1;
+      },
+      // After each frame: a button its composer did not place this frame hides.
+      end: function () { for (var k in btns) if (!placed[k]) btns[k].style.display = "none"; placed = {}; },
+      take: function (id) {
+        for (var i = 0; i < got.length; i++) if (got[i][0] === id) { var t = got[i][1]; got.splice(i, 1); return t; }
+        return null;
+      }
+    };
+  })();
   window.coveListen = (function () {
     var st = { state: "off", segs: [], full: null, err: null };
     var stream = null, full = null, fullChunks = [], seg = null, timer = null, type = "";

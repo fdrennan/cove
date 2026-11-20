@@ -36,6 +36,8 @@ pip-installed. Tighter tolerances cost time: measured 2026-10-26 on a loaded
 with RK45 at 1e-6 and 4 s with DOP853 at 1e-9, with worst energy drift
 2e-2, 8e-5 and 1e-8 of the potential well.
 
+Logging: log.py (from log import log), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Shinbrot, T., Grebogi, C., Wisdom, J. and Yorke, J. A. (1992), "Chaos in a
 double pendulum", American Journal of Physics 60(6), 491-499. Dormand, J. R.
@@ -43,7 +45,7 @@ and Prince, P. J. (1980), "A family of embedded Runge-Kutta formulae", J.
 Computational and Applied Mathematics 6(1), 19-26.
 
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

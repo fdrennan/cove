@@ -11,7 +11,7 @@ child=
 trap '[ -n "$child" ] && kill "$child" 2>/dev/null; exit 0' TERM INT
 while :; do
   seen="$(stamp)"
-  Rscript -e 'plumber::pr_run(plumber::pr("plumber.R"), host = "127.0.0.1", port = as.integer(Sys.getenv("PORT")), docs = TRUE, quiet = TRUE)' &
+  Rscript -e 'box::use(./r/log); log$log_info("__HOST__: Plumber API starting on 127.0.0.1:{Sys.getenv(\"PORT\")}"); plumber::pr_run(plumber::pr("plumber.R"), host = "127.0.0.1", port = as.integer(Sys.getenv("PORT")), docs = TRUE, quiet = TRUE)' &
   child=$!
   while [ "$(stamp)" = "$seen" ] && kill -0 "$child" 2>/dev/null; do sleep 1; done
   kill "$child" 2>/dev/null || true

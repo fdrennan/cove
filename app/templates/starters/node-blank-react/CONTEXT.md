@@ -20,6 +20,9 @@ A request to /vendor/, /images/, /css/, /javascript/, /shared/, /sites/,
 /uploads/, /videos/ or /domains/ never reaches this app on the web, though it works
 on 127.0.0.1. Serve assets under /static/.
 
+## Logging
+log.js (`const log = require('./log')`), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Auth
 Set under Project > Access in Cove. The server listens on 127.0.0.1 only; nginx in
 front decides who reaches it.

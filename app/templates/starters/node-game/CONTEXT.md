@@ -59,6 +59,9 @@ typed arrays in WebAssembly memory and the renderer reads `Float32Array`
 views of them - so `render.ts`, `hud.ts` and the loop do not change.
 Rendering stays in PixiJS either way.
 
+## Logging
+log.js (`const log = require('./log')`) in server.js only, never the browser code in src/; one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Building
 
 `.cove/build.sh` turns `src/*.ts` into `static/js/*.js` with the stack's own

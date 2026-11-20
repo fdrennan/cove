@@ -18,6 +18,8 @@ seeded per run: the same seed with the same interventions at the same ticks
 replays the same epidemic, however the page batches its steps.
 """
 import base64
+import logging
+import os
 import re
 import threading
 import time
@@ -30,6 +32,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from scipy.spatial import cKDTree
+
+from log import log
 
 HERE = Path(__file__).parent
 
@@ -337,6 +341,19 @@ def lookup(client: str) -> Sim:
 # ---- routes ----------------------------------------------------------------------------
 
 app = FastAPI(title="Outbreak Simulator · __HOST__", docs_url=None, redoc_url=None)
+log.info("__HOST__: Outbreak Simulator starting on 127.0.0.1:%s, up to %d simulations", os.environ.get("PORT"), MAX_SIMS)
+
+
+class StepsAtDebug(logging.Filter):
+    """The page posts .../step every animation frame: those access lines are DEBUG, the rest INFO."""
+    def filter(self, r):
+        if r.args and str(r.args[2]).endswith("/step"):
+            r.levelno, r.levelname = logging.DEBUG, "DEBUG"
+            return logging.getLogger().isEnabledFor(logging.DEBUG)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(StepsAtDebug())
 
 
 @app.get("/health")
@@ -368,6 +385,8 @@ def new_sim(q: New):
         SIMS[q.client] = sim
         while len(SIMS) > MAX_SIMS:
             SIMS.popitem(last=False)
+        live = len(SIMS)
+    log.info("new simulation: %d people, %d infected, seed %d (%d live)", q.n, q.initial, q.seed, live)
     return {"map": sim.map(), "frame": sim.frame(), "params": q.model_dump(exclude={"client"})}
 
 
@@ -378,7 +397,9 @@ def step(client: str, s: Step):
         t0 = time.perf_counter()
         for _ in range(s.ticks):
             sim.step()
-        return sim.frame((time.perf_counter() - t0) * 1000, s.since)
+        ms = (time.perf_counter() - t0) * 1000
+        log.debug("stepped %d ticks to tick %d in %.1f ms", s.ticks, sim.tick, ms)
+        return sim.frame(ms, s.since)
 
 
 @app.post("/api/sim/{client}/policy")
@@ -392,6 +413,7 @@ def policy(client: str, pol: Policy):
             sim.policy_log[-1] = entry
         else:
             sim.policy_log.append(entry)
+        log.info("policy at day %d: %s", sim.tick // TICKS_PER_DAY, pol.model_dump())
         return {"tick": sim.tick, "policy": pol.model_dump()}
 
 

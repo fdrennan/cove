@@ -83,6 +83,11 @@ pub mod jobs {
         let mut c = Command::new(crate::runner::login_shell());
         c.args(["-lc", &crate::runner::with_path(&format!("{{ {cmd}\n}} >>{} 2>&1", shell_quote(&log.display().to_string())))])
             .env("NO_COLOR", "1")
+            // A login shell runs ~/.bash_logout on `exit`, and Gentoo's
+            // stock one runs `clear`: with no TERM, "TERM environment
+            // variable not set." ended the log and stood as the reason a
+            // setup failed (operator, 2026-11-19, a fresh Gentoo).
+            .env("TERM", "dumb")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -302,6 +307,73 @@ pub fn view() -> StackView {
     v
 }
 
+/// The stack installed here and its build, from their own files - no network,
+/// no ndexr CLI needed to read them (api.rs LocalInstall).
+pub fn local_install() -> crate::api::LocalInstall {
+    local_install_at(&build_dir(), &crate::host::stack_root(), &crate::host::own_triple())
+}
+
+pub fn local_install_at(dir: &Path, root: &Path, triple: &str) -> crate::api::LocalInstall {
+    use crate::api::{LocalInstall, LocalStep};
+    let b = dir.join(".build");
+    let st: serde_json::Value = std::fs::read(b.join("up.json")).ok().and_then(|x| serde_json::from_slice(&x).ok()).unwrap_or_default();
+    let tl: serde_json::Value = std::fs::read(b.join("up.timeline.json")).ok().and_then(|x| serde_json::from_slice(&x).ok()).unwrap_or_default();
+    let steps: Vec<LocalStep> = tl["steps"].as_array().map(|a| a.iter().map(|s| LocalStep {
+        kind: s["kind"].as_str().unwrap_or("").to_owned(),
+        name: s["name"].as_str().unwrap_or("").to_owned(),
+        version: s["version"].as_str().unwrap_or("").to_owned(),
+        status: s["status"].as_str().unwrap_or("").to_owned(),
+        started: s["started"].as_i64().unwrap_or(0),
+        finished: s["finished"].as_i64().unwrap_or(0),
+    }).collect()).unwrap_or_default();
+    let with = |status: &str| steps.iter().filter(|s| s.status == status).cloned().collect::<Vec<_>>();
+    let mut recent: Vec<LocalStep> = steps.iter().filter(|s| s.status == "done").cloned().collect();
+    recent.sort_by_key(|s| std::cmp::Reverse(s.finished));
+    recent.truncate(12);
+    let tail = std::fs::read(b.join("up.log")).map(|x| {
+        let t = String::from_utf8_lossy(&x[x.len().saturating_sub(16_384)..]).into_owned();
+        let mut lines: Vec<String> = t.lines().filter(|l| !l.trim().is_empty()).map(str::to_owned).collect();
+        let from = lines.len().saturating_sub(20);
+        lines.drain(..from);
+        lines
+    }).unwrap_or_default();
+    let alive = std::fs::read_to_string(b.join("up.pid")).ok().and_then(|p| p.split_whitespace().next().and_then(|n| n.parse::<u32>().ok())).is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists());
+    let mut modules: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(root.join(triple).join("eb/modules/all")) {
+        for name in rd.flatten() {
+            let n = name.file_name().to_string_lossy().into_owned();
+            if let Ok(vs) = std::fs::read_dir(name.path()) {
+                for v in vs.flatten() {
+                    let v = v.file_name().to_string_lossy().trim_end_matches(".lua").to_owned();
+                    if !v.starts_with('.') {
+                        modules.push(format!("{n}/{v}"));
+                    }
+                }
+            }
+        }
+    }
+    modules.sort_by_key(|m| m.to_lowercase());
+    LocalInstall {
+        dir: dir.display().to_string(),
+        root: root.display().to_string(),
+        root_is_dir: root == dir,
+        state: st["state"].as_str().unwrap_or("").to_owned(),
+        step: st["step"].as_str().unwrap_or("").to_owned(),
+        steps: st["steps"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default(),
+        started: st["started"].as_i64().unwrap_or(0),
+        finished: st["finished"].as_i64().unwrap_or(0),
+        rc: st["rc"].as_i64(),
+        alive,
+        done: steps.iter().filter(|s| s.status == "done").count(),
+        failed: steps.iter().filter(|s| s.status == "failed").count(),
+        running: with("running"),
+        failures: with("failed"),
+        recent,
+        tail,
+        modules,
+    }
+}
+
 /// Where Cove builds the stack itself: host.rs `stack_root` falls back to it
 /// once its use.sh is there, so nothing needs setting afterwards.
 pub fn build_dir() -> std::path::PathBuf {
@@ -320,6 +392,7 @@ pub fn build_dir() -> std::path::PathBuf {
 /// and the run waits for the ndexr release that fixes it, upgrades and goes
 /// again (`--follow-releases`).
 pub fn build(report: bool) -> Result<JobView, String> {
+    let report = report || reporting();
     let v = view();
     if !v.unsupported.is_empty() {
         return Err(v.unsupported);
@@ -332,6 +405,82 @@ pub fn build(report: bool) -> Result<JobView, String> {
         shell_quote(&cli)
     );
     jobs::start("stack", "Building the ndexr stack here".into(), cmd, None)
+}
+
+/// The setup's root script: on Gentoo the client from emerge and the verified
+/// configurator (setup's note), elsewhere `ndexr install cvmfs --yes`.
+/// `get` tries again over IPv4 alone: Gentoo's curl resolves names itself
+/// (c-ares), and a home router answered its IPv6 lookup of repo.ndexr.io with
+/// nothing - "Could not resolve host ... answer with no data" - while the
+/// system resolver and `curl -4` reached it (operator's laptop, 2026-11-19).
+///
+/// Every download in the run retries on any error, DNS included: a home
+/// router answered one lookup in three with nothing ("Could not resolve host
+/// ... answer with no data", Gentoo's curl, which resolves names itself), and
+/// the configurator's own key download - which retries timeouts, not DNS -
+/// failed the mount. A `curl` first on PATH adds the retries inside the one
+/// call, so a caller reading `-w '%{http_code}'` still reads one code
+/// (operator, 2026-11-19: "make sure it works through the cove app").
+fn install_script(cli: &str) -> String {
+    format!(
+        "real=$(command -v curl) && shim=$(mktemp -d) && printf '#!/bin/sh\\nexec %s \"$@\" --retry 6 --retry-all-errors --retry-delay 2\\n' \"$real\" > \"$shim/curl\" && chmod 755 \"$shim/curl\" && PATH=\"$shim:$PATH\" && export PATH\n\
+         if command -v emerge >/dev/null 2>&1; then\n\
+         command -v cvmfs2 >/dev/null 2>&1 || {{ echo '$ emerge --noreplace net-fs/cvmfs   (Gentoo: the CernVM-FS client from its own tree, built from source - some minutes)'; emerge --noreplace --quiet-build=y net-fs/cvmfs || exit 1; }}\n\
+         u={u}; f=$(mktemp)\n\
+         get() {{ curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 \"$@\" || curl -4 -fsSL --retry 2 --retry-delay 2 \"$@\"; }}\n\
+         get \"$u\" -o \"$f\" || {{ echo \"could not download $u - this computer's DNS or network failed; Set up again tries once more\"; exit 1; }}\n\
+         want=$(get \"$u.sha256\" | cut -d' ' -f1); got=$(sha256sum \"$f\" | cut -d' ' -f1)\n\
+         [ -n \"$want\" ] || {{ echo \"could not download $u.sha256 to check the configurator - this computer's DNS or network failed; Set up again tries once more\"; exit 1; }}\n\
+         [ \"$want\" = \"$got\" ] || {{ echo \"the configurator's sha256 did not match ($want, got $got) - not running it\"; exit 1; }}\n\
+         echo \"$ bash cvmfs.sh   (the configurator ndexr install runs, sha256 verified)\"\n\
+         env NDEXR_CVMFS_REPO={REPO} NDEXR_CVMFS_HOST=cvmfs.ndexr.io bash \"$f\"; r=$?; rm -f \"$f\"; exit $r\n\
+         fi\n\
+         {} install cvmfs --yes",
+        shell_quote(cli),
+        u = shell_quote("https://repo.ndexr.io/ndexr/install/cvmfs.sh"),
+    )
+}
+
+/// File a failed job as one anonymous report (`ndexr report`: names, paths,
+/// emails and IPs removed by the CLI, the machine's shape added), and say so
+/// in the job's own log, or why it could not be sent.
+pub(crate) fn report_failure(stage: &str, v: &mut JobView) {
+    let Some(cli) = ndexr_cli() else {
+        v.lines.push("(not reported: the ndexr CLI is not on this machine)".into());
+        return;
+    };
+    let dir = std::path::PathBuf::from(crate::host::home()).join(".cache/cove/jobs");
+    let file = dir.join(format!("report-{}.log", std::process::id()));
+    if std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&file, report_lines(&v.lines))).is_err() {
+        return;
+    }
+    let msg = format!("Cove: {} failed - {}", v.what, v.why());
+    let sent = Command::new(&cli)
+        .args(["report", &msg, "--file", &file.display().to_string(), "--stage", stage])
+        .stdin(Stdio::null())
+        .output();
+    let _ = std::fs::remove_file(&file);
+    v.lines.push(match sent {
+        Ok(o) if o.status.success() => "Sent to ndexr as an anonymous report (you allowed reports at first start; Settings changes it).".into(),
+        Ok(o) => format!("(the report was not sent: {})", String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("").trim()),
+        Err(e) => format!("(the report was not sent: {e})"),
+    });
+}
+
+/// What a report carries of a job's log: its end, without progress chatter.
+/// The board keeps a few thousand characters of a report, and emerge's
+/// ">>> Jobs: 3 of 14 complete" lines filled them - report #196 (a fresh
+/// Gentoo, 2026-11-19) stopped mid-build and never showed why it failed.
+fn report_lines(lines: &[String]) -> String {
+    let kept: Vec<&str> = lines.iter().map(|l| l.trim_end()).filter(|l| !l.is_empty() && !l.starts_with(">>> Jobs:") && !l.contains("Load avg:")).collect();
+    kept[kept.len().saturating_sub(80)..].join("\n")
+}
+
+/// The person said yes to anonymous reports, and is not airgapped (api.rs
+/// Settings::report): failed builds and setups go home as requests.
+pub fn reporting() -> bool {
+    let s = crate::host::saved_settings();
+    s.report == Some(true) && !s.airgap
 }
 
 /// This machine's Gentoo Prefix in the stack, or "" (cheap: no client probes).
@@ -348,6 +497,33 @@ pub fn prefix() -> String {
 
 // ── setup, apply, test ──────────────────────────────────────────────────────
 
+/// A language set's packages to this machine, as root: `ndexr pkgs sync
+/// <set>` puts them where its module looks (/opt/ndexr/site-library), as on
+/// ndexr's own servers. The Julia set is one archive of some 2.3 GB.
+pub fn pkgs_sync(set: &str) -> Result<JobView, String> {
+    if set.is_empty() || !set.chars().all(|c| c.is_ascii_alphanumeric() || "./_-".contains(c)) {
+        return Err(format!("{set:?} is not a package set's name (Julia/1.11.7)"));
+    }
+    if crate::host::saved_settings().airgap {
+        return Err("airgap mode: the packages come over the network".into());
+    }
+    let cli = ndexr_cli().ok_or("the ndexr CLI is not on this machine - set the stack up first")?;
+    let how = root_by();
+    if how.is_empty() {
+        return Err(format!("this needs root once: run `sudo ndexr pkgs sync {set}` in a terminal"));
+    }
+    let flag = if reporting() { " --report-errors" } else { "" };
+    let cmd = as_root(&how, &format!("{} pkgs sync {set}{flag}", shell_quote(&cli)));
+    let lang = set.split('/').next().unwrap_or(set).to_owned();
+    let stage = format!("cove:pkgs-sync-{lang}");
+    let done: jobs::Done = Box::new(move |ok, v| {
+        if !ok && reporting() {
+            report_failure(&stage, v);
+        }
+    });
+    jobs::start("stack", format!("Getting the {lang} packages"), format!("echo '$ ndexr pkgs sync {set}'; {cmd}"), Some(done))
+}
+
 /// Set the stack up on this machine, in the background.
 pub fn setup(c: &CvmfsSettings) -> Result<JobView, String> {
     if crate::host::saved_settings().airgap {
@@ -360,17 +536,88 @@ pub fn setup(c: &CvmfsSettings) -> Result<JobView, String> {
     let cli = ndexr_cli().ok_or("the ndexr CLI is not on this machine - install it first (cvmfs.ndexr.io has the guide)")?;
     c.check()?;
     let how = v.root_by.clone();
-    let install = format!("{} install cvmfs --yes", shell_quote(&cli));
-    // With sudo the CLI asks for root itself; pkexec and root run it as root.
+    // Gentoo (operator, 2026-11-19, a fresh Gentoo laptop): the client comes
+    // from Gentoo's own tree - net-fs/cvmfs, stable on amd64, built from
+    // source in some minutes - and the CLI's preflight, which knows apt-get and
+    // dnf only and fails even with the client installed, is stepped over: the
+    // same published configurator the CLI runs (install/cvmfs.sh, its sha256
+    // checked as the CLI checks it) does the configuration, key and mount, and
+    // skips its own install when cvmfs2 is there. Referrals #802 (aws.ndexr.io,
+    // the configurator) and #803 (ndexr.ndexr.io, the preflight); drop this
+    // branch when both land.
+    let install = install_script(&cli);
+    // As root: pkexec and root as they are; with sudo, the CLI is happy run
+    // as root too, and emerge needs it.
     let mut cmd = match how.as_str() {
-        "sudo" => install,
-        "root" | "pkexec" => as_root(&how, &install),
+        "sudo" | "root" | "pkexec" => as_root(&how, &install),
         _ => return Err(format!("this needs root once: run `{}` in a terminal, then reopen Global Options", v.setup_cmd)),
     };
     if !c.is_empty() {
         cmd = format!("{cmd} && {}", apply_cmd(&how, c));
     }
-    jobs::start("stack", "Setting up the ndexr stack".into(), format!("echo '$ ndexr install cvmfs --yes'; {cmd}"), None)
+    // A failed setup goes home whole when the person allowed reports
+    // (operator, 2026-11-19: "when there are issues setting up cvmfs or
+    // anything like that with initial setup those errors should be sent back
+    // if allowed"): the installer's output and the diagnostics after it, which
+    // the CLI's own --report-errors never saw.
+    let done: jobs::Done = Box::new(|ok, v| {
+        if !ok && reporting() {
+            report_failure("cove:setup-cvmfs", v);
+        }
+    });
+    jobs::start("stack", "Setting up the ndexr stack".into(), format!("echo '$ ndexr install cvmfs --yes'; {cmd}; rc=$?\n{}", why_unmounted(&how)), Some(done))
+}
+
+/// After setup, when the mount still has no use.sh: why, in the job's own
+/// log, and the mount tried once more where its error shows. The configurator
+/// (aws.ndexr.io provision/stages/cvmfs.sh) reports a failed mount or trust
+/// anchor with an echo and goes on, so all a person saw was the CLI's "setup
+/// ran but /opt/ndexr/stack has no use.sh" (operator, 2026-11-14). Expects
+/// `rc` set; ends the job with it, or 0 when the retry mounted it.
+fn why_unmounted(how: &str) -> String {
+    let mnt = "/opt/ndexr/stack";
+    let curls: String = servers()
+        .iter()
+        .map(|s| format!("printf '  %s → ' {u}; curl -sS -o /dev/null -m 10 -w '%{{http_code}}\\n' {u} 2>&1 | tail -1\n", u = shell_quote(&format!("{s}/.cvmfspublished"))))
+        .collect();
+    let mount = as_root(how, &format!("mount {mnt}"));
+    format!(
+        "if [ ! -r {mnt}/use.sh ]; then\n\
+         echo; echo '--- why {mnt} has no use.sh'\n\
+         findmnt {mnt} || echo '  not mounted'\n\
+         grep -E '[[:space:]]{mnt}[[:space:]]' /etc/fstab || echo '  no /etc/fstab line for {mnt}'\n\
+         ls -l /etc/cvmfs/keys/ndexr.io/{REPO}.pub 2>&1 || echo '  no trust anchor: the key download failed'\n\
+         command -v cvmfs2 >/dev/null || echo '  the CernVM-FS client is not installed'\n\
+         cvmfs_config showconfig {REPO} 2>&1 | grep -E '^CVMFS_(SERVER_URL|KEYS_DIR|MOUNT_DIR|HTTP_PROXY)='\n\
+         echo '  the repository from here:'\n\
+         {curls}\
+         echo '$ mount {mnt}'; {mount} 2>&1\n\
+         if [ -r {mnt}/use.sh ]; then echo 'mounted on the second try'; rc=0\n\
+         else\n\
+         journalctl --since -3min --no-pager -t cvmfs2 2>/dev/null | tail -n 6\n\
+         {expired}\
+         fi\n\
+         fi\n\
+         exit $rc",
+        expired = whitelist_check()
+    )
+}
+
+/// The repository's whitelist - ndexr's signature over its signing key, good
+/// for 30 days - expired: every new client is refused ("bad whitelist") while
+/// mounted ones carry on. It lapsed on 2026-11-11 and a new laptop's setup
+/// failed three days later with nothing on screen saying so. This says it,
+/// and whose it is to fix.
+fn whitelist_check() -> String {
+    let Some(server) = servers().into_iter().next() else { return String::new() };
+    format!(
+        "wl=$(curl -sS -m 10 {u} 2>/dev/null | grep -a -m1 '^E[0-9]\\{{14\\}}' | cut -c2-15)\n\
+         if [ -n \"$wl\" ] && [ \"$wl\" -lt \"$(date -u +%Y%m%d%H%M%S)\" ]; then\n\
+         echo; echo \"ndexr's signature on the stack expired on $(echo $wl | cut -c1-8) (UTC), so CernVM-FS refuses it.\"\n\
+         echo \"This is on ndexr's side - nothing on this computer needs changing. Once ndexr re-signs it, Check again mounts it.\"\n\
+         fi\n",
+        u = shell_quote(&format!("{server}/.cvmfswhitelist"))
+    )
 }
 
 fn apply_cmd(how: &str, c: &CvmfsSettings) -> String {
@@ -462,7 +709,41 @@ fn read_curl(out: &str) -> ProxyCheck {
 }
 
 #[cfg(test)]
+mod report_tests {
+    #[test]
+    fn a_report_keeps_the_end_without_progress_lines() {
+        let mut l: Vec<String> = (0..200).map(|i| format!(">>> Jobs: {i} of 14 complete   Load avg: 0.5")).collect();
+        l.push("✘ pkg manager   no apt-get".into());
+        l.push("".into());
+        l.push("verdict: installation would NOT work yet".into());
+        assert_eq!(super::report_lines(&l), "✘ pkg manager   no apt-get\nverdict: installation would NOT work yet");
+        let many: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
+        let r = super::report_lines(&many);
+        assert!(r.starts_with("line 20\n") && r.ends_with("line 99"));
+    }
+}
+
+#[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_setup_script_parses_on_every_branch() {
+        let sh = super::install_script("/x/ndexr");
+        assert!(sh.contains("emerge --noreplace") && sh.contains("install cvmfs --yes"));
+        let o = std::process::Command::new("bash").args(["-n", "-c", &sh]).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+
+
+    #[test]
+    fn the_unmounted_diagnosis_is_valid_shell_and_keeps_the_exit_code() {
+        for how in ["sudo", "pkexec", "root"] {
+            let script = format!("rc=3\n{}", super::why_unmounted(how));
+            let out = std::process::Command::new("bash").args(["-n", "-c", &script]).output().unwrap();
+            assert!(out.status.success(), "{how}: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(script.contains("mount /opt/ndexr/stack") && script.ends_with("exit $rc"));
+        }
+    }
 
     #[test]
     fn a_job_reads_its_log_file_to_the_end() {
@@ -510,5 +791,40 @@ mod tests {
     fn proxy_lists_split_as_cvmfs_reads_them() {
         assert_eq!(proxies("http://a:3128|http://b:3128;DIRECT"), ["http://a:3128", "http://b:3128", "DIRECT"]);
         assert_eq!(proxies(""), ["DIRECT"]);
+    }
+}
+
+#[cfg(test)]
+mod local_install_tests {
+    #[test]
+    fn a_local_build_is_read_from_its_own_files() {
+        let d = std::env::temp_dir().join(format!("cove-local-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let b = d.join(".build");
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(b.join("up.json"), r#"{"state":"running","step":"suite","steps":["kit","prefix","ndexr-cli","suite","cove","packages"],"started":100,"rc":null}"#).unwrap();
+        std::fs::write(b.join("up.timeline.json"), r#"{"generated":1,"steps":[
+            {"kind":"eb","name":"GCC","version":"13.3.0","started":10,"finished":50,"status":"done"},
+            {"kind":"eb","name":"R","version":"4.6.1","started":60,"finished":0,"status":"running"},
+            {"kind":"eb","name":"Qt6","version":"6.7.2","started":20,"finished":30,"status":"failed"}]}"#).unwrap();
+        std::fs::write(b.join("up.log"), "one
+
+two
+").unwrap();
+        let m = d.join("x86_64-pc-linux-gnu/eb/modules/all/R");
+        std::fs::create_dir_all(&m).unwrap();
+        std::fs::write(m.join("4.6.1-foss-2024a.lua"), "").unwrap();
+        let v = super::local_install_at(&d, &d, "x86_64-pc-linux-gnu");
+        assert_eq!((v.state.as_str(), v.step.as_str(), v.steps.len()), ("running", "suite", 6));
+        assert_eq!((v.done, v.failed, v.running.len()), (1, 1, 1));
+        assert_eq!(v.running[0].name, "R");
+        assert_eq!(v.failures[0].name, "Qt6");
+        assert_eq!(v.tail, ["one", "two"]);
+        assert_eq!(v.modules, ["R/4.6.1-foss-2024a"]);
+        assert!(v.root_is_dir);
+        assert!(!v.alive, "no up.pid");
+        let none = super::local_install_at(&d.join("nothing"), &d.join("nothing"), "x");
+        assert!(none.state.is_empty() && none.modules.is_empty());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

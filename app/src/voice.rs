@@ -41,6 +41,9 @@ pub struct Mic {
     pub keep: Option<String>,
     /// The recording just kept, waiting for its transcript: (folder, name).
     kept: Option<(String, String)>,
+    /// The transcript that just landed in the box, for its owner to take: the
+    /// composer remembers it as spoken (spoken.rs).
+    last: Option<String>,
 }
 
 /// A recording's extension, from its data URL's type.
@@ -97,6 +100,11 @@ mod js {
 }
 
 impl Mic {
+    /// The transcript that landed in the box since the last call.
+    pub fn take_last(&mut self) -> Option<String> {
+        self.last.take()
+    }
+
     /// There is a microphone to offer here (a browser that can record).
     pub fn shown() -> bool {
         js::supported()
@@ -158,6 +166,7 @@ impl Mic {
             match r {
                 Ok(t) if !t.trim().is_empty() => {
                     let t = t.trim();
+                    self.last = Some(t.to_owned());
                     if text.trim().is_empty() {
                         *text = t.to_owned();
                     } else {
@@ -303,7 +312,7 @@ pub fn speak_button(ui: &mut egui::Ui, d: f32) {
 /// of that audio and act on it if it's confident enough ... but then also
 /// submit the final audio, so have it transcribed and ultimately stored ...
 /// only within the Go mode"). The page keeps the mic open
-/// (web/index.html `window.coveListen`); every 30 s, 1 min or 5 min (PIECES) a piece is
+/// (web/index.html `window.coveListen`); every 10 s to 5 min (PIECES) a piece is
 /// transcribed and handed back as a `Heard::Chunk`; Stop hands back the whole
 /// recording and its transcript as `Heard::Whole`. What is done with them -
 /// the agent, supporting_docs/ - is ide.rs go_agent's.
@@ -334,7 +343,11 @@ pub enum Heard {
 /// minute, or five minutes, as the only options"). It replaced a minutes
 /// field, 1 to 10 (2026-11-11), which replaced the Steady / In batches /
 /// Presenting paces (2026-11-08).
-pub const PIECES: [u32; 3] = [30, 60, 300];
+///
+/// 10 s and 15 s added 2026-11-19 (operator: "i cant push 30s to shrink the
+/// response time"): 30 s was the floor, and on a phone the three buttons ran
+/// off the agent bar's edge with only "30 s" showing, so it is one dropdown.
+pub const PIECES: [u32; 5] = [10, 15, 30, 60, 300];
 
 /// The choice nearest `secs` - what a saved or older value becomes.
 pub fn piece(secs: u32) -> u32 {
@@ -356,21 +369,23 @@ pub fn piece_span(secs: u32) -> String {
     }
 }
 
-/// The three choices, the one in use filled. Left of them, while Listen is
-/// on, the time until the piece being heard is cut.
+/// The choices as one dropdown beside Model and Auto, the one in use shown.
+/// Left of it, while Listen is on, the time until the piece being heard is cut.
 pub fn piece_field(ui: &mut egui::Ui, secs: &mut u32, left: Option<u32>) {
     if let Some(s) = left {
         ui.label(RichText::new(format!("{}:{:02}", s / 60, s % 60)).monospace().size(11.0).color(theme::hush()))
             .on_hover_text("until Listen transcribes what it is hearing and, acting as you talk, the agent gets it");
     }
-    for p in PIECES {
-        if ui.selectable_label(*secs == p, RichText::new(piece_words(p)).size(12.0))
-            .on_hover_text(format!("Listen transcribes what you said every {} and, acting as you talk, hands it to the agent", piece_words(p)))
-            .clicked()
-        {
-            *secs = p;
-        }
-    }
+    egui::ComboBox::from_id_salt(("listen-piece", ui.id()))
+        .width(58.0)
+        .selected_text(RichText::new(piece_words(*secs)).size(11.5))
+        .show_ui(ui, |ui| {
+            for p in PIECES {
+                ui.selectable_value(secs, p, piece_words(p));
+            }
+        })
+        .response
+        .on_hover_text(format!("Listen transcribes what you said every {} and, acting as you talk, hands it to the agent - shorter answers sooner", piece_words(*secs)));
 }
 
 /// The model a Presenting turn runs on: Sonnet, on the same plan
@@ -556,14 +571,15 @@ pub mod play {
 
 #[cfg(test)]
 mod minutes_tests {
-    const PIECES_WORDS: [&str; 3] = ["30 s", "1 min", "5 min"];
+    const PIECES_WORDS: [&str; 5] = ["10 s", "15 s", "30 s", "1 min", "5 min"];
 
     #[test]
     fn minutes() {
-        assert_eq!(super::PIECES, [30, 60, 300]);
-        // Saved minutes from before (1 to 10) land on the nearest choice.
-        assert_eq!([0, 30, 45, 60, 120, 179, 181, 600].map(super::piece), [30, 30, 30, 60, 60, 60, 300, 300]);
-        assert_eq!(PIECES_WORDS, [super::piece_words(30), super::piece_words(60), super::piece_words(300)]);
+        assert_eq!(super::PIECES, [10, 15, 30, 60, 300]);
+        // Saved values from before (minutes 1 to 10, or seconds) land on the
+        // nearest choice; 30 s and up keep what they were.
+        assert_eq!([10, 12, 15, 30, 45, 60, 120, 179, 181, 600].map(super::piece), [10, 10, 15, 30, 30, 60, 60, 60, 300, 300]);
+        assert_eq!(PIECES_WORDS, super::PIECES.map(super::piece_words));
         assert_eq!([super::piece_span(30), super::piece_span(60), super::piece_span(300)], ["30 seconds", "minute", "5 minutes"]);
         assert_eq!(super::present_model("sub-opus"), "sub-sonnet");
         assert_eq!(super::present_model("opus"), "sonnet");

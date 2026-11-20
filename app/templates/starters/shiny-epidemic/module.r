@@ -80,6 +80,8 @@ ink <- function(mar = c(3.4, 4, 2.4, 1.2)) {
 # ── curves ───────────────────────────────────────────────────────────────────
 
 ui_curves <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, sliderInput, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -101,6 +103,8 @@ ui_curves <- function(id) {
 }
 
 server_curves <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactive, req, renderPlot, renderUI, tags],
     graphics[plot.new, plot.window, axis, polygon, lines, abline, mtext, text, legend]
@@ -225,6 +229,8 @@ grid_start <- function(vacc) {
 }
 
 ui_grid <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, actionButton, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -247,6 +253,8 @@ ui_grid <- function(id) {
 
 # `disease` is the curves branch's reactive list of its sliders.
 server_grid <- function(id, disease) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[moduleServer, reactiveValues, observeEvent, observe, invalidateLater, isolate, renderPlot,
                   renderUI, updateActionButton, actionButton, tags],
@@ -385,6 +393,8 @@ mtext_fit <- function(text, side = 3, line = 0, adj = 0.5, cex = 1, font = 1, at
 
 #' @export
 ui_module <- function(id, request) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[NS, tagList, tags, HTML],
     r / shell / shell
@@ -409,8 +419,10 @@ ui_module <- function(id, request) {
 }
 
 .server_inner <- function(id = "__HOST__", parent_session) {
-  box::use(r / shell / shell)
+  box::use(r / shell / shell, ./r/log)
   shell$server_shell(id, parent_session, inner = function(input, output, session) {
+    log$log_session(session)
+    log$log_info("__HOST__: module server starting")
     disease <- server_curves("curves")
     server_grid("grid", disease)
   })

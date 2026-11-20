@@ -68,6 +68,8 @@ struct State {
     alive: bool,
     banner: String,
     cwd: String,
+    /// The shell's environment as of its last command (DRIVER_SH save_env).
+    env_file: String,
     env: Vec<EnvRow>,
     env_next: Vec<EnvRow>,
     plots: Vec<PathBuf>,
@@ -77,6 +79,8 @@ struct State {
     /// to be restarted into (RESTART).
     mods: Option<String>,
     restart_into: Option<String>,
+    /// The shell loaded another R (RLOADED): the R module, for the R console.
+    r_loaded: Option<String>,
     /// The data viewer: a table being received (TABLE … TEND), the last one
     /// whole, and how many have arrived.
     table_next: Option<TableView>,
@@ -195,6 +199,7 @@ impl State {
             "WARN" => self.push(LineKind::Warning, rest),
             "BANNER" => self.banner = rest.to_owned(),
             "CWD" => self.cwd = rest.to_owned(),
+            "ENVFILE" => self.env_file = rest.to_owned(),
             "PLOT" => self.plots.push(PathBuf::from(rest)),
             "VIEW" => match crate::host::view_address(rest) {
                 Ok(a) => {
@@ -205,6 +210,7 @@ impl State {
             },
             "MODS" => self.mods = Some(rest.to_owned()),
             "RESTART" => self.restart_into = Some(rest.to_owned()),
+            "RLOADED" => self.r_loaded = Some(rest.to_owned()),
             "ENVBEGIN" => self.env_next.clear(),
             // The frame a debugger stopped in, shown at once (no DONE comes).
             "ENVEND" => {
@@ -339,11 +345,8 @@ pub fn module_prefix(module: &str) -> Result<String, String> {
 /// The interpreter command and the check that it exists.
 fn interpreter(lang: Lang, driver: &str) -> String {
     let d = shell_quote(driver);
-    let why = if crate::host::use_sh().is_none() {
-        "no R on this computer: install R, or mount or build the ndexr stack (Tools › Global Options)"
-    } else {
-        "no R here — pick an R or env/ module in Tools › Global Options"
-    };
+    // start() refuses without the stack, so R missing here is the module's.
+    let why = "no R here — pick an R or env/ module in Tools › Global Options";
     match lang {
         Lang::R => format!(
             "command -v R >/dev/null || {{ echo '{why}'; exit 127; }}; \
@@ -495,7 +498,17 @@ fn launch_line(lang: Lang, mods: &str, driver: &str, cwd: &str) -> Result<String
     Ok(format!("{cd}{}{}", module_prefix(mods)?, interpreter(lang, driver)))
 }
 
+/// What a console says where the ndexr stack is not: no use.sh, so no `ml`.
+pub const NO_STACK: &str = "The console runs on the ndexr stack, and this computer does not have it yet. Set it up with \"Set it up\" above the windows, or the stack in the status bar: mount it with CernVM-FS, or build it here. The Terminal works without it.";
+
 fn start(lang: Lang) -> Result<(), String> {
+    // Only on the ndexr stack (operator, 2026-11-14: "console should only
+    // work if ml/source activate for the ndexr stack is available"). Without
+    // use.sh R, Python and bash came from this computer's PATH - a host R
+    // with none of the stack's packages, under a banner that named no module.
+    if crate::host::use_sh().is_none() {
+        return Err(NO_STACK.into());
+    }
     // Windows is a remote front end (operator, 2026-10-13: "a remote ide going
     // forward"): its R, Python and shell are the cell's, never this machine's.
     if cfg!(windows) {
@@ -537,7 +550,6 @@ fn start(lang: Lang) -> Result<(), String> {
     let mplrc = dir.join("matplotlibrc");
     std::fs::write(&mplrc, matplotlibrc()).map_err(|e| format!("{}: {e}", mplrc.display()))?;
 
-    let no_stack = crate::host::use_sh().is_none();
     let line = if lang == Lang::Shell {
         if let Some(bad) = mods.split_whitespace().find(|m| !valid_module(m)) {
             return Err(format!("not a module name: {bad}"));
@@ -589,10 +601,8 @@ fn start(lang: Lang) -> Result<(), String> {
         .env("COVE_PLOTS", &plots)
         .env("COVE_HELPERS", &dir)
         .env("COVE_CWD", &cwd)
-        // No ndexr stack on this machine (a laptop with its own R): R, Python
-        // and bash run from PATH, so no module is claimed in the banner.
-        .env("COVE_MODULE", if no_stack { "" } else { s.module(lang) })
-        .env("COVE_MODULES", if no_stack { "" } else { mods.as_str() })
+        .env("COVE_MODULE", s.module(lang))
+        .env("COVE_MODULES", mods.as_str())
         .env("COVE_ENV_LOCAL", crate::source::env_local_modules().map(|d| d.display().to_string()).unwrap_or_default())
         .env("MPLBACKEND", "Agg")
         .env("NO_COLOR", "1")
@@ -679,6 +689,10 @@ fn start(lang: Lang) -> Result<(), String> {
                 if let Some(m) = g.mods.take() {
                     live().lock().unwrap().insert(lang, m);
                 }
+                if let Some(r) = g.r_loaded.take() {
+                    // Not under this shell's lock: it restarts another kernel.
+                    std::thread::spawn(move || follow_shell_r(&r));
+                }
                 if let Some(m) = g.restart_into.take() {
                     live().lock().unwrap().insert(lang, m.clone());
                     g.push(LineKind::System, format!("{} itself changed - restarting {} in {m}", lang.word(), lang.word()));
@@ -725,6 +739,38 @@ fn tell_mismatch(st: Arc<Mutex<State>>, generation: u64, mods: String, cwd: Stri
     });
 }
 
+/// The modules the R console runs in with `r` (an R/x module) in place of
+/// whatever R it had: the environment first, then the R, as `ml("R/x")`
+/// inside R gives ("env/r4.6_py3.13-release R/4.5.3-foss-2024a").
+fn with_r(mods: &str, r: &str) -> String {
+    let mut v: Vec<&str> = mods.split_whitespace().filter(|m| !m.starts_with("R/")).collect();
+    v.push(r);
+    v.join(" ")
+}
+
+/// The Shell console loaded another R (`ml R/4.5`): the R console follows
+/// (operator, 2026-11-15: "opening up R goes to 4.6 and not 4.5 which we
+/// loaded"). Running, it restarts in it and says so; not running, its next
+/// start is in it. The same as `ml("R/4.5")` typed in R.
+fn follow_shell_r(r: &str) {
+    if !valid_module(r) || !r.starts_with("R/") {
+        return;
+    }
+    let s = crate::host::saved_settings();
+    let now = live().lock().unwrap().get(&Lang::R).cloned().unwrap_or_else(|| s.module(Lang::R).to_owned());
+    let next = with_r(&now, r);
+    if next == now {
+        return;
+    }
+    live().lock().unwrap().insert(Lang::R, next.clone());
+    if running(Lang::R) {
+        state(Lang::R).lock().unwrap().push(LineKind::System, format!("{r} was loaded in the Shell - restarting R in {next}. Objects in the workspace are not carried over."));
+        if let Err(e) = restart(Lang::R) {
+            state(Lang::R).lock().unwrap().push(LineKind::Error, format!("restart failed: {e}"));
+        }
+    }
+}
+
 fn running(lang: Lang) -> bool {
     let mut p = procs().lock().unwrap();
     match p.get_mut(&lang) {
@@ -750,7 +796,7 @@ pub fn eval_at(lang: Lang, code: &str, at: Option<&(String, usize)>) -> Result<(
     match at {
         Some((path, line)) if lang == Lang::R && !waiting(Lang::R) && !code.trim().is_empty() && path.starts_with('/') => {
             let code = code.trim_end_matches(['\n', '\r', ' ', '\t']);
-            send(Lang::R, &format!(".ndexr_src({}, {}L, {})", r_string(path), (*line).max(1), r_string(code)), Some((Lang::R, code)))
+            send(Lang::R, &format!("{TOOLS}.ndexr_src({}, {}L, {})", r_string(path), (*line).max(1), r_string(code)), Some((Lang::R, code)))
         }
         _ => eval(lang, code),
     }
@@ -773,7 +819,7 @@ pub fn eval(lang: Lang, code: &str) -> Result<(), String> {
     }
     if lang == Lang::Python && !code.trim().is_empty() {
         let code = code.trim_end_matches(['\n', '\r', ' ', '\t']);
-        return send(Lang::R, &format!(".ndexr_py({})", r_string(code)), Some((Lang::Python, code)));
+        return send(Lang::R, &format!("{TOOLS}.ndexr_py({})", r_string(code)), Some((Lang::Python, code)));
     }
     send(lang.session(), code, Some((lang, code)))
 }
@@ -795,8 +841,8 @@ pub fn view(lang: Lang, name: &str) -> Result<(), String> {
     }
     let code = match lang {
         Lang::Shell => return Err("the shell has no data frames".into()),
-        _ if py => format!(".ndexr_view(\"py${name}\")"),
-        _ => format!(".ndexr_view({name:?})"),
+        _ if py => format!("{TOOLS}.ndexr_view(\"py${name}\")"),
+        _ => format!("{TOOLS}.ndexr_view({name:?})"),
     };
     send(Lang::R, &code, None)
 }
@@ -814,11 +860,19 @@ fn waiting(lang: Lang) -> bool {
     waiting_in(&state(lang.session()).lock().unwrap())
 }
 
+/// Where Cove's helpers live (DRIVER_R attaches them as "tools:ndexr"), named
+/// in full on every call Cove sends. Paused in browser() inside a box module,
+/// R looks names up from the module, whose scope ends at base R and never
+/// reaches the search path: `.ndexr_frame(...)` there was "could not find
+/// function" after every Next (box.biomarker.ndexr.io, 2026-11-17).
+/// as.environment() is base, which every module sees.
+pub const TOOLS: &str = "as.environment(\"tools:ndexr\")$";
+
 /// The debugger's frame, for the Environment: R evaluates what the browser
 /// reads in the frame it stopped in, so `environment()` is that frame.
 fn frame_request(lang: Lang) {
     if let Some(k) = procs().lock().unwrap().get_mut(&lang) {
-        let _ = k.stdin.write_all(b".ndexr_frame(environment())\n").and_then(|_| k.stdin.flush());
+        let _ = k.stdin.write_all(format!("{TOOLS}.ndexr_frame(environment())\n").as_bytes()).and_then(|_| k.stdin.flush());
     }
 }
 
@@ -907,8 +961,8 @@ pub fn complete(lang: Lang, line: &str, cursor: usize) -> Result<crate::api::Com
     let code = match lang {
         Lang::Shell => format!("__cove_complete {id} {} {cursor}", shell_quote(line)),
         Lang::Python if py_primary() => format!("__cove_complete({id}, {}, {cursor})", serde_json::to_string(line).unwrap_or_default()),
-        Lang::Python => format!(".ndexr_complete({id}, {}, {cursor}, TRUE)", r_string(line)),
-        Lang::R => format!(".ndexr_complete({id}, {}, {cursor}, FALSE)", r_string(line)),
+        Lang::Python => format!("{TOOLS}.ndexr_complete({id}, {}, {cursor}, TRUE)", r_string(line)),
+        Lang::R => format!("{TOOLS}.ndexr_complete({id}, {}, {cursor}, FALSE)", r_string(line)),
         Lang::Julia => format!("__cove_complete({id}, {}, {cursor})", jl_string(line)),
     };
     send(session, &code, None)?;
@@ -940,6 +994,7 @@ pub fn poll(lang: Lang, since: usize) -> KernelView {
         env: g.env.clone(),
         plots: g.plots.len(),
         cwd: g.cwd.clone(),
+        env_file: g.env_file.clone(),
         table: g.table.clone(),
         tables: g.tables,
         view: g.view.clone(),
@@ -1859,7 +1914,32 @@ __cove_complete() {
   done
   tag COMPL "$id" "$(( ${#line} - ${#w} ))" "${out[@]}"
 }
-finish() { tag CWD "$PWD"; tag BANNER "$(label)"; tag DONE; }
+# The shell's environment after each command, for the Terminal: a full-screen
+# program typed here runs there, and sources this first, so it gets the same
+# modules, PATH and variables - `ml R/4.5` then `R` started R 4.6 in the
+# Terminal's own shell (operator, 2026-11-15). Lmod keeps its state in the
+# environment, so `ml` there carries on from it. Read-only variables and the
+# ones this driver sets for line mode (TERM=dumb, the pagers) stay out. Only
+# for this user (it may hold tokens), written whole then moved in. ~9 ms.
+__cove_envfile="${COVE_HELPERS:-$HOME/.cache}/shell-env.sh"
+save_env() {
+  ( umask 077
+    declare -px | grep -vE '^declare -[a-zA-Z]*r[a-zA-Z]* |^declare -x (TERM|PAGER|GIT_PAGER|MANPAGER|PWD|OLDPWD|SHLVL|_|COLUMNS|LINES|HISTFILE|S)=' > "$__cove_envfile.part" &&
+      mv -f "$__cove_envfile.part" "$__cove_envfile" ) 2>/dev/null
+}
+# The R the shell has loaded: when a command changes it (`ml R/4.5`), say
+# which R module it is, and the R console follows (kernel.rs follow_shell_r).
+__cove_r=${EBROOTR:-}
+r_loaded() {
+  [ "${EBROOTR:-}" = "$__cove_r" ] && return
+  __cove_r=${EBROOTR:-}
+  [ -n "$__cove_r" ] || return
+  local m
+  for m in ${LOADEDMODULES//:/ }; do
+    case $m in R/*) tag RLOADED "$m"; return ;; esac
+  done
+}
+finish() { tag CWD "$PWD"; save_env && tag ENVFILE "$__cove_envfile"; r_loaded; tag BANNER "$(label)"; tag DONE; }
 # The one line a start says (ml av lists the stack, ml <name> loads it).
 printf 'bash %s\n' "${BASH_VERSION%%(*}"
 finish
@@ -1933,11 +2013,12 @@ mod tests {
             .arg(&drv)
             .env("COVE_USE_SH", "")
             .env("COVE_CWD", &d)
+            .env("COVE_HELPERS", &d)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
             .and_then(|mut c| {
-                c.stdin.take().unwrap().write_all(b"2\nmkdir -p sub && cd sub\necho here\n1\nfalse\n")?;
+                c.stdin.take().unwrap().write_all(b"2\nmkdir -p sub && cd sub\necho here\n1\nfalse\n1\nexport COVE_SEEN=from-the-console\n1\nexport EBROOTR=/s/R/4.5.3 LOADEDMODULES=GCCcore/13.3.0:R/4.5.3-foss-2024a:env/x\n")?;
                 c.wait_with_output()
             })
             .unwrap();
@@ -1949,6 +2030,15 @@ mod tests {
         assert!(text.contains(&"here"), "{text:?}");
         assert!(st.lines.iter().any(|l| l.kind == LineKind::Error && l.text == "exit status 1"), "{text:?}");
         assert!(st.cwd.ends_with("/sub"), "cd persists across requests: {}", st.cwd);
+        // The Terminal sources its environment and gets what it set, and the
+        // line mode's TERM=dumb stays behind.
+        assert_eq!(st.env_file, d.join("shell-env.sh").display().to_string());
+        // Another R loaded in the shell is said, for the R console to follow.
+        assert_eq!(st.r_loaded.as_deref(), Some("R/4.5.3-foss-2024a"));
+        assert_eq!(with_r("env/r4.6_py3.13-release R/4.6.1-foss-2024a", "R/4.5.3-foss-2024a"), "env/r4.6_py3.13-release R/4.5.3-foss-2024a");
+        assert_eq!(with_r("env/r4.6_py3.13-release", "R/4.5.3-foss-2024a"), "env/r4.6_py3.13-release R/4.5.3-foss-2024a");
+        let got = Command::new("bash").args(["--noprofile", "--norc", "-c", &format!(". {} && printf '%s|%s' \"$COVE_SEEN\" \"$TERM\"", st.env_file)]).env("TERM", "xterm-256color").output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&got.stdout), "from-the-console|xterm-256color", "{}", String::from_utf8_lossy(&got.stderr));
         assert!(st.banner.starts_with("bash "), "{}", st.banner);
         std::fs::remove_dir_all(&d).unwrap();
     }

@@ -283,7 +283,7 @@ impl Showcase {
             {
                 req.credentials = ehttp::Credentials::SameOrigin;
             }
-            ehttp::fetch(req, move |r| {
+            ehttp::fetch(crate::backend::with_token(req), move |r| {
                 if let Some(v) = r.ok().filter(|r| r.ok).and_then(|r| serde_json::from_slice(&r.bytes).ok()) {
                     *slot.lock().unwrap() = Some(v);
                     ctx.request_repaint();

@@ -1,8 +1,13 @@
 """__HOST__: a blank Flask app. Flask reloads it on every save."""
+import os
 import time
 from pathlib import Path
 
 from flask import Flask, jsonify
+
+# Importing log configures the root logger, so werkzeug's line per request
+# comes out in the same format, as [request].
+from log import log
 
 HERE = Path(__file__).parent
 STARTED = time.time()
@@ -32,8 +37,10 @@ def home():
 
 
 if __name__ == "__main__":
-    import os
-
+    # The reloader runs this file twice: a watcher, and the server it restarts on
+    # each save (WERKZEUG_RUN_MAIN set). The server says it is starting.
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        log.info("__HOST__: Flask app starting on 127.0.0.1:%s", os.environ.get("PORT"))
     # debug=False: Werkzeug's debugger runs code typed in the browser, and nginx
     # puts this on the web. The "stat" reloader checks the files the app
     # imported; the default (watchdog, in the stack) put an inotify watch on

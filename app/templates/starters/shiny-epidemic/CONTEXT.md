@@ -28,13 +28,15 @@ with b = R0 / D, D the infectious period and L the latent one (L = 0 is SIR:
 the exposed become infectious the same day). Vaccinating a share v moves it
 from S to immune before day 0; distancing scales b down from its day on.
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R and Shiny only, from the stack's R; no dataset, key or database.
 Kermack, W. O. and McKendrick, A. G. (1927), "A Contribution to the
 Mathematical Theory of Epidemics", Proc. R. Soc. Lond. A 115(772).
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

@@ -134,7 +134,12 @@ fn whoami(key: &str) -> Who {
 /// (2026-10-15, operator: "send fails with error").
 pub fn send_request(domain: &str, what: &str, trying: &str, blocked: bool) -> Result<i64, String> {
     use crate::backend::url_encode;
-    let key = find_key().ok_or("sign in to ndexr first (the toolbar's Sign in) - a request is filed as you")?;
+    // Not signed in: filed anonymously on cove.ndexr.io (server.rs
+    // anon_request_response), what they were trying folded into it.
+    let Some(key) = find_key() else {
+        let what = if trying.trim().is_empty() { what.to_owned() } else { format!("{what}\n\nTrying to: {trying}") };
+        return crate::backend::anon_request(&what, "", &format!("Cove desktop, not signed in, about {domain}"));
+    };
     let url = format!(
         "{}/v1/requests?domain={}&what={}&trying={}&urgency={}",
         api_base(),
@@ -323,6 +328,25 @@ pub fn prefer(r: RunOn) {
     }
 }
 
+fn stack_mode_file() -> Option<PathBuf> {
+    Some(key_file()?.with_file_name("cove-stack-mode"))
+}
+
+/// The stack mode chosen on this computer (api.rs StackMode), if one was.
+pub fn stack_mode() -> Option<crate::api::StackMode> {
+    crate::api::StackMode::parse(&std::fs::read_to_string(stack_mode_file()?).ok()?)
+}
+
+/// Choose the stack mode, and where Cove runs with it: remote runs on the
+/// cell, installed and CernVM-FS here.
+pub fn set_stack_mode(m: crate::api::StackMode) {
+    if let Some(f) = stack_mode_file() {
+        let _ = std::fs::create_dir_all(f.parent().unwrap());
+        let _ = std::fs::write(f, format!("{}\n", m.key()));
+    }
+    prefer(if m == crate::api::StackMode::Remote { RunOn::Cell } else { RunOn::Local });
+}
+
 /// The person's pick, else: Linux with the stack on this machine (mounted, or
 /// built here through Software › Install) runs here; everything else - a Mac,
 /// Windows, Linux without a stack - runs on the cell (operator, 2026-10-15:
@@ -506,6 +530,11 @@ fn wake(cell: &str) {
 pub fn relaunch() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe).args(std::env::args().skip(1)).spawn().map(|_| ()).map_err(|e| format!("could not restart: {e}"))
+}
+
+/// A fresh secret for a server this app starts (localserve.rs).
+pub fn new_token() -> String {
+    random_hex(24)
 }
 
 fn random_hex(n: usize) -> String {

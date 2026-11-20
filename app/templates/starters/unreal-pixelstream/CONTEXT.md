@@ -56,6 +56,9 @@ time); `.cove/up.sh` starts both servers and waits for the player page;
 `.cove/down.sh` stops them. Open the app's address and click the page once to
 start the stream.
 
+## Logging
+run.sh writes a start line for the signalling server and the game in the one format across languages (`2026-11-18 12:04:31 INFO    [run] ...`); their own output follows unchanged.
+
 ## State
 
 Written to Unreal Engine 5.5's conventions (BuildSettingsVersion.V5, the

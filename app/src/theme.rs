@@ -146,15 +146,14 @@ pub const TOOL_H: f32 = 24.0;
 const SQUARE: CornerRadius = CornerRadius::ZERO;
 
 /// A pane is a window over ndexr.io's night photograph (backdrop.rs): its
-/// --wm-radius, and a body the photo shows through (the site's 84-86%).
+/// --wm-radius; the photo shows in the gaps between windows, not through them.
 pub const WIN_RADIUS: u8 = 7;
-pub const WIN_ALPHA: f32 = 0.86;
 
-/// How much of the backdrop a pane lets through: the dark looks keep the
-/// night photograph faintly behind the windows; on a light look it only greys
-/// the paper behind code, so the panes are solid.
+/// Opaque (operator's review, 2026-11-14: "use an opaque, nearly
+/// textureless surface behind text, code, and menus"): the photograph shows
+/// in the gaps between windows and behind the Atlas, never through a pane.
 pub fn win_alpha() -> f32 {
-    if is_light() { 1.0 } else { WIN_ALPHA }
+    1.0
 }
 /// The gap between windows (ndexr.io's --wm-gap).
 pub const WIN_GAP: i8 = 7;
@@ -213,8 +212,14 @@ pub fn set_palette(ctx: &egui::Context, i: usize) {
     *v = if light { egui::Visuals::light() } else { egui::Visuals::dark() };
     v.override_text_color = Some(text());
     v.panel_fill = ground();
-    v.window_fill = surface_hi();
-    v.window_corner_radius = SQUARE;
+    // Menus and dialogs a clear step above the panes, seen even out of the
+    // corner of an eye (the review: "too many surfaces blend together").
+    v.window_fill = lift(surface_hi(), if light { 0.0 } else { 0.05 });
+    // Dialogs and floating windows rounded like the menus, with room inside
+    // (operator, 2026-11-16: "windows need to be updated for cleaner more
+    // organized visuals"): a square edge and a 6 px margin read as a pane
+    // that had come loose.
+    v.window_corner_radius = egui::CornerRadius::same(12);
     // Menus as a browser's: rounded, roomy (operator, 2026-11-14: "menus
     // should feel a bit like chrome, no more feeling like rstudio").
     v.menu_corner_radius = egui::CornerRadius::same(10);
@@ -265,6 +270,7 @@ pub fn set_palette(ctx: &egui::Context, i: usize) {
     style.spacing.button_padding = egui::vec2(8.0, 3.0);
     style.spacing.interact_size.y = 22.0;
     style.spacing.menu_margin = egui::Margin::symmetric(6, 8);
+    style.spacing.window_margin = egui::Margin::same(14);
     // Gentle motion: panels and collapsibles ease, they do not snap.
     style.animation_time = 0.18;
     // The splitters between windows grab across the whole gap, not egui's
@@ -277,13 +283,87 @@ pub fn set_palette(ctx: &egui::Context, i: usize) {
     ctx.set_theme(theme);
 }
 
+/// `c` moved `f` of the way toward the text colour: a surface lifted (on a
+/// dark look, lighter).
+pub fn lift(c: Color32, f: f32) -> Color32 {
+    let t = text_strong();
+    let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * f).round() as u8;
+    Color32::from_rgb(mix(c.r(), t.r()), mix(c.g(), t.g()), mix(c.b(), t.b()))
+}
+
+/// What a process is doing - one colour each, always with a mark and a word
+/// (the operator's review, 2026-11-14: "define a strict semantic system ...
+/// never rely on color alone"). Cyan: selected, focused, executing. Green:
+/// running well, connected. Amber: needs attention, pending. Red: failed, or
+/// an action that destroys. Slate: idle, stopped, disabled, informational.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    Active,
+    Good,
+    Attention,
+    Failed,
+    Idle,
+}
+
+impl State {
+    pub fn color(self) -> Color32 {
+        match self {
+            State::Active => primary(),
+            State::Good => ok(),
+            State::Attention => amber(),
+            State::Failed => alt(),
+            State::Idle => hush(),
+        }
+    }
+}
+
+/// A state's mark (drawn: a ring turning while active, a filled dot when
+/// good, a diamond for attention, a cross for failed, a hollow ring when idle)
+/// and its word. Returns the label's response.
+pub fn state_mark(ui: &mut egui::Ui, st: State, word: &str) -> Response {
+    let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
+    let (c, p) = (r.center(), ui.painter());
+    let col = st.color();
+    match st {
+        State::Active => {
+            let t = ui.input(|i| i.time) as f32;
+            let pts: Vec<egui::Pos2> = (0..=18).map(|k| {
+                let a = t * 4.0 + k as f32 / 18.0 * std::f32::consts::PI * 1.5;
+                c + egui::vec2(a.cos(), a.sin()) * 5.0
+            }).collect();
+            p.add(egui::Shape::line(pts, Stroke::new(2.0, col)));
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+        }
+        State::Good => {
+            p.circle_filled(c, 4.5, col);
+        }
+        State::Attention => {
+            let d = 5.0;
+            p.add(egui::Shape::convex_polygon(vec![c + egui::vec2(0.0, -d), c + egui::vec2(d, 0.0), c + egui::vec2(0.0, d), c + egui::vec2(-d, 0.0)], col, Stroke::NONE));
+        }
+        State::Failed => {
+            let d = 4.0;
+            p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], Stroke::new(2.0, col));
+            p.line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], Stroke::new(2.0, col));
+        }
+        State::Idle => {
+            p.circle_stroke(c, 4.5, Stroke::new(1.5, col));
+        }
+    }
+    ui.label(egui::RichText::new(word).size(12.5).color(if st == State::Idle { text() } else { col }))
+}
+
 /// A menu laid out as Chrome lays its menus (operator, 2026-11-14: "menus
 /// should feel a bit like chrome, no more feeling like rstudio"): rows a
 /// finger tall with room either side, a soft fill under the pointer instead
 /// of an outline, shortcuts quiet at the right, and air around separators.
 /// Call it first thing in a menu's closure; it changes that menu only.
 pub fn chrome_menu(ui: &mut egui::Ui, min_width: f32) {
-    ui.set_min_width(min_width);
+    // A command menu is narrow (the review: 280-340 px; it measured the old
+    // one at 600 and its Help cascade another 270).
+    let room = (ui.ctx().content_rect().width() - 16.0).max(200.0);
+    ui.set_min_width(min_width.min(320.0).min(room));
+    ui.set_max_width(320.0f32.min(room));
     let s = ui.style_mut();
     s.spacing.button_padding = egui::vec2(14.0, 7.0);
     s.spacing.interact_size.y = 30.0;
@@ -295,16 +375,122 @@ pub fn chrome_menu(ui: &mut egui::Ui, min_width: f32) {
         st.bg_stroke = Stroke::NONE;
     }
     w.inactive.weak_bg_fill = Color32::TRANSPARENT;
-    w.hovered.weak_bg_fill = surface();
-    w.hovered.bg_fill = surface();
+    let hover = lift(surface_hi(), if is_light() { 0.0 } else { 0.12 });
+    let hover = if is_light() { surface() } else { hover };
+    w.hovered.weak_bg_fill = hover;
+    w.hovered.bg_fill = hover;
     w.hovered.fg_stroke = Stroke::new(1.0, text_strong());
-    w.open.weak_bg_fill = surface();
+    w.open.weak_bg_fill = hover;
     w.active.weak_bg_fill = moss();
     w.active.fg_stroke = Stroke::new(1.0, text_strong());
     s.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, moss());
 }
 
 /// A separator with Chrome's breathing room.
+/// A section of a menu, opening beside it the way an IDE's menus do
+/// (operator, 2026-11-18: "hover over options shows highlight and auto open
+/// the menu like normal menubar ide" - the in-place dropdowns before this
+/// closed the whole menu on every click). Hover opens it at a desk, a tap on a
+/// phone, and neither closes the menu. Its state - the theme in use, R · busy -
+/// stands on the right before the arrow, in the same ink. `keep_open`: a
+/// click inside does not close it either (Theme: try one, then another).
+pub fn menu_fold<R>(ui: &mut egui::Ui, title: &str, state: &str, keep_open: bool, body: impl FnOnce(&mut egui::Ui) -> R) {
+    use egui::containers::menu::{MenuConfig, SubMenuButton};
+    let arrow = SubMenuButton::RIGHT_ARROW;
+    let right = if state.is_empty() {
+        arrow.to_owned()
+    } else {
+        let state: String = if state.chars().count() > 22 { state.chars().take(21).chain(['…']).collect() } else { state.to_owned() };
+        format!("{state}   {arrow}")
+    };
+    let mut sub = SubMenuButton::from_button(egui::Button::new(title).right_text(right));
+    if keep_open {
+        sub = sub.config(MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside));
+    }
+    sub.ui(ui, |ui| {
+        chrome_menu(ui, 240.0);
+        body(ui)
+    });
+}
+
+/// A theme in the menu's Theme dropdown: a chip in the look's own colours
+/// (its ground, pane, keyword and string), its name, and a tick when it is
+/// the one in use. Clicked = picked.
+pub fn theme_row(ui: &mut egui::Ui, name: &str, pl: &Palette, picked: bool, tall: bool) -> bool {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), if tall { 38.0 } else { 30.0 }), egui::Sense::click());
+    let p = ui.painter();
+    if picked || resp.hovered() {
+        p.rect_filled(r, 6.0, if picked { primary().gamma_multiply(0.18) } else { surface() });
+    }
+    let chip = egui::Rect::from_min_size(r.left_center() + egui::vec2(14.0, -8.0), egui::vec2(30.0, 16.0));
+    p.rect(chip, 4.0, rgb(pl.ground), Stroke::new(1.0, rgb(pl.moss)), egui::StrokeKind::Inside);
+    p.rect_filled(egui::Rect::from_min_max(chip.center_top() + egui::vec2(0.0, 3.0), chip.right_bottom() - egui::vec2(3.0, 3.0)), 2.0, rgb(pl.code));
+    p.circle_filled(chip.left_center() + egui::vec2(6.0, 0.0), 3.0, rgb(pl.keyword));
+    p.circle_filled(chip.left_center() + egui::vec2(12.5, 0.0), 3.0, rgb(pl.string));
+    p.text(chip.right_center() + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(13.0), if picked { text_strong() } else { text() });
+    if picked {
+        // A drawn tick: the font's ✓ is not one every build carries.
+        let c = r.right_center() - egui::vec2(20.0, 0.0);
+        p.line(vec![c + egui::vec2(-5.0, 0.0), c + egui::vec2(-1.5, 3.5), c + egui::vec2(5.0, -4.0)], Stroke::new(2.0, primary()));
+    }
+    resp.clicked()
+}
+
+/// Text a person can select, scroll and copy: a read-only text box - drag,
+/// Shift-click, Ctrl+A then Ctrl+C - for logs and job output (operator,
+/// 2026-11-19: "unable to select and scroll up or select all within one of
+/// those boxes"). A column of labels selected one line at a time and had no
+/// select-all. `job` carries its colours; `wrap` false keeps long lines
+/// whole, for a horizontal scroll.
+pub fn selectable_job(ui: &mut egui::Ui, job: egui::text::LayoutJob, wrap: bool) -> egui::Response {
+    let text = job.text.clone();
+    let mut layouter = move |ui: &egui::Ui, _t: &dyn egui::TextBuffer, w: f32| {
+        let mut j = job.clone();
+        j.wrap.max_width = if wrap { w } else { f32::INFINITY };
+        ui.fonts_mut(|f| f.layout_job(j))
+    };
+    let mut s: &str = &text;
+    ui.add(
+        egui::TextEdit::multiline(&mut s)
+            .layouter(&mut layouter)
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .desired_rows(1)
+            .desired_width(if wrap { ui.available_width() } else { f32::INFINITY }),
+    )
+}
+
+/// A scrolling log whose text can be selected (operator, 2026-11-19: "I cant
+/// select and scroll up"): a drag inside it selects - it never scrolls the
+/// log, which took the gesture before - and while a selection is dragged past
+/// the log's top or bottom edge the log scrolls that way, faster the further
+/// out, as a text editor does. The wheel scrolls it as always. `area` is the
+/// caller's ScrollArea (its id, height, stick-to-bottom).
+pub fn log_scroll<R>(area: egui::ScrollArea, ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let out = area.scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, drag: egui::scroll_area::DragScroll::Never }).show(ui, body);
+    let r = out.inner_rect;
+    let (down, at, from) = ui.input(|i| (i.pointer.primary_down(), i.pointer.interact_pos(), i.pointer.press_origin()));
+    if let (true, Some(at), Some(from)) = (down, at, from) {
+        if r.contains(from) {
+            let dy = if at.y < r.top() { at.y - r.top() } else if at.y > r.bottom() { at.y - r.bottom() } else { 0.0 };
+            if dy != 0.0 {
+                let mut st = out.state;
+                st.offset.y = (st.offset.y + dy.clamp(-40.0, 40.0) * 0.5).clamp(0.0, (out.content_size.y - r.height()).max(0.0));
+                st.store(ui.ctx(), out.id);
+                ui.ctx().request_repaint();
+            }
+        }
+    }
+    out.inner
+}
+
+/// `lines` in one ink, as `selectable_job`.
+pub fn selectable_lines(ui: &mut egui::Ui, lines: &[String], font: egui::FontId, color: Color32, wrap: bool) -> egui::Response {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(&lines.join("\n"), 0.0, egui::TextFormat { font_id: font, color, ..Default::default() });
+    selectable_job(ui, job, wrap)
+}
+
 pub fn menu_sep(ui: &mut egui::Ui) {
     ui.add_space(4.0);
     ui.separator();
@@ -362,7 +548,7 @@ pub fn strip<R>(ui: &mut egui::Ui, h: f32, fill: Color32, add: impl FnOnce(&mut 
         let bottom = child.min_rect().bottom();
         let bottom = if bottom.is_finite() { bottom.min(top.y + 8.0 * h) } else { top.y + h - 1.0 };
         let used = egui::Rect::from_min_max(top, egui::pos2(top.x + w, bottom.max(top.y + h - 1.0) + 1.0));
-        ui.painter().set(bg, egui::epaint::RectShape::filled(used, 0, fill.gamma_multiply(0.92)));
+        ui.painter().set(bg, egui::epaint::RectShape::filled(used, 0, fill));
         ui.painter().hline(used.x_range(), used.bottom() - 0.5, Stroke::new(1.0, pane_brd()));
         ui.allocate_rect(used, Sense::hover());
         return out;
@@ -370,7 +556,7 @@ pub fn strip<R>(ui: &mut egui::Ui, h: f32, fill: Color32, add: impl FnOnce(&mut 
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), Sense::hover());
     // A tab strip is a window's top row: rounded with it, and as see-through.
     let top = if h == TAB_H { WIN_RADIUS } else { 0 };
-    ui.painter().rect_filled(rect, CornerRadius { nw: top, ne: top, sw: 0, se: 0 }, fill.gamma_multiply(0.92));
+    ui.painter().rect_filled(rect, CornerRadius { nw: top, ne: top, sw: 0, se: 0 }, fill);
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, pane_brd()));
     let inner = rect.with_max_y(rect.bottom() - 1.0);
     // A child the parent does not grow with, clipped to the strip: a row of

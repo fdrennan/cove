@@ -19,6 +19,8 @@ import mistune
 import nbformat
 from nbclient import NotebookClient
 
+from log import log
+
 HERE = Path(__file__).parent
 NOTEBOOK = HERE / "notebook.ipynb"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -93,10 +95,10 @@ def watch():
             started = time.time()
             try:
                 body, error = run(), ""
-                print(f"ran notebook.ipynb in {time.time() - started:.1f} s", flush=True)
+                log.success("ran notebook.ipynb in %.1f s", time.time() - started)
             except Exception:
                 body, error = None, ANSI.sub("", traceback.format_exc(limit=3))
-                print(error, flush=True)
+                log.exception("notebook.ipynb failed; the page keeps its last good run")
             with lock:
                 if body is not None:
                     state["body"] = body
@@ -133,10 +135,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def log_message(self, *args):
-        pass
+    def log_message(self, fmt, *args):
+        # The open page asks /__live once a second; those lines would bury the rest.
+        if not self.path.startswith("/__live"):
+            log.info("%s %s", self.address_string(), fmt % args)
 
 
 if __name__ == "__main__":
+    log.info("__HOST__: Jupyter notebook page starting on 127.0.0.1:%s", os.environ.get("PORT"))
     threading.Thread(target=watch, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler).serve_forever()

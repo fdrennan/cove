@@ -17,13 +17,25 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod account;
 mod tabs;
+#[cfg(not(target_arch = "wasm32"))]
+mod boxcomplete;
+mod spoken;
+#[cfg(not(target_arch = "wasm32"))]
+mod localagent;
+mod manage;
+#[cfg(unix)]
+mod localserve;
+mod localstack;
 mod account_tab;
 mod settings_tab;
 mod access;
 mod agent;
+mod ansi;
 mod api;
 #[cfg(not(target_arch = "wasm32"))]
 mod apps;
+#[cfg(unix)]
+mod record;
 mod app;
 mod atlas;
 mod backdrop;
@@ -44,6 +56,8 @@ mod frameworks;
 mod gitview;
 #[cfg(not(target_arch = "wasm32"))]
 mod host;
+#[cfg(not(target_arch = "wasm32"))]
+mod zippack;
 #[cfg(not(target_arch = "wasm32"))]
 mod vitals;
 mod icons;
@@ -67,6 +81,7 @@ mod manifest;
 mod md;
 mod pick;
 mod names;
+mod paste;
 mod recents;
 mod release;
 #[cfg(not(target_arch = "wasm32"))]
@@ -177,8 +192,20 @@ fn main() -> eframe::Result<()> {
         // `cove dotcove <project folder>...`, run once over every project.
         #[cfg(not(target_arch = "wasm32"))]
         Some("dotcove") => std::process::exit(host::dotcove_cli(&args[2..])),
+        // `cove record [dir]`: the software a running project uses, saved to
+        // its .cove/record.json (record.rs). Up runs it once the app answers.
+        #[cfg(unix)]
+        Some("record") => std::process::exit(record::cli(&args[2..])),
         Some("--connect") => match args.get(2) {
-            Some(url) => backend = backend::Backend::Http { base: url.trim_end_matches('/').to_owned() },
+            Some(url) => {
+                // The server's token (~/.config/ndexr/cove-token there):
+                // `--token T`, or COVE_CONNECT_TOKEN, so it stays out of `ps`.
+                let token = args.iter().position(|a| a == "--token").and_then(|i| args.get(i + 1)).cloned().or_else(|| std::env::var("COVE_CONNECT_TOKEN").ok());
+                if let Some(t) = token {
+                    backend::set_server_token(&t);
+                }
+                backend = backend::Backend::Http { base: url.trim_end_matches('/').to_owned() }
+            }
             None => {
                 eprintln!("--connect needs a URL, e.g. --connect http://127.0.0.1:8788");
                 std::process::exit(2);

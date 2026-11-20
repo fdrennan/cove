@@ -861,10 +861,12 @@ dependencies = [
 
 [[package]]
 name = "cove"
-version = "0.1.8"
+version = "0.1.27"
 dependencies = [
+ "crc32fast",
  "eframe",
  "ehttp",
+ "flate2",
  "gtk",
  "image",
  "js-sys",

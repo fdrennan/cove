@@ -148,6 +148,10 @@ def run(args):
             # and its generic CSS ("box-sizing: border-box;") matched RStudio's.
             if "/vendor/" in rel:
                 continue
+            # Tracked but deleted and not committed yet: nothing of it ships
+            # (paper.rs, 2026-11-14, held the release with FileNotFoundError).
+            if not os.path.exists(os.path.join(COVE, rel)):
+                continue
             for n, line in enumerate(open(os.path.join(COVE, rel), encoding="utf-8", errors="ignore"), 1):
                 l = norm(line)
                 if len(l) < 20:

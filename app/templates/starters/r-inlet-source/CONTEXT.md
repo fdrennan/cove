@@ -29,6 +29,8 @@ saved (500 MB, its own repository); `./source.sh` and recipe/ rebuild it.
 - .cove/ - how it is checked, started and stopped; run.sh serves the build
   you made, or the stack's Inlet before you have one
 
+Logging: run.sh writes its start line in the one format across languages (r/log.r for R code here: log$log_info; LOG_LEVEL=DEBUG for more); rserver's own logs stay its own.
+
 ## Where things live
 - Your build: ~/.local/easybuild/<this host> (delete it to go back)
 - The RStudio tarball: ~/.local/easybuild/sources/i/Inlet (shared with

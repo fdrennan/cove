@@ -18,6 +18,7 @@
 # is stable only for r <= 1/4 (von Neumann: the checkerboard mode is
 # multiplied by 1 - 8r each step, which leaves [-1, 1] once r > 1/4).
 
+include(joinpath(@__DIR__, "log.jl"))
 using HTTP, JSON3
 
 const ROOT = @__DIR__
@@ -149,7 +150,7 @@ function calibrate!()
             minimum(@elapsed(advance!(u, cell, 0.2, true, AMBIENT, 4HALO; ntasks = nt)) for _ in 1:3) => nt
         end
         TASKS[n] = last(minimum(best))
-        println("Heat Lab: $(n)² grid, ", join(["$(nt) task$(nt == 1 ? "" : "s") $(round(t / 4HALO * 1e6; digits = 1)) µs/step" for (t, nt) in best], ", "), " -> $(TASKS[n])")
+        Log.info("$(n)² grid: " * join(["$(nt) task$(nt == 1 ? "" : "s") $(round(t / 4HALO * 1e6; digits = 1)) µs/step" for (t, nt) in best], ", ") * " -> $(TASKS[n])")
     end
 end
 
@@ -428,7 +429,7 @@ function guarded(handler)
         catch err
             # A missing field (KeyError) is the caller's mistake too, not the server's.
             bad = err isa ArgumentError || err isa KeyError
-            bad || @error "request failed" exception = (err, catch_backtrace())
+            bad || Log.error("$(req.method) $(req.target) failed: $(message(err))")
             json((error = message(err),); status = bad ? 400 : 500)
         end
     end
@@ -436,6 +437,7 @@ end
 
 const app = guarded(router)
 
+const WARM = time()
 # Warm the compiler in-process (one step, one check) so the first visitor does
 # not wait, and log the check so a broken kernel shows in the log at start.
 app(HTTP.Request("POST", "/api/step", [], JSON3.write((sid = "warmup00", grid = 128, steps = 2,
@@ -443,9 +445,26 @@ app(HTTP.Request("POST", "/api/step", [], JSON3.write((sid = "warmup00", grid = 
 lock(SIMS_LOCK) do; empty!(SIMS) end
 calibrate!()
 let c = check(97.0, 128)
-    println("Heat Lab check: variance vs var0 + 2·alpha·t, worst relative error $(round(c.max_rel_err; sigdigits = 3)) ($(c.pass ? "pass" : "FAIL"))")
+    (c.pass ? Log.success : Log.error)("check: variance vs var0 + 2·alpha·t, worst relative error $(round(c.max_rel_err; sigdigits = 3)) ($(c.pass ? "pass" : "FAIL"))")
 end
 
-println("Heat Lab listening on http://127.0.0.1:$PORT with $(Threads.nthreads()) threads")
-flush(stdout)
-HTTP.serve(app, "127.0.0.1", PORT)
+Log.info("compiled the handlers in $(round(time() - WARM; digits = 1)) s")
+
+# One log line per request. /api/step runs every animation frame,
+# so its lines are DEBUG (LOG_LEVEL=DEBUG shows them).
+function logged(handler)
+    return function (req)
+        t0 = time()
+        res = handler(req)
+        path = first(split(req.target, '?'))
+        if res.status < 400 && (path == "/api/step")
+            Log.debug("$(req.method) $path $(res.status) $(round(Int, (time() - t0) * 1000)) ms")
+        else
+            Log.request(req, res.status, t0)
+        end
+        res
+    end
+end
+
+Log.info("__HOST__: Heat Lab serving on 127.0.0.1:$PORT with $(Threads.nthreads()) threads")
+HTTP.serve(logged(app), "127.0.0.1", PORT)

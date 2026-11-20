@@ -19,13 +19,15 @@ the network) and a tile for it.
 - app.env, build.sh - a module app (no port of its own); build.sh checks that
   module.r parses
 
+Logging: r/log.r (log$log_info, log_fn in every ui_/server_), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 Base R and Shiny only, from the stack's R; no dataset, key or database.
 Linux's /proc/stat, /proc/loadavg and /proc/meminfo; on a machine without
 /proc the page says so.
 
 ## Auth
-Login-gated.
+You and the people you share it with (Project › Access sets who; a new site is never public).
 
 ## Open
 - (none logged)

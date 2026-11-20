@@ -1,6 +1,7 @@
 //! __HOST__: Network Observatory, live network metrics from /proc and /sys.
 //! `app serve <port>` serves on 127.0.0.1.
 
+mod log;
 mod probe;
 mod proc;
 mod sampler;

@@ -104,6 +104,16 @@ else
   echo "▸ shipping without a bundled CLI"
 fi
 
+# The browser UI, for `cove serve` (server.rs default_web: <prefix>/share/cove/web):
+# "In my browser" on this computer, and a person's own server, both run it.
+# Built by onprem/run.sh on every release (dist/web); a tarball without it
+# could only be a desktop window.
+if [[ -f "$here/dist/web/index.html" ]]; then
+  mkdir -p "$stage/share/cove/web"
+  cp -r "$here/dist/web/." "$stage/share/cove/web/"
+else
+  echo "▸ no dist/web/index.html - this build has no browser UI for cove serve" >&2
+fi
 install -Dm644 "$here/packaging/linux/io.ndexr.cove.desktop" "$stage/share/applications/io.ndexr.cove.desktop"
 install -Dm644 "$here/packaging/linux/io.ndexr.cove.svg" "$stage/share/icons/hicolor/scalable/apps/io.ndexr.cove.svg"
 install -Dm755 "$here/packaging/linux/install.sh" "$stage/install.sh"

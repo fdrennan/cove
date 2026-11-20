@@ -98,6 +98,9 @@ struct State {
     /// Turns sent and not yet given a run id ("+N" keys stand in until then).
     starting: usize,
     costs: HashMap<String, f64>,
+    /// Runs paid by the person's own plan: their cost is what the API would
+    /// have charged, shown as such and never added to money spent (#736).
+    subs: HashSet<String>,
     /// Code the agent gave while auto-run was on, for the consoles to take.
     outbox: Vec<(Lang, String)>,
     /// A turn's stand-in key ("+N") to the run id it was given, so the
@@ -198,6 +201,8 @@ fn with_console(prompt: &str, tail: &str) -> String {
          This project builds, starts and stops with .cove/build.sh, .cove/up.sh and .cove/down.sh, run from its root (.cove/app.env names its language and port; \
          .cove/<language>/ holds each type's build.sh, env.sh and run.sh; APP-CONTRACT.md) - run them when it makes sense; Cove's Build / Up / Down buttons run the same files. \
          Keep Cove's scripts in .cove/, never at the project's root: the root is the person's app. \
+         Log through the project's own helper (r/log.r, log.py, log.js, log.jl or src/log.rs; one line format in every language) rather than print: \
+         a start line, one line per request or session, each error, and log_fn() first in every R ui_*/server_*. The log is .cove/run/app.log, Cove's Logs tab. \
          Cove's App pane reloads when the project's files change, and nothing under .cove/ counts: for a change that takes several saves, build it in .cove/stage/ and move it into place when it is ready, \
          or create .cove/reload and App reloads only when you touch that file.\n\n```text\n{tail}\n```"
     )
@@ -284,6 +289,10 @@ pub struct AgentPane {
     open_tools: HashSet<(String, usize)>,
     /// Speak instead of typing (voice.rs).
     mic: crate::voice::Mic,
+    /// What the mic dictated into the box, as it came: shown in its own ink
+    /// and sent tagged, so the agent knows what was said and what was typed
+    /// (spoken.rs).
+    spoken: Vec<String>,
     /// Shown in Go: the composer's mic and Send drawn big (ide.rs go_agent).
     pub big: bool,
     /// Go's Listen button beside the mic (mode, enabled, hover), set by ide.rs
@@ -295,12 +304,21 @@ pub struct AgentPane {
     /// until the next piece while Listen is on.
     pub listen_secs: u32,
     pub listen_left: Option<u32>,
+    /// Why the last Paste (paste.rs) got nothing, until the next one works.
+    paste_err: Option<String>,
     /// Which agent the composer talks to, drawn beside the mic (ide.rs sets
     /// it when one agent is shown at a time; None side by side, where both
     /// are on screen).
     pub scope: Option<Scope>,
     /// The execution bar folded to its one-line summary (exec_bar).
     exec_folded: bool,
+    /// Only the composer: the thread, its status rows and what it works from
+    /// put away, the domain/Exec switch at the top of the pane (operator,
+    /// 2026-11-17: "collapse the output of the agents section so we only see
+    /// the panel for submissions").
+    pub thread_folded: bool,
+    /// The pane was too short for a thread last frame (it folds by itself).
+    short_pane: bool,
     /// The scope a click beside the mic chose: true = Exec (ide.rs takes it).
     pub scope_pick: Option<bool>,
     /// Where the thread showed last frame and how far it was scrolled: a
@@ -323,6 +341,16 @@ pub struct AgentPane {
     /// "this site", and the namespace its widgets' ids live in - so the
     /// Agents and Exec panes can both be on screen without sharing an input box.
     pub scope_label: Option<String>,
+    /// What a message is about (operator, 2026-11-17: Files' own agent
+    /// folded in here - "consolidating all the options in agents and files
+    /// ... in a single interface"): 0 the whole site, 1 the file open in
+    /// Files, 2 the folder its tree is in. ide.rs sets the file and folder
+    /// every frame; Exec ignores it.
+    pub focus: u8,
+    pub focus_file: Option<String>,
+    pub focus_folder: String,
+    /// A file-focused message was sent: ide.rs saves the open file first.
+    pub wants_save: bool,
     /// The host whose empty thread took the keyboard, so it takes it once.
     focused_for: String,
 }
@@ -380,14 +408,18 @@ impl Default for AgentPane {
             reveal: HashMap::new(),
             open_tools: HashSet::new(),
             mic: Default::default(),
+            spoken: Vec::new(),
             big: false,
             listen: None,
             listen_clicked: false,
             listen_secs: 60,
             listen_left: None,
+            paste_err: None,
             scope: None,
             scope_pick: None,
             exec_folded: false,
+            thread_folded: false,
+            short_pane: false,
             thread_rect: egui::Rect::NOTHING,
             thread_off: 0.0,
             know: Default::default(),
@@ -395,6 +427,10 @@ impl Default for AgentPane {
             open: Vec::new(),
             attached: Default::default(),
             scope_label: None,
+            focus: 0,
+            focus_file: None,
+            focus_folder: String::new(),
+            wants_save: false,
             focused_for: String::new(),
         }
     }
@@ -433,6 +469,20 @@ impl AgentPane {
     pub fn busy(&self) -> bool {
         let s = self.st.lock().unwrap();
         s.starting > 0 || !s.live.is_empty()
+    }
+
+    /// What a run going now is doing, in a few words, for the folded pane:
+    /// "editing r/home.r", "working · Bash", "thinking…", "starting…".
+    fn doing(&self) -> Option<String> {
+        let s = self.st.lock().unwrap();
+        if s.live.is_empty() {
+            return (s.starting > 0).then(|| "starting…".to_owned());
+        }
+        let t = s.turns.iter().rev().find(|t| !t.done && s.live.contains_key(&t.id))?;
+        Some(t.events.iter().rev().find(|e| e.kind == "tool").map_or("thinking…".to_owned(), |e| match edit_target(&e.text) {
+            Some(f) => format!("editing {}", f.rsplitn(3, '/').take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/")),
+            None => format!("working · {}", e.text.split(" · ").next().unwrap_or("")),
+        }))
     }
 
     /// Type `text` into the prompt for the person to read and send.
@@ -501,6 +551,9 @@ impl AgentPane {
             if let Some(cost) = c.cost {
                 s.costs.insert(id.clone(), cost);
             }
+            if c.subscription {
+                s.subs.insert(id.clone());
+            }
             if auto.load(Ordering::Relaxed) {
                 for e in c.events.iter().filter(|e| e.kind == "text") {
                     for (l, code) in runnable(&e.text) {
@@ -535,7 +588,9 @@ impl AgentPane {
         let typed = std::mem::replace(&mut self.input, text.to_owned());
         let files = std::mem::take(&mut *self.attached.lock().unwrap());
         let mine = model.map(|m| std::mem::replace(&mut self.model, m.to_owned()));
+        let dictated = std::mem::take(&mut self.spoken);
         self.send(backend, ctx, domain, console_tail);
+        self.spoken = dictated;
         if let Some(m) = mine {
             self.model = m;
         }
@@ -570,8 +625,12 @@ impl AgentPane {
             return;
         }
         let typed = if typed.is_empty() { "Here are some files for this domain.".to_owned() } else { typed };
+        // What the mic dictated into the box goes tagged, with a note first,
+        // so the agent reads dictation as dictation (spoken.rs). The pieces
+        // are spent: the next message starts typed.
+        let typed = crate::spoken::mark(&typed, &std::mem::take(&mut self.spoken));
         let names: Vec<&str> = paths.iter().map(|p| p.rsplit('/').next().unwrap_or(p)).collect();
-        let prompt = with_attachments(&typed, &paths);
+        let prompt = with_attachments(&crate::spoken::for_agent(&typed), &paths);
         let prompt = if self.share_console && !console_tail.trim().is_empty() { with_console(&prompt, console_tail) } else { prompt };
         // The bubble shows what was typed and the files' names.
         let shown = if names.is_empty() { typed } else { format!("{typed}\n\nAttached: {}", names.join(", ")) };
@@ -594,7 +653,18 @@ impl AgentPane {
         } else {
             (prompt, self.model.clone(), self.mode.to_owned())
         };
-        backend.query(Query::AgentRun { domain: domain.to_owned(), prompt, model, cwd: None, mode: Some(mode) }, ctx, move |r: Result<String, String>| {
+        // About a file or a folder (the Focus menu): narrowed as Files' asks
+        // were - the prompt says what may change, the run starts there.
+        let site = self.scope_label.is_none() || self.scope.as_ref().is_none_or(|sc| !sc.exec_on);
+        let (prompt, cwd) = match (self.focus, &self.focus_file) {
+            (1, Some(f)) if site => {
+                self.wants_save = true;
+                (ask_prompt(domain, Some(f), &self.focus_folder, 0, &prompt), Some(folder_of(f).to_owned()))
+            }
+            (2, _) if site && !self.focus_folder.is_empty() => (ask_prompt(domain, None, &self.focus_folder, 1, &prompt), Some(self.focus_folder.clone())),
+            _ => (prompt, None),
+        };
+        backend.query(Query::AgentRun { domain: domain.to_owned(), prompt, model, cwd, mode: Some(mode) }, ctx, move |r: Result<String, String>| {
             let mut s = st.lock().unwrap();
             s.starting = s.starting.saturating_sub(1);
             let ok = r.as_ref().ok().cloned();
@@ -651,7 +721,9 @@ impl AgentPane {
     /// console's tail goes with it when shared). Returns the turn's key.
     pub fn ask(&mut self, backend: &Backend, ctx: &egui::Context, domain: &str, text: &str, console_tail: &str) -> String {
         let draft = std::mem::replace(&mut self.input, text.to_owned());
+        let dictated = std::mem::take(&mut self.spoken);
         self.send(backend, ctx, domain, console_tail);
+        self.spoken = dictated;
         self.input = draft;
         format!("+{}", self.sent)
     }
@@ -687,7 +759,13 @@ impl AgentPane {
         self.poll(backend, ctx);
         let (live, starting, loading, spent) = {
             let s = self.st.lock().unwrap();
-            let spent: f64 = s.turns.iter().filter_map(|t| s.costs.get(&t.id)).sum();
+            let (mut api, mut plan) = (0.0, 0.0);
+            for t in &s.turns {
+                if let Some(c) = s.costs.get(&t.id) {
+                    *if s.subs.contains(&t.id) { &mut plan } else { &mut api } += c;
+                }
+            }
+            let spent = (api, plan);
             (s.live.keys().cloned().collect::<Vec<_>>(), s.starting, s.loading, spent)
         };
         let going = live.len() + starting;
@@ -698,12 +776,11 @@ impl AgentPane {
         // mobile"): the strip keeps the model, what is running and Stop; the
         // switches move into a ⋯ menu instead of drawing over each other.
         let narrow = ui.available_width() < 640.0;
-        // Two rows, not one (a person's request, 2026-10-18: "agent,
-        // <their domain>, opus-subscription-auto, and then console,
-        // one-running, stop-all, and the checkbox there, that's all kind of
-        // muddled together and it's hard to read"). The first says whose
-        // thread this is and what is going on in it; the second is how the
-        // next message goes out.
+        // One row (operator, 2026-11-17: "the this site box of two rows of
+        // mainly nothing is wildly wasteful of space"), grouped so it does not
+        // read as muddled (a person's request, 2026-10-18, which had split it
+        // in two): whose thread and how the next message goes out on the
+        // left, a divider, what is going on and the actions on the right.
         let mut auto = self.auto_run.load(Ordering::Relaxed);
         let switches = |ui: &mut egui::Ui, share: &mut bool, auto: &mut bool| {
             ui.checkbox(share, RichText::new("see console").size(11.5))
@@ -716,11 +793,20 @@ impl AgentPane {
         // refresh ... I'm not entirely sure that whole row is also necessary on
         // mobile"): idle, the thread has the room. The console's switches stay
         // at their saved values; the thread reloads by itself.
-        if narrow {
+        // Folded by hand, or a pane too short to read a thread in: then only
+        // the composer, its site/Exec row at the top - a short Agents window
+        // had cut the composer off at its bottom (operator's screenshot,
+        // 2026-11-17: "only show the cove/exec row and the text box ... we
+        // want to look at the files as they move and the app").
+        let short = ui.available_height() < 240.0;
+        let folded = self.thread_folded || short;
+        self.short_pane = short;
+        if folded {
+        } else if narrow {
             if !live.is_empty() || going > 0 {
                 theme::strip(ui, theme::TOOL_H, theme::bg(), |ui| {
                     ui.add_space(6.0);
-                    ui.label(RichText::new(format!("● {going} running")).size(12.0).color(theme::warn()));
+                    theme::state_mark(ui, theme::State::Active, &format!("{going} running"));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(4.0);
                         if !live.is_empty() {
@@ -737,9 +823,17 @@ impl AgentPane {
             // domain name"). The host stays on hover.
             let head = self.scope_label.clone().unwrap_or_else(|| "this site".to_owned());
             ui.add(egui::Label::new(RichText::new(head).monospace().size(11.5).strong().color(theme::text_strong())).truncate()).on_hover_text(format!("the agent for {}", d.host));
+            if !narrow {
+                theme::tool_sep(ui);
+                ui.spacing_mut().item_spacing.x = 8.0;
+                switches(ui, &mut self.share_console, &mut auto);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
                 ui.spacing_mut().item_spacing.x = 10.0;
+                if !narrow && theme::tool(ui, if self.split { "Console ✓" } else { "Console" }, "the R console under the agent - watch what it runs").clicked() {
+                    self.split = !self.split;
+                }
                 // A phone keeps one row (operator, 2026-11-07: a second row
                 // held only the ⋯ menu - "poor use of white space"): the
                 // switches and the console go into the ⋯ at this row's end.
@@ -756,31 +850,25 @@ impl AgentPane {
                 ui.label(RichText::new("?").size(12.0).color(theme::hush())).on_hover_ui(trust_legend);
                 reload = theme::tool(ui, "⟳", "load the thread again (turns from the in-app chat too)").clicked();
                 if !live.is_empty() {
-                    stop_all = theme::tool(ui, if narrow { "■ Stop" } else { "■ Stop all" }, "stop every run going in this thread").clicked();
+                    stop_all = theme::tool(ui, if narrow { "■ Stop runs" } else { "■ Stop this site's runs" }, "stops every agent run going in this site's thread - not other sites, not Exec, and not the app").clicked();
                 }
                 if going > 0 {
-                    ui.label(RichText::new(format!("● {going} running")).size(11.0).color(theme::warn()));
+                    theme::state_mark(ui, theme::State::Active, &format!("{going} running"));
                 } else {
                     ui.label(RichText::new("idle").size(11.0).color(theme::hush()));
                 }
-                if spent > 0.0 && !narrow {
-                    ui.label(RichText::new(format!("${spent:.2}")).monospace().size(11.0).color(theme::hush())).on_hover_text("what the turns shown here cost");
+                if !narrow {
+                    let (api, plan) = spent;
+                    if plan > 0.0 {
+                        ui.label(RichText::new(format!("≈${plan:.2} on your plan")).monospace().size(11.0).color(theme::hush()))
+                            .on_hover_text("what the turns shown here that your plan paid for would have cost on the API - not money spent");
+                    }
+                    if api > 0.0 {
+                        ui.label(RichText::new(format!("${api:.2}")).monospace().size(11.0).color(theme::hush())).on_hover_text("what the turns shown here billed to the API cost");
+                    }
                 }
             });
         });
-        }
-        if !narrow {
-            theme::strip(ui, theme::TOOL_H, theme::bg(), |ui| {
-                ui.add_space(6.0);
-                ui.spacing_mut().item_spacing.x = 8.0;
-                switches(ui, &mut self.share_console, &mut auto);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(4.0);
-                    if theme::tool(ui, if self.split { "Console ✓" } else { "Console" }, "the R console under the agent - watch what it runs").clicked() {
-                        self.split = !self.split;
-                    }
-                });
-            });
         }
         self.auto_run.store(auto, Ordering::Relaxed);
         if stop_all {
@@ -800,7 +888,7 @@ impl AgentPane {
         let (mut listen, mut listen_stop): (Option<(String, String)>, bool) = (None, false);
         {
             let k = self.know.lock().unwrap();
-            if k.loaded_for == d.host {
+            if k.loaded_for == d.host && !folded {
                 know_panel(ui, &k, open, &mut toggle, &mut self.open, &mut run);
             }
         }
@@ -810,6 +898,7 @@ impl AgentPane {
 
         let input_id = egui::Id::new(("agent-input", self.ns()));
         let out_h = (ui.available_height() - self.composer_h - 12.0).max(60.0);
+        if !folded {
         egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
             ui.set_height(out_h);
             // Selecting text past the top or bottom of the thread scrolls it,
@@ -884,7 +973,7 @@ impl AgentPane {
                                 resend = Some(shown_prompt(&t.prompt).to_owned());
                             }
                             if theme::tool(ui, "Copy", "copy this message").clicked() {
-                                ui.ctx().copy_text(shown_prompt(&t.prompt).to_owned());
+                                ui.ctx().copy_text(crate::spoken::plain(shown_prompt(&t.prompt)));
                             }
                             if t.at > 0 {
                                 let (short, full) = sent_at(t.at, crate::software::now_secs());
@@ -962,7 +1051,7 @@ impl AgentPane {
                                     egui::Frame::new().fill(theme::alt().gamma_multiply(0.12)).stroke(egui::Stroke::new(1.0, theme::alt().gamma_multiply(0.5))).corner_radius(6).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
                                         ui.set_width(ui.available_width());
                                         ui.label(RichText::new(&ev[k].text).size(12.5).color(theme::alt()));
-                                        crate::setup::connect_button(ui, &ev[k].text);
+                                        crate::setup::connect_button(ui, &ev[k].text, t.at == 0 && t.id.starts_with('+') || t.at >= crate::setup::session_start());
                                     });
                                 }
                                 _ => {
@@ -1039,8 +1128,13 @@ impl AgentPane {
                                     }
                                 }
                                 if let Some(c) = s.costs.get(&t.id) {
+                                    let (text, tip) = if s.subs.contains(&t.id) {
+                                        (format!("≈${c:.2} on your plan"), "what this turn would have cost on the API; your plan paid for it")
+                                    } else {
+                                        (format!("${c:.2}"), "what this turn cost, billed to the API")
+                                    };
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(format!("${c:.2}")).monospace().size(10.5).color(theme::hush())).on_hover_text("what this turn cost");
+                                        ui.label(RichText::new(text).monospace().size(10.5).color(theme::hush())).on_hover_text(tip);
                                     });
                                 }
                             }
@@ -1052,6 +1146,7 @@ impl AgentPane {
             self.thread_rect = out.inner_rect;
             self.thread_off = out.state.offset.y;
         });
+        }
 
         if let Some(id) = stop {
             self.stop(backend, ctx, id);
@@ -1073,7 +1168,20 @@ impl AgentPane {
             });
         }
         let composer_top = ui.cursor().top();
-        if let Some(e) = self.mic.error() {
+        if let Some(r) = crate::paste::take(&format!("agent-{}", self.ns())) {
+            match r {
+                Ok(t) if !t.is_empty() => {
+                    if !self.input.is_empty() && !self.input.ends_with(char::is_whitespace) {
+                        self.input.push(' ');
+                    }
+                    self.input.push_str(&t);
+                    self.paste_err = None;
+                }
+                Ok(_) => self.paste_err = Some("Paste: the clipboard has no text".into()),
+                Err(e) => self.paste_err = Some(format!("Paste: {e}")),
+            }
+        }
+        if let Some(e) = self.mic.error().or(self.paste_err.as_deref()) {
             ui.label(RichText::new(e).size(11.0).color(theme::alt()));
         }
         // The composer, one rounded box (operator, 2026-10-15: "could be
@@ -1105,16 +1213,44 @@ impl AgentPane {
                     (false, true) => "Send another - it runs alongside the ones working · Shift+Enter for a new line",
                     (false, false) => "Tell the agent what to build · Enter sends · Shift+Enter for a new line",
                 };
-                let box_r = ui.add(
-                    egui::TextEdit::multiline(&mut self.input)
-                        .id(input_id)
-                        .frame(egui::Frame::NONE)
-                        .desired_rows(if narrow { 1 } else { 2 })
-                        .desired_width(ui.available_width())
-                        .font(egui::FontId::proportional(13.5))
-                        .return_key(Some(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, Key::Enter)))
-                        .hint_text(RichText::new(hint).color(theme::hush())),
-                );
+                // Long text scrolls inside the box, which stops growing at
+                // about 40% of the pane: a pasted recipe grew it past the
+                // screen and Send went with it, with nothing left to scroll
+                // (operator, 2026-11-18: "the submit button disappeared and I
+                // couldn't scroll or do anything").
+                let max_h = (ui.clip_rect().height() * 0.4).clamp(64.0, 360.0);
+                let input = &mut self.input;
+                // Dictated words in their own ink and italic, typed ones in
+                // the strong ink (operator, 2026-11-19: "a clearer color on
+                // the screen for transcribed audio or typed in").
+                let spoken_now = self.spoken.clone();
+                let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+                    let job = crate::spoken::composer_job(text.as_str(), &spoken_now, &egui::FontId::proportional(13.5), theme::text_strong(), theme::net(), wrap);
+                    crate::spoken::galley(ui, job)
+                };
+                let box_r = egui::ScrollArea::vertical()
+                    .id_salt(("agent-input", input_id))
+                    .max_height(max_h)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(input)
+                                .id(input_id)
+                                .layouter(&mut layouter)
+                                .frame(egui::Frame::NONE)
+                                .desired_rows(if narrow { 1 } else { 2 })
+                                .desired_width(ui.available_width())
+                                .font(egui::FontId::proportional(13.5))
+                                .return_key(Some(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, Key::Enter)))
+                                .hint_text(RichText::new(hint).color(theme::hush())),
+                        )
+                    })
+                    .inner;
+                // How long it is, once it is long enough to scroll.
+                let lines = self.input.lines().count();
+                if lines > 12 {
+                    ui.label(RichText::new(format!("{lines} lines · {} characters", self.input.chars().count())).size(11.0).color(theme::hush()));
+                }
                 // An empty thread is a question waiting: the cursor is in the
                 // answer. Not on a phone, where it would throw up the keyboard
                 // over the question.
@@ -1141,6 +1277,9 @@ impl AgentPane {
                     let Self { mic, input, .. } = self;
                     mic.keep = Some(d.path.clone());
                     mic.ui_sized(ui, ctx, backend, input, size);
+                    if let Some(t) = mic.take_last() {
+                        self.spoken.push(t);
+                    }
                     // Listen / Act as I talk, the one icon right of the mic.
                     if let Some((mode, enabled, tip)) = &self.listen {
                         let r = crate::voice::listen_button(ui, *mode, *enabled, tip, size);
@@ -1149,6 +1288,14 @@ impl AgentPane {
                         }
                     }
                     crate::voice::speak_button(ui, size);
+                    // Paste on a touch screen, where the browser's own Paste
+                    // never comes up over Cove's box (paste.rs).
+                    if crate::paste::wanted() {
+                        let r = ui.add(egui::Button::new(RichText::new("Paste").size(13.0)).min_size(egui::vec2(0.0, size)));
+                        if !ctx.any_popup_open() {
+                            crate::paste::place(ctx, &format!("agent-{}", self.ns()), r.rect);
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let r = crate::icons::button(ui, crate::icons::Icon::Send, size, theme::primary(), theme::bg(), ready && !uploading);
                         if r.on_hover_text(if uploading { "waiting for the files to upload" } else { "send · Enter" }).clicked() {
@@ -1232,6 +1379,34 @@ impl AgentPane {
                     self.scope_pick = Some(all);
                 }
             }
+            // What it is about: the site, the file open in Files, or the
+            // folder its tree is in - Files' own composer, folded in here.
+            if self.scope.as_ref().is_none_or(|sc| !sc.exec_on) {
+                let short = |p: &str| p.rsplit('/').next().unwrap_or(p).to_owned();
+                if self.focus == 1 && self.focus_file.is_none() {
+                    self.focus = 0;
+                }
+                let shown = match self.focus {
+                    1 => format!("file · {}", short(self.focus_file.as_deref().unwrap_or(""))),
+                    2 => format!("folder · {}/", short(self.focus_folder.trim_end_matches('/'))),
+                    _ => "whole site".to_owned(),
+                };
+                egui::ComboBox::from_id_salt(("agent-focus", self.ns()))
+                    .width(if narrow { 84.0 } else { 150.0 })
+                    .selected_text(RichText::new(shown).size(11.5))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.focus, 0, "whole site").on_hover_text("the agent may work anywhere in the project");
+                        if let Some(f) = self.focus_file.clone() {
+                            ui.selectable_value(&mut self.focus, 1, format!("file · {}", short(&f))).on_hover_text(format!("change only {f} - the file open in Files"));
+                        }
+                        if !self.focus_folder.is_empty() {
+                            let d = self.focus_folder.clone();
+                            ui.selectable_value(&mut self.focus, 2, format!("folder · {}/", short(d.trim_end_matches('/')))).on_hover_text(format!("read and edit only in {d} - the folder Files shows"));
+                        }
+                    })
+                    .response
+                    .on_hover_text("what this message is about");
+            }
             egui::ComboBox::from_id_salt(("agent-model", self.ns()))
                 .width(if narrow { 84.0 } else { 200.0 })
                 .height(480.0)
@@ -1253,6 +1428,21 @@ impl AgentPane {
             }
             if ui.add(egui::Button::new(RichText::new("▴").size(13.0).color(theme::hush())).frame(false)).on_hover_text("fold to one line").clicked() {
                 self.exec_folded = true;
+            }
+            // The thread put away or brought back; while away, a run going
+            // still shows here.
+            if self.thread_folded || self.short_pane {
+                if let Some(w) = self.doing() {
+                    theme::state_mark(ui, theme::State::Active, &w);
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                }
+            }
+            // A short pane has no room for the thread: no switch to offer.
+            if !self.short_pane {
+                let (word, tip) = if self.thread_folded { ("Show thread", "the replies and what it works from, back above") } else { ("Hide thread", "only this panel: who it goes to and your message - the replies put away") };
+                if theme::tool(ui, word, tip).clicked() {
+                    self.thread_folded = !self.thread_folded;
+                }
             }
         });
     }
@@ -1696,7 +1886,17 @@ fn thumb_size(tex: &egui::TextureHandle, w: f32, h: f32) -> egui::Vec2 {
 /// carries that after a rule (with_console) - it is for the agent, not the bubble.
 fn shown_prompt(p: &str) -> &str {
     let p = p.split("\n\n---\nI am working in ").next().unwrap_or(p);
-    p.split("\n\nAttached to this message (uploaded into").next().unwrap_or(p).trim()
+    let p = p.split("\n\nAttached to this message (uploaded into").next().unwrap_or(p).trim();
+    // The notes that tell the agent where words came from are for it, not the
+    // bubble: the spoken pieces' ink says it there. Listen's own note opens a
+    // piece it tagged whole.
+    let p = p.strip_prefix(crate::spoken::NOTE).map(str::trim_start).unwrap_or(p);
+    if p.starts_with('(') && p.contains(crate::spoken::OPEN) && (p.starts_with("(Said aloud in Cove") || p.starts_with("(Presenting: said aloud")) {
+        if let Some((_, rest)) = p.split_once("\n\n") {
+            return rest.trim_start();
+        }
+    }
+    p
 }
 
 /// `other`: sent by someone else (a site admin's Exec), in amber so it never
@@ -1708,7 +1908,7 @@ fn user_bubble_from(ui: &mut egui::Ui, w: f32, text: &str, stoppable: bool, othe
     // Sized to its words: a nested right-to-left layout inside the bubble
     // stretched it to the whole height left, a tall empty box on a phone.
     let font = egui::FontId::proportional(13.0);
-    let text_w = ui.fonts_mut(|f| f.layout(text.to_owned(), font.clone(), theme::text_strong(), max - 24.0)).size().x;
+    let text_w = ui.fonts_mut(|f| f.layout(crate::spoken::plain(text), font.clone(), theme::text_strong(), max - 24.0)).size().x;
     let inner = text_w.max(if stoppable { 64.0 } else { 0.0 });
     ui.horizontal_top(|ui| {
         ui.add_space((w - inner - 22.0).max(0.0));
@@ -1722,7 +1922,11 @@ fn user_bubble_from(ui: &mut egui::Ui, w: f32, text: &str, stoppable: bool, othe
                 ui.vertical(|ui| {
                     // The person's domains in what they typed are links into
                     // Cove, as in a reply (md.rs typed).
-                    crate::md::typed(ui, text, font.size, theme::text_strong(), max - 24.0);
+                    // Dictated pieces in the cool ink, typed ones in the strong
+                    // one, links live in both (spoken.rs).
+                    let segs = crate::spoken::segments(text);
+                    let parts: Vec<(&str, egui::Color32)> = segs.iter().map(|(said, t)| (*t, if *said { theme::net() } else { theme::text_strong() })).collect();
+                    crate::md::typed_parts(ui, &parts, font.size, max - 24.0);
                     if stoppable {
                         stop = theme::tool(ui, "■ stop", "stop this run").clicked();
                     }
@@ -1795,84 +1999,8 @@ fn tool_group(ui: &mut egui::Ui, tools: &[AgentEvent], open: &mut bool, live: bo
     clicked
 }
 
-// ── a file ask: the agent on one file, from the file itself ─────────────────
+// ── a message about one file or folder (the Agents Focus menu) ─────────────
 
-/// How far a file ask may reach (operator, 2026-10-14: "run file only or depth
-/// of file reach commands"): the file alone, or the folder the Files tree is
-/// in and N levels below it (request #166, 2026-11-01: "the context (file,
-/// folder, folder +1) could match how far level down we are in the file panel").
-pub const REACH: [(u8, &str); 4] = [(0, "file"), (1, "folder"), (2, "folder + 1"), (3, "folder + 2")];
-
-/// The reach that takes in `file` from the tree's `folder`: the folder itself
-/// when the file is in it, + 1 when it is one level down, and so on; the
-/// folder alone when the file is elsewhere.
-pub fn reach_for(folder: &str, file: Option<&str>) -> u8 {
-    let Some(f) = file else { return 1 };
-    let dir = folder_of(f);
-    let base = folder.trim_end_matches('/');
-    let below = if dir == base { Some(0) } else { dir.strip_prefix(base).and_then(|r| r.strip_prefix('/')).map(|r| r.split('/').count()) };
-    below.map_or(1, |n| (n as u8 + 1).min(3))
-}
-
-/// A reach as the picker shows it, with the place it names.
-fn reach_label(reach: u8, folder: &str, file: Option<&str>) -> String {
-    let name = |p: &str| p.trim_end_matches('/').rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("/").to_owned();
-    match reach {
-        0 => format!("file · {}", file.map(name).unwrap_or_default()),
-        1 => format!("folder · {}/", name(folder)),
-        n => format!("{}/ + {}", name(folder), n - 1),
-    }
-}
-
-#[derive(Default)]
-struct AskState {
-    /// The file the run is about.
-    path: String,
-    prompt: String,
-    events: Vec<AgentEvent>,
-    running: Option<String>,
-    offset: u64,
-    starting: bool,
-    cost: Option<f64>,
-    /// When the run ended (ui time), so the file is read once more after it.
-    ended: Option<f64>,
-}
-
-/// The bar under an open file: say what you want in it, in a sentence, and
-/// watch the file change as the agent works. The same agent and machinery as
-/// the Agents tab (AgentRun / AgentPoll, the domain's thread), run at the
-/// file's folder and told how far it may reach.
-pub struct FileAsk {
-    st: Arc<Mutex<AskState>>,
-    pub input: String,
-    pub reach: u8,
-    model: String,
-    asked: f64,
-    inflight: Arc<AtomicBool>,
-    refreshed: f64,
-    mic: crate::voice::Mic,
-    /// The tree folder the reach was last set for: moving the tree sets it again.
-    followed: String,
-    /// How tall the thread above the ask box is: dragged with the handle on
-    /// the bar's top edge (operator, 2026-10-16: "want to be able to drag the
-    /// agent section in files under the file up at times").
-    thread_h: f32,
-    /// Listen beside the mic, as on the Agents tab and in Go (ide.rs
-    /// listen_frame sets it every frame); a click comes back as
-    /// `listen_clicked`.
-    pub listen: Option<(crate::voice::ListenMode, bool, String)>,
-    pub listen_clicked: bool,
-}
-
-/// The thread's height until it is dragged, and the least it may be.
-const ASK_THREAD_H: f32 = 110.0;
-
-impl Default for FileAsk {
-    fn default() -> Self {
-        // Quick asks: Sonnet on the subscription unless picked otherwise.
-        FileAsk { st: Default::default(), input: String::new(), reach: 0, model: MODELS[1].0.into(), asked: f64::NEG_INFINITY, inflight: Default::default(), refreshed: f64::NEG_INFINITY, mic: Default::default(), followed: String::new(), thread_h: ASK_THREAD_H, listen: None, listen_clicked: false }
-    }
-}
 
 /// The folder a path is in.
 pub fn folder_of(path: &str) -> &str {
@@ -1901,313 +2029,6 @@ fn ask_prompt(domain: &str, file: Option<&str>, folder: &str, reach: u8, what: &
     )
 }
 
-impl FileAsk {
-    /// A run about `path` is starting or streaming.
-    pub fn busy_on(&self, path: &str) -> bool {
-        let s = self.st.lock().unwrap();
-        s.path == path && (s.starting || s.running.is_some())
-    }
-
-    pub fn busy(&self) -> bool {
-        let s = self.st.lock().unwrap();
-        s.starting || s.running.is_some()
-    }
-
-    /// The file to read again from disk now, if any: every 1.5 s while a run
-    /// works, and once just after it ends, so its edits show as they land.
-    pub fn refresh_due(&mut self, now: f64) -> Option<String> {
-        let s = self.st.lock().unwrap();
-        let live = s.starting || s.running.is_some() || s.ended.is_some_and(|t| now - t < 3.0);
-        if !live || s.path.is_empty() || now - self.refreshed < 1.5 {
-            return None;
-        }
-        self.refreshed = now;
-        Some(s.path.clone())
-    }
-
-    fn poll(&mut self, backend: &Backend, ctx: &egui::Context) {
-        let (id, offset) = {
-            let s = self.st.lock().unwrap();
-            match &s.running {
-                Some(id) => (id.clone(), s.offset),
-                None => return,
-            }
-        };
-        let now = ctx.input(|i| i.time);
-        ctx.request_repaint_after(std::time::Duration::from_millis(700));
-        if self.inflight.load(Ordering::Relaxed) || now - self.asked < 0.7 {
-            return;
-        }
-        self.asked = now;
-        self.inflight.store(true, Ordering::Relaxed);
-        let (st, inflight) = (self.st.clone(), self.inflight.clone());
-        backend.query(Query::AgentPoll { id: id.clone(), offset }, ctx, move |r: Result<AgentChunk, String>| {
-            inflight.store(false, Ordering::Relaxed);
-            let Ok(c) = r else { return };
-            let mut s = st.lock().unwrap();
-            if s.running.as_deref() != Some(id.as_str()) {
-                return;
-            }
-            s.offset = c.offset;
-            if c.cost.is_some() {
-                s.cost = c.cost;
-            }
-            s.events.extend(c.events);
-            if c.done {
-                s.running = None;
-                s.ended = Some(now);
-            }
-        });
-    }
-
-    /// Run the ask typed into the bar - about the open `file`, or the tree's
-    /// `folder` - in `domain`'s thread.
-    pub fn start(&mut self, backend: &Backend, ctx: &egui::Context, domain: &str, file: Option<&str>, folder: &str) {
-        let path = file.unwrap_or(folder);
-        let what = std::mem::take(&mut self.input).trim().to_owned();
-        if what.is_empty() {
-            return;
-        }
-        {
-            let mut s = self.st.lock().unwrap();
-            *s = AskState { path: path.to_owned(), prompt: what.clone(), starting: true, ..Default::default() };
-        }
-        let st = self.st.clone();
-        let q = Query::AgentRun { domain: domain.to_owned(), prompt: ask_prompt(domain, file, folder, self.reach, &what), model: self.model.clone(),
-                                 cwd: Some(if file.is_some() && self.reach == 0 { folder_of(path).to_owned() } else { folder.to_owned() }), mode: None };
-        backend.query(q, ctx, move |r: Result<String, String>| {
-            let mut s = st.lock().unwrap();
-            s.starting = false;
-            match r {
-                Ok(id) => {
-                    s.running = Some(id);
-                    s.offset = 0;
-                }
-                Err(e) => {
-                    s.events.push(AgentEvent { kind: "error".into(), text: e });
-                    s.ended = Some(f64::NEG_INFINITY);
-                }
-            }
-        });
-    }
-
-    fn stop(&self, backend: &Backend, ctx: &egui::Context) {
-        let Some(id) = self.st.lock().unwrap().running.clone() else { return };
-        backend.query(Query::AgentStop { id }, ctx, |_: Result<bool, String>| {});
-    }
-
-    /// The Files agent: a section the full width of Files, under the tree
-    /// and the open file (request #166, 2026-11-01), laid out as Go's
-    /// composer is - the last ask and what it did, then one rounded box with
-    /// the words on their own line and, under them, the mic, how far it may
-    /// reach, the model and Send. `file` is the open file, if any; `folder`
-    /// the folder the tree is in, which the reach follows. Returns true when
-    /// the person asked: the caller saves the file if it has unsaved edits -
-    /// so the agent works on what is on screen - then calls `start`.
-    pub fn show(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, domain: Option<&DomainInfo>, file: Option<&str>, folder: &str) -> bool {
-        self.poll(backend, ctx);
-        // The tree moved: the reach follows it, taking in the open file from
-        // where the tree is. No file open: the folder.
-        if self.followed != folder {
-            self.followed = folder.to_owned();
-            self.reach = reach_for(folder, file);
-        }
-        if file.is_none() && self.reach == 0 {
-            self.reach = 1;
-        }
-        let path = file.unwrap_or(folder).to_owned();
-        let busy = self.busy();
-        let here = self.busy_on(&path);
-        let (prompt, events, cost, mine) = {
-            let s = self.st.lock().unwrap();
-            (s.prompt.clone(), s.events.clone(), s.cost, s.path == path || s.path == folder)
-        };
-        let mut sent = false;
-        let shown = mine && (!prompt.is_empty() || !events.is_empty());
-        // The handle: drag up for more of the thread, down for more of the
-        // files; a double-click puts it back. Never more than 70% of the
-        // window, so the tree and the file above stay on screen.
-        if shown {
-            let (r, h) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 7.0), egui::Sense::click_and_drag());
-            let top = ctx.content_rect().height() * 0.7;
-            if h.dragged() {
-                self.thread_h = (self.thread_h - h.drag_delta().y).clamp(ASK_THREAD_H * 0.6, top.max(ASK_THREAD_H));
-            }
-            if h.double_clicked() {
-                self.thread_h = ASK_THREAD_H;
-            }
-            let hot = h.hovered() || h.dragged();
-            if hot {
-                ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical);
-            }
-            ui.painter().rect_filled(r, 0.0, theme::pane_hdr());
-            ui.painter().line_segment(
-                [r.center() - egui::vec2(18.0, 0.0), r.center() + egui::vec2(18.0, 0.0)],
-                egui::Stroke::new(2.0, if hot { theme::primary() } else { theme::hush() }),
-            );
-            h.on_hover_text("drag up to see more of the agent, down to see more of the files · double-click to reset");
-        }
-        let grown = self.thread_h > ASK_THREAD_H + 0.5;
-        egui::Frame::new().fill(theme::pane_hdr()).inner_margin(egui::Margin::symmetric(6, 4)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if shown {
-                egui::ScrollArea::vertical()
-                    .id_salt("files-ask-thread")
-                    .max_height(self.thread_h)
-                    .min_scrolled_height(if grown { self.thread_h } else { 0.0 })
-                    .stick_to_bottom(true)
-                    .auto_shrink([false, !grown])
-                    .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(RichText::new(format!("› {prompt}")).size(12.0).color(theme::primary()));
-                    let mut ignored = Vec::new();
-                    for e in &events {
-                        match e.kind.as_str() {
-                            "tool" => {
-                                ui.add(egui::Label::new(RichText::new(format!("▸ {}", e.text)).monospace().size(11.0).color(theme::hush())).truncate());
-                            }
-                            "error" => {
-                                ui.label(RichText::new(&e.text).size(12.0).color(theme::alt()));
-                                crate::setup::connect_button(ui, &e.text);
-                            }
-                            _ => crate::md::show(ui, &e.text, 12.0, &mut ignored),
-                        }
-                    }
-                    if here {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.label(RichText::new("working…").size(11.5).color(theme::muted()));
-                        });
-                    }
-                });
-                ui.add_space(4.0);
-            }
-            let Some(d) = domain else {
-                ui.label(RichText::new("Open a domain in App to ask its agent about these files.").size(11.5).color(theme::hush()));
-                return;
-            };
-            let input_id = egui::Id::new("files-ask");
-            let mut send = false;
-            if ui.memory(|m| m.has_focus(input_id)) && !busy {
-                send = ui.input_mut(|i| {
-                    let mut hit = false;
-                    i.events.retain(|e| match e {
-                        egui::Event::Key { key: Key::Enter, pressed: true, modifiers, .. } if !modifiers.shift && !hit => {
-                            hit = true;
-                            false
-                        }
-                        _ => true,
-                    });
-                    hit
-                });
-            }
-            if let Some(e) = self.mic.error() {
-                ui.label(RichText::new(e).size(11.0).color(theme::alt()));
-            }
-            let narrow = ui.available_width() < 520.0;
-            // Go's composer, at the IDE's size: one rounded box, the words on
-            // a full-width line, the controls under them.
-            egui::Frame::new()
-                .fill(theme::surface())
-                .stroke(egui::Stroke::new(1.0, if ui.memory(|m| m.has_focus(input_id)) { theme::primary().gamma_multiply(0.6) } else { theme::pane_brd() }))
-                .corner_radius(14)
-                .inner_margin(egui::Margin { left: 10, right: 8, top: 6, bottom: 6 })
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    let target = match (self.reach, file) {
-                        (0, Some(f)) => f.rsplit('/').next().unwrap_or(f).to_owned(),
-                        _ => format!("{}/", folder.trim_end_matches('/').rsplit('/').next().unwrap_or(folder)),
-                    };
-                    let hint = if busy {
-                        "the agent is working - Stop to interrupt it".to_owned()
-                    } else if narrow {
-                        format!("what do you want in {target}?")
-                    } else {
-                        format!("what do you want in {target}? · {}'s agent · Enter sends · Shift+Enter for a new line", d.host)
-                    };
-                    ui.add_enabled(
-                        !busy,
-                        egui::TextEdit::multiline(&mut self.input)
-                            .id(input_id)
-                            .frame(egui::Frame::NONE)
-                            .desired_rows(1)
-                            .desired_width(ui.available_width())
-                            .font(egui::FontId::proportional(13.0))
-                            .return_key(Some(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, Key::Enter)))
-                            .hint_text(RichText::new(hint).color(theme::hush())),
-                    );
-                    // Send is placed first, pinned right, and the pickers take
-                    // only what is left, their labels shortened to fit: on a
-                    // phone they had pushed Send and the model off the screen
-                    // (operator screenshot, 2026-11-01). Narrow, the pickers
-                    // get a row of their own under the buttons.
-                    let size = 32.0;
-                    let pickers = |ui: &mut egui::Ui, w: f32, reach: &mut u8, model: &mut String| {
-                        let shown = reach_label(*reach, folder, file);
-                        egui::ComboBox::from_id_salt("files-ask-reach").width(w).truncate().selected_text(RichText::new(shown).size(11.5)).show_ui(ui, |ui| {
-                            for (r, _) in REACH {
-                                if r == 0 && file.is_none() {
-                                    continue;
-                                }
-                                ui.selectable_value(reach, r, reach_label(r, folder, file));
-                            }
-                        })
-                        .response
-                        .on_hover_text("how far the agent may reach: the open file, or the folder the tree is in and the levels below it - it follows the tree");
-                        let shown = MODELS.iter().find(|(m, _)| *m == model.as_str()).map_or(model.as_str(), |(_, l)| l).to_owned();
-                        egui::ComboBox::from_id_salt("files-ask-model").width(w).truncate().selected_text(RichText::new(shown).size(11.5)).show_ui(ui, |ui| {
-                            model_menu(ui, model);
-                        });
-                    };
-                    ui.horizontal(|ui| {
-                        if !busy {
-                            let Self { mic, input, .. } = self;
-                            mic.keep = Some(d.path.clone());
-                            mic.ui_sized(ui, ctx, backend, input, size);
-                        }
-                        // Listen / Act as I talk, right of the mic as everywhere.
-                        if let Some((mode, enabled, tip)) = &self.listen {
-                            let r = crate::voice::listen_button(ui, *mode, *enabled, tip, size);
-                            if r.clicked() {
-                                self.listen_clicked = true;
-                            }
-                        }
-                        crate::voice::speak_button(ui, size);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if busy {
-                                if crate::icons::button(ui, crate::icons::Icon::Stop, size, theme::surface_hi(), theme::alt(), true).on_hover_text("stop this run").clicked() {
-                                    self.stop(backend, ctx);
-                                }
-                            } else if crate::icons::button(ui, crate::icons::Icon::Send, size, theme::primary(), theme::bg(), !self.input.trim().is_empty())
-                                .on_hover_text("send · Enter")
-                                .clicked()
-                            {
-                                send = true;
-                            }
-                            if let Some(c) = cost.filter(|_| mine) {
-                                ui.label(RichText::new(format!("${c:.2}")).monospace().size(10.5).color(theme::hush()));
-                            }
-                            if !narrow {
-                                // What is left between the buttons, shared by the two pickers.
-                                let w = ((ui.available_width() - 24.0) / 2.0).clamp(80.0, 170.0);
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| pickers(ui, w, &mut self.reach, &mut self.model));
-                            }
-                        });
-                    });
-                    if narrow {
-                        ui.horizontal(|ui| {
-                            let w = ((ui.available_width() - 24.0) / 2.0).max(60.0);
-                            pickers(ui, w, &mut self.reach, &mut self.model);
-                        });
-                    }
-                });
-            if send && !busy && !self.input.trim().is_empty() {
-                sent = true;
-            }
-        });
-        sent
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -2243,6 +2064,15 @@ mod tests {
     }
 
     #[test]
+    fn a_bubble_drops_the_notes_that_are_for_the_agent() {
+        let said = format!("{}\n\nfix the header <spoken>and the cove one</spoken>", crate::spoken::NOTE);
+        assert_eq!(shown_prompt(&said), "fix the header <spoken>and the cove one</spoken>");
+        let listen = "(Said aloud in Cove while I keep talking - the last minute, transcribed. Do what you can.)\n\n<spoken>the cove one</spoken>";
+        assert_eq!(shown_prompt(listen), "<spoken>the cove one</spoken>");
+        assert_eq!(shown_prompt("(Said aloud by me, typed)"), "(Said aloud by me, typed)");
+    }
+
+    #[test]
     fn a_bubble_shows_what_was_typed_not_the_console() {
         assert_eq!(shown_prompt(&with_console("make it blue", "> x")), "make it blue");
         assert_eq!(shown_prompt("old\n\n---\nI am working in the Cove IDE. The end of"), "old");
@@ -2274,18 +2104,6 @@ mod tests {
         assert!(ask_prompt("x", None, "/d", 0, "w").contains("this folder only"));
     }
 
-    #[test]
-    fn the_reach_follows_how_far_down_the_tree_is() {
-        assert_eq!(reach_for("/d/x.ndexr.io/app/src", Some("/d/x.ndexr.io/app/src/main.rs")), 1);
-        assert_eq!(reach_for("/d/x.ndexr.io/app", Some("/d/x.ndexr.io/app/src/main.rs")), 2);
-        assert_eq!(reach_for("/d/x.ndexr.io", Some("/d/x.ndexr.io/app/src/main.rs")), 3);
-        assert_eq!(reach_for("/d", Some("/d/a/b/c/d/e.rs")), 3);
-        assert_eq!(reach_for("/d/other", Some("/d/x/main.rs")), 1);
-        assert_eq!(reach_for("/d/x", None), 1);
-        assert_eq!(reach_label(0, "/d/x", Some("/d/x/main.rs")), "file · main.rs");
-        assert_eq!(reach_label(1, "/d/x/src", None), "folder · src/");
-        assert_eq!(reach_label(2, "/d/x/src", None), "src/ + 1");
-    }
 
     #[test]
     fn recipes_are_the_short_runnable_blocks_under_their_heading() {

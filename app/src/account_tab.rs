@@ -111,10 +111,15 @@ impl AccountPane {
         let mut revoke: Option<String> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.add_space(8.0);
+            // The page's width, held: one row wider than a phone (the
+            // domains line in the profile) widened the whole column, and every
+            // card and tile ran past the right edge (operator, IMG_8746,
+            // 2026-11-14). Every row below fits this width or wraps.
+            let w = (ui.available_width() - 24.0).max(200.0);
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
                 ui.vertical(|ui| {
-                    ui.set_max_width(ui.available_width() - 12.0);
+                    ui.set_width(w);
                     if let Some(n) = &note {
                         ui.label(RichText::new(n).color(theme::alt()));
                         ui.add_space(6.0);
@@ -168,15 +173,23 @@ impl AccountPane {
             }
             let f = self.filter.trim().to_ascii_lowercase();
             for d in v.domains.iter().filter(|d| f.is_empty() || d.domain.contains(&f)) {
+                // The access and kind keep their place at the right; the name
+                // takes what is left and is cut with "…", the whole of it a tap
+                // away.
                 ui.horizontal(|ui| {
                     light(ui, if d.published { theme::ok() } else { theme::hush() });
-                    ui.hyperlink_to(RichText::new(&d.domain).monospace().color(theme::text_strong()), format!("https://{}", d.domain))
-                        .on_hover_text(if d.published { "published" } else { "not published" });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if !d.kind.is_empty() {
+                        if !d.kind.is_empty() && ui.available_width() > 360.0 {
                             ui.label(RichText::new(&d.kind).size(11.0).color(theme::muted())).on_hover_text(&d.target);
                         }
                         pill(ui, &d.access_level, access_color(&d.access_level));
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            let url = format!("https://{}", d.domain);
+                            let r = ui.add(egui::Label::new(RichText::new(&d.domain).monospace().color(theme::primary())).truncate().sense(egui::Sense::click()));
+                            if r.on_hover_text(format!("{url} - {}", if d.published { "published" } else { "not published" })).clicked() {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                            }
+                        });
                     });
                 });
                 ui.add_space(2.0);
@@ -196,12 +209,14 @@ impl AccountPane {
             }
             for k in &live {
                 ui.horizontal(|ui| {
+                    let room = (ui.available_width() - 110.0).max(140.0);
                     ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
+                        ui.set_max_width(room);
+                        ui.horizontal_wrapped(|ui| {
                             ui.label(RichText::new(k.label.as_deref().unwrap_or("unnamed key")).color(theme::text_strong()));
                             ui.label(RichText::new(&k.key_id).monospace().size(11.0).color(theme::hush())).on_hover_text(format!("scopes: {}", k.scopes.as_deref().unwrap_or("*")));
                         });
-                        ui.label(
+                        ui.add(egui::Label::new(
                             RichText::new(format!(
                                 "made {} · last used {} · {} uses · expires {}",
                                 k.created_at.as_deref().unwrap_or("–"),
@@ -211,7 +226,7 @@ impl AccountPane {
                             ))
                             .size(11.0)
                             .color(theme::muted()),
-                        );
+                        ).wrap());
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if k.this {
@@ -318,7 +333,7 @@ fn profile(ui: &mut egui::Ui, v: &AccountView) {
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, initial, theme::display(24.0), theme::primary());
                 ui.add_space(10.0);
                 ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new(&name).font(theme::display(20.0)).color(theme::text_strong()));
                         if v.is_admin {
                             pill(ui, "admin", theme::amber());
@@ -326,8 +341,8 @@ fn profile(ui: &mut egui::Ui, v: &AccountView) {
                         let (s, c) = cell_state(v);
                         pill(ui, &format!("cell {s}"), c);
                     });
-                    ui.label(RichText::new(&v.email).color(theme::muted()));
-                    ui.horizontal(|ui| {
+                    ui.add(egui::Label::new(RichText::new(&v.email).color(theme::muted())).wrap());
+                    ui.horizontal_wrapped(|ui| {
                         if let Some(pd) = &v.personal_domain {
                             ui.hyperlink_to(RichText::new(pd).monospace().size(12.0), format!("https://{pd}"));
                         }
@@ -395,7 +410,7 @@ fn cell_card(ui: &mut egui::Ui, v: &AccountView) {
             });
             if v.ready {
                 row(ui, "services", |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         for (up, what) in [(v.up_app, "app"), (v.up_code, "code")] {
                             let (c, w) = match up {
                                 Some(true) => (theme::ok(), "up"),
@@ -417,11 +432,20 @@ fn cell_card(ui: &mut egui::Ui, v: &AccountView) {
                     ui.label(RichText::new(t).color(theme::muted()));
                 });
             }
-            if let Some(m) = v.idle_timeout_min {
-                row(ui, "sleeps after", |ui| {
-                    ui.label(RichText::new(format!("{m} min idle")).color(theme::muted()));
-                });
-            }
+            // Your sites rest when nobody visits and wake on the next visit
+            // (the cell agent; operator, 2026-11-17); a subscription keeps
+            // them awake.
+            row(ui, "sites sleep", |ui| {
+                if v.always_awake {
+                    ui.label(RichText::new("never - your subscription keeps them awake").color(theme::text()));
+                } else {
+                    let m = v.idle_timeout_min.unwrap_or(30);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(format!("after {m} min with no visitors; the next visit wakes them in a few seconds")).color(theme::text()));
+                        ui.hyperlink_to("Keep them awake ↗", "https://billing.ndexr.io/");
+                    });
+                }
+            });
         });
     });
 }
@@ -438,7 +462,7 @@ fn claude_card(ui: &mut egui::Ui, v: &AccountView) {
             "none" => theme::warn(),
             _ => theme::muted(),
         };
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             light(ui, col);
             ui.label(RichText::new(&c.title).color(theme::text_strong()));
         });
@@ -457,7 +481,7 @@ fn claude_card(ui: &mut egui::Ui, v: &AccountView) {
         }
         if !matches!(c.kind.as_str(), "own" | "operator") {
             ui.add_space(8.0);
-            crate::setup::connect_button(ui, "Connect your Claude");
+            crate::setup::connect_button(ui, "Connect your Claude", false);
         }
     });
 }

@@ -178,7 +178,11 @@ cv_rmse <- function(f, family, data, k = 10) {
       # to a few rows, which fails when the fold has fewer distinct values.
       y <- eval(f[[2]], test, environment(f))
       (if (is.factor(y)) as.numeric(y != levels(y)[1]) else as.numeric(y)) - pred
-    }, error = function(err) NULL)
+    }, error = function(err) {
+      box::use(./r/log)
+      log$log_debug("cross-validation fold {i} of {k} failed: {conditionMessage(err)}")
+      NULL
+    })
     if (is.null(e)) return(NA_real_)  # a factor level missing from a fold
     err <- c(err, e)
   }
@@ -382,6 +386,8 @@ card_room <- function(session, out) {
 # ── model ────────────────────────────────────────────────────────────────────
 
 ui_model <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, selectInput, selectizeInput, sliderInput, checkboxInput, textAreaInput,
                          actionButton, plotOutput, uiOutput])
   ns <- shiny$NS(id)
@@ -411,6 +417,8 @@ ui_model <- function(id) {
 
 # Returns the current model and the kept ones, for the other branches.
 server_model <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer, reactive, reactiveVal, req, observe, observeEvent, bindEvent, debounce,
                          isolate, validate, need, renderPlot, renderUI, tags, updateSelectInput,
                          updateSelectizeInput, updateTextAreaInput])
@@ -458,7 +466,10 @@ server_model <- function(id) {
         fit <- fit_model(f, fam, d)
         list(fit = fit, f = f, text = txt, family = fam, data = d, name = input$data,
              cv = cv_rmse(f, fam, d), stats = fit_stats(fit))
-      }, error = function(e) list(error = conditionMessage(e)))
+      }, error = function(e) {
+        log$log_error("{txt} ({fam}) did not fit: {conditionMessage(e)}")
+        list(error = conditionMessage(e))
+      })
       res
     })
 
@@ -499,6 +510,8 @@ server_model <- function(id) {
 # ── terms ────────────────────────────────────────────────────────────────────
 
 ui_terms <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, plotOutput, uiOutput, checkboxInput])
   ns <- shiny$NS(id)
   tags$section(
@@ -511,6 +524,8 @@ ui_terms <- function(id) {
 }
 
 server_terms <- function(id, model) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer, reactive, renderPlot, renderUI, validate, need, tags])
   moduleServer(id, function(input, output, session) {
     tab <- reactive({
@@ -538,6 +553,8 @@ server_terms <- function(id, model) {
 # ── compare ──────────────────────────────────────────────────────────────────
 
 ui_compare <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, plotOutput, uiOutput])
   ns <- shiny$NS(id)
   tags$section(
@@ -548,6 +565,8 @@ ui_compare <- function(id) {
 }
 
 server_compare <- function(id, model) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer, reactive, renderPlot, renderUI, req, tags])
   moduleServer(id, function(input, output, session) {
     cmp <- reactive({
@@ -597,6 +616,8 @@ env_info <- function() {
 }
 
 ui_env <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[NS, tags, uiOutput])
   ns <- shiny$NS(id)
   tags$section(class = "env-wrap",
@@ -604,6 +625,8 @@ ui_env <- function(id) {
 }
 
 server_env <- function(id) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(shiny = shiny[moduleServer, renderUI, tags])
   moduleServer(id, function(input, output, session) {
     output$env <- renderUI({
@@ -700,6 +723,8 @@ mtext_fit <- function(text, side = 3, line = 0, adj = 0.5, cex = 1, font = 1, at
 
 #' @export
 ui_module <- function(id, request) {
+  box::use(./r/log)
+  log$log_fn()
   box::use(
     shiny = shiny[NS, tagList, tags, HTML],
     r / shell / shell
@@ -726,8 +751,10 @@ ui_module <- function(id, request) {
 }
 
 .server_inner <- function(id = "__HOST__", parent_session) {
-  box::use(r / shell / shell)
+  box::use(r / shell / shell, ./r/log)
   shell$server_shell(id, parent_session, inner = function(input, output, session) {
+    log$log_session(session)
+    log$log_info("__HOST__: module server starting")
     model <- server_model("model")
     server_terms("terms", model)
     server_compare("compare", model)

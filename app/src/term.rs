@@ -148,6 +148,21 @@ fi
         fn end(&self) -> u64 {
             self.base + self.buf.len() as u64
         }
+
+        /// The terminal's foreground program, "" when it is the shell: the
+        /// shell leads its own process group (setsid), so any other
+        /// foreground group is a program it started - R, vim, top. Named
+        /// from /proc. A typed line handed to a busy terminal went into R
+        /// as R code (operator, 2026-11-15: "ran vim CONTEXT.md and it ran
+        /// it in the R session").
+        fn running(&self) -> String {
+            // SAFETY: tcgetpgrp reads the foreground group of an open tty fd.
+            let pg = unsafe { libc::tcgetpgrp(self.master.as_raw_fd()) };
+            if !self.alive || pg <= 0 || pg as u32 == self.child.id() {
+                return String::new();
+            }
+            std::fs::read_to_string(format!("/proc/{pg}/comm")).map(|s| s.trim().to_owned()).unwrap_or_else(|_| "a program".into())
+        }
     }
 
     struct Slot {
@@ -305,7 +320,7 @@ fi
         }
         if fresh || offset < t.base || offset > t.end() {
             let data = String::from_utf8_lossy(&t.screen.screen().state_formatted()).into_owned();
-            return Ok(TermChunk { id, offset: t.end(), data, reset: true, alive: t.alive, note: t.note.clone() });
+            return Ok(TermChunk { id, offset: t.end(), data, reset: true, alive: t.alive, note: t.note.clone(), running: t.running() });
         }
         let until = Instant::now() + Duration::from_millis(250);
         while t.alive && offset == t.end() {
@@ -323,7 +338,7 @@ fi
             _ => bytes.len(),
         };
         let data = String::from_utf8_lossy(&bytes[..cut]).into_owned();
-        Ok(TermChunk { id, offset: offset + cut as u64, data, reset: false, alive: t.alive, note: t.note.clone() })
+        Ok(TermChunk { id, offset: offset + cut as u64, data, reset: false, alive: t.alive, note: t.note.clone(), running: t.running() })
     }
 
     /// Keys typed into terminal `id`.
@@ -379,6 +394,30 @@ fi
                 all.push_str(&c.data);
             }
             assert!(all.contains("30 100") && all.contains("has-a-tty"), "{all:?}");
+            kill(id);
+        }
+
+        #[test]
+        fn the_terminal_says_what_program_it_is_running() {
+            let (id, _) = open(24, 80).unwrap();
+            let mut c = read(id, 0, 24, 80).unwrap();
+            // The shell's own prompt first: nothing in front of it.
+            let until = Instant::now() + Duration::from_secs(10);
+            while c.running != "" && Instant::now() < until {
+                c = read(id, c.offset, 24, 80).unwrap();
+            }
+            assert_eq!(c.running, "", "a shell at its prompt runs nothing");
+            write(id, "sleep 3\r").unwrap();
+            let until = Instant::now() + Duration::from_secs(10);
+            while c.running != "sleep" && Instant::now() < until {
+                c = read(id, c.offset, 24, 80).unwrap();
+            }
+            assert_eq!(c.running, "sleep");
+            let until = Instant::now() + Duration::from_secs(10);
+            while !c.running.is_empty() && Instant::now() < until {
+                c = read(id, c.offset, 24, 80).unwrap();
+            }
+            assert_eq!(c.running, "", "back at the prompt when it ends");
             kill(id);
         }
 
@@ -569,6 +608,8 @@ struct Client {
     alive: bool,
     started: bool,
     note: String,
+    /// TermChunk::running, as last read.
+    running: String,
     error: Option<String>,
     /// Keys typed and not yet sent; `writing` while a write is in flight.
     out: Vec<u8>,
@@ -587,7 +628,7 @@ struct Client {
 
 impl Default for Client {
     fn default() -> Self {
-        Client { screen: vt100::Parser::new(24, 80, SCROLLBACK), id: 0, offset: 0, alive: false, started: false, note: String::new(), error: None, out: Vec::new(), after: Vec::new(), after_at: 0.0, urls: Vec::new(), carry: String::new() }
+        Client { screen: vt100::Parser::new(24, 80, SCROLLBACK), id: 0, offset: 0, alive: false, started: false, note: String::new(), running: String::new(), error: None, out: Vec::new(), after: Vec::new(), after_at: 0.0, urls: Vec::new(), carry: String::new() }
     }
 }
 
@@ -613,6 +654,11 @@ impl TermPane {
     /// Local web addresses printed since the last ask.
     pub fn take_urls(&self) -> Vec<String> {
         std::mem::take(&mut self.st.lock().unwrap().urls)
+    }
+
+    /// The program the terminal is running, "" at its shell's prompt.
+    pub fn running(&self) -> String {
+        self.st.lock().unwrap().running.clone()
     }
 
     /// The tab's light: a terminal is open.
@@ -747,7 +793,7 @@ impl TermPane {
                     s.carry = rest.chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect();
                     s.started = true;
                     s.error = None;
-                    (s.id, s.offset, s.alive, s.note) = (c.id, c.offset, c.alive, c.note);
+                    (s.id, s.offset, s.alive, s.note, s.running) = (c.id, c.offset, c.alive, c.note, c.running);
                 }
                 Err(e) => s.error = Some(e),
             }

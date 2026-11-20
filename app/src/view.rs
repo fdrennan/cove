@@ -34,6 +34,10 @@ impl Tab {
         let q = web_sys::window()?.location().search().ok()?;
         let t = web_sys::UrlSearchParams::new_with_str(&q).ok()?.get("tab")?;
         match t.as_str() {
+            // The paper was the front page 2026-11-14 and was dropped the
+            // same day (operator: "drop the paper in the visual mode"); a
+            // link to it opens the atlas.
+            "paper" => Some(Tab::Atlas),
             "atlas" => Some(Tab::Atlas),
             "packages" => Some(Tab::Packages),
             "builds" => Some(Tab::Builds),
@@ -56,7 +60,20 @@ pub struct ViewApp {
     /// asked again every minute: a new one joins the canopy within it.
     domains: std::sync::Arc<std::sync::Mutex<Option<Result<Vec<crate::api::DomainInfo>, String>>>>,
     domains_at: f64,
+    /// A request, no sign-in needed (server.rs anon_request_response): the
+    /// window open, its words, a contact, and how the last one went.
+    asking: bool,
+    /// The Install window.
+    installing: bool,
+    ask_what: String,
+    ask_contact: String,
+    asked: std::sync::Arc<std::sync::Mutex<Option<Result<i64, String>>>>,
+    sending: bool,
 }
+
+/// Cove on this computer, in one line: packaging/install.sh, which this
+/// server answers at /view/install.sh (server.rs) and ndexr.io at /install.sh.
+pub const INSTALL: &str = "curl -fsSL https://cove.ndexr.io/view/install.sh | sh";
 
 /// Where Sign in goes: the platform's sign-in, back to Cove itself.
 const SIGN_IN: &str = "https://console.ndexr.io/?next=https://cove.ndexr.io/";
@@ -81,6 +98,13 @@ impl ViewApp {
             toast: None,
             domains: Default::default(),
             domains_at: f64::NEG_INFINITY,
+            asking: false,
+            // ?install opens it, so a link can go straight there.
+            installing: web_sys::window().and_then(|w| w.location().search().ok()).is_some_and(|q| q.trim_start_matches('?').split('&').any(|p| p == "install" || p.starts_with("install="))),
+            ask_what: String::new(),
+            ask_contact: String::new(),
+            asked: Default::default(),
+            sending: false,
         }
     }
 
@@ -106,31 +130,151 @@ impl ViewApp {
         });
     }
 
-    fn bar(&mut self, ui: &mut egui::Ui) {
-        theme::strip(ui, 34.0, theme::ground(), |ui| {
-            ui.add_space(10.0);
-            ui.label(RichText::new("Cove").size(16.0).strong().color(theme::text_strong()));
-            ui.add_space(10.0);
-            ui.spacing_mut().item_spacing.x = 4.0;
-            for (t, name, tip) in [
-                (Tab::Atlas, "Atlas", "the whole stack from the kernel up, and the story of it"),
-                (Tab::Packages, "Packages", "search everything the stack builds: every Prefix package, EasyBuild module, R and Python package"),
-                (Tab::Builds, "Builds", "how it got built and what is building now: curves, branches, 3D, the timeline and the queue"),
-                (Tab::Logs, "Logs", "each build machine's log, live as it builds"),
-            ] {
-                if segment(ui, name, tip, self.tab == t).clicked() {
-                    self.tab = t;
+    /// The Install window: the one line, what it does on each system, and
+    /// the way in without installing anything.
+    fn install_window(&mut self, ctx: &egui::Context) {
+        if !self.installing {
+            return;
+        }
+        let mut open = true;
+        let w = (ctx.content_rect().width() - 24.0).min(520.0);
+        egui::Window::new("Install Cove").open(&mut open).collapsible(false).resizable(false).default_width(w).anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 48.0)).show(ctx, |ui| {
+            ui.set_width(w - 24.0);
+            ui.label(RichText::new("In a terminal, on Linux (x86_64 or ARM64) or macOS:").size(13.0).color(theme::text()));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let mut c = INSTALL.to_owned();
+                ui.add(egui::TextEdit::singleline(&mut c).font(egui::TextStyle::Monospace).desired_width(ui.available_width() - 64.0));
+                if ui.button("Copy").clicked() {
+                    ui.ctx().copy_text(INSTALL.to_owned());
+                    self.toast = Some(("Copied - paste it into a terminal.".into(), ui.ctx().input(|i| i.time) + 4.0));
                 }
+            });
+            ui.add_space(6.0);
+            for line in [
+                "Linux: the build for your machine's architecture (x86_64 or ARM64), into ~/.local - no sudo, any distribution.",
+                "macOS: Cove.app in Applications.",
+                "Every download is checked against its published SHA-256 first. Cove updates itself after that.",
+            ] {
+                ui.add(egui::Label::new(RichText::new(format!("·  {line}")).size(12.5).color(theme::text())).wrap());
             }
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Then run").size(12.5).color(theme::text()));
+                ui.label(RichText::new("cove").monospace().size(12.5).color(theme::text_strong()));
+                ui.label(RichText::new("- its first start sets up the stack and your Claude. Or use it in this browser:").size(12.5).color(theme::text()));
+                ui.hyperlink_to(RichText::new("Sign in →").size(12.5).strong().color(theme::primary()), SIGN_IN);
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.hyperlink_to(RichText::new("Read the installer").size(12.0).color(theme::hush()), "https://cove.ndexr.io/view/install.sh");
+                ui.add_space(8.0);
+                ui.hyperlink_to(RichText::new("Source").size(12.0).color(theme::hush()), crate::app::SOURCE_URL);
+            });
+        });
+        if !open {
+            self.installing = false;
+        }
+    }
+
+    /// The request window: what they need and, if they like, where to answer.
+    fn request_window(&mut self, ctx: &egui::Context) {
+        if let Some(r) = self.asked.lock().unwrap().take() {
+            self.sending = false;
+            match r {
+                Ok(id) => {
+                    self.ask_what.clear();
+                    self.asking = false;
+                    self.toast = Some((format!("Request #{id} sent - thank you."), ctx.input(|i| i.time) + 6.0));
+                }
+                Err(e) => self.toast = Some((format!("Not sent: {e}"), ctx.input(|i| i.time) + 8.0)),
+            }
+        }
+        if !self.asking {
+            return;
+        }
+        let mut open = true;
+        let w = (ctx.content_rect().width() - 24.0).min(440.0);
+        egui::Window::new("Send a request").open(&mut open).collapsible(false).resizable(false).default_width(w).anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 48.0)).show(ctx, |ui| {
+            ui.set_width(w - 24.0);
+            ui.label(RichText::new("What you need, or what is broken. No sign-in needed: it reaches the people who build Cove, filed as anonymous.").size(13.0).color(theme::text()));
+            ui.add(egui::TextEdit::multiline(&mut self.ask_what).hint_text("what you need…").desired_rows(5).desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut self.ask_contact).hint_text("an email for the answer (optional)").desired_width(f32::INFINITY));
+            ui.add_space(4.0);
+            let ready = !self.ask_what.trim().is_empty() && !self.sending;
+            if ui.add_enabled(ready, theme::primary_button(if self.sending { "Sending…" } else { "Send request" })).clicked() {
+                self.sending = true;
+                let Backend::Http { base } = &self.backend;
+                let page = web_sys::window().and_then(|w| w.location().href().ok()).unwrap_or_default();
+                let body = serde_json::to_vec(&serde_json::json!({ "what": self.ask_what, "contact": self.ask_contact, "page": page })).unwrap_or_default();
+                let mut req = ehttp::Request::post(format!("{base}/request"), body);
+                // text/plain: a simple request, no CORS preflight.
+                req.headers.insert("Content-Type", "text/plain");
+                let (slot, c) = (self.asked.clone(), ctx.clone());
+                ehttp::fetch(req, move |r| {
+                    *slot.lock().unwrap() = Some(match r {
+                        Ok(r) if r.ok => serde_json::from_slice::<serde_json::Value>(&r.bytes).ok().and_then(|v| v["id"].as_i64()).ok_or_else(|| "no request number came back".to_owned()),
+                        Ok(r) => Err(crate::backend::anon_refused(r.status)),
+                        Err(e) => Err(e),
+                    });
+                    c.request_repaint();
+                });
+            }
+        });
+        if !open {
+            self.asking = false;
+        }
+    }
+
+    fn bar(&mut self, ui: &mut egui::Ui) {
+        // The right side first, so it is always on screen, and the tabs in
+        // what is left, scrolling sideways when they do not fit: drawn the
+        // other way round, on a phone "Source ↗" landed on top of "Logs"
+        // (operator's screenshot IMG_8740, 2026-11-14: "Lsogsrce").
+        let phone = ui.ctx().content_rect().width() < 640.0;
+        theme::strip(ui, 34.0, theme::ground(), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(10.0);
-                ui.hyperlink_to(RichText::new("Sign in to build →").strong().color(theme::primary()), SIGN_IN);
+                ui.hyperlink_to(RichText::new(if phone { "Sign in →" } else { "Sign in to build →" }).strong().color(theme::primary()), SIGN_IN);
+                ui.add_space(8.0);
+                if ui.add(egui::Button::selectable(self.installing, RichText::new("Install").size(12.5).strong())).on_hover_text("Cove on your computer: Linux and macOS, one line").clicked() {
+                    self.installing = !self.installing;
+                }
+                ui.add_space(4.0);
+                if ui.add(egui::Button::selectable(self.asking, RichText::new("Request").size(12.5))).on_hover_text("ask for something, or say what is broken - no sign-in needed").clicked() {
+                    self.asking = !self.asking;
+                }
                 // The source, public (operator, 2026-11-13: "add the gitlab
                 // repo link to cove and ndexr.io"); this view is ndexr.io's
-                // front page, so this is that link too.
+                // front page, so this is that link too. Not on a phone: the
+                // tabs need the room, and the paper links it.
+                if !phone {
+                    ui.add_space(8.0);
+                    ui.hyperlink_to(RichText::new("Source ↗").size(12.5).color(theme::hush()), crate::app::SOURCE_URL)
+                        .on_hover_text(crate::app::SOURCE_URL);
+                }
                 ui.add_space(8.0);
-                ui.hyperlink_to(RichText::new("Source ↗").size(12.5).color(theme::hush()), crate::app::SOURCE_URL)
-                    .on_hover_text(crate::app::SOURCE_URL);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    egui::ScrollArea::horizontal().id_salt("view-tabs").max_width(ui.available_width()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(if phone { 6.0 } else { 10.0 });
+                            if !phone {
+                                ui.label(RichText::new("Cove").size(16.0).strong().color(theme::text_strong()));
+                                ui.add_space(10.0);
+                            }
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            for (t, name, tip) in [
+                                (Tab::Atlas, "Atlas", "the whole stack from the kernel up, and the story of it"),
+                                (Tab::Packages, "Packages", "search everything the stack builds: every Prefix package, EasyBuild module, R and Python package"),
+                                (Tab::Builds, "Builds", "how it got built and what is building now: curves, branches, 3D, the timeline and the queue"),
+                                (Tab::Logs, "Logs", "each build machine's log, live as it builds"),
+                            ] {
+                                if segment(ui, name, tip, self.tab == t).clicked() {
+                                    self.tab = t;
+                                }
+                            }
+                        });
+                    });
+                });
             });
         });
     }
@@ -230,6 +374,8 @@ impl eframe::App for ViewApp {
                     });
             }
         }
+        self.install_window(ctx);
+        self.request_window(ctx);
         if let Some((msg, until)) = self.toast.clone() {
             if now > until {
                 self.toast = None;

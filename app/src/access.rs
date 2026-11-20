@@ -41,6 +41,11 @@ pub struct Access {
     host: Option<String>,
     view: Slot<Result<AppAccessView, String>>,
     busy: Arc<Mutex<bool>>,
+    /// The level just picked, shown chosen at once while it is saved
+    /// (operator, 2026-11-17: the buttons were "painfully non-responsive"),
+    /// and why the last change did not take, if it did not.
+    pending: Slot<String>,
+    failed: Slot<String>,
     /// What is typed in the people search.
     find: String,
     /// The search last sent, and what it found.
@@ -94,9 +99,19 @@ impl Access {
         if level.is_empty() {
             *self.view.lock().unwrap() = None;
         }
-        let (slot, busy, c) = (self.view.clone(), self.busy.clone(), ctx.clone());
+        let reading = level.is_empty();
+        *self.failed.lock().unwrap() = None;
+        *self.pending.lock().unwrap() = (!reading).then(|| level.clone());
+        let (slot, busy, pending, failed, c) = (self.view.clone(), self.busy.clone(), self.pending.clone(), self.failed.clone(), ctx.clone());
         backend.query(Query::AppAccess { host, level }, ctx, move |r: Result<AppAccessView, String>| {
-            *slot.lock().unwrap() = Some(r);
+            match r {
+                Ok(v) => *slot.lock().unwrap() = Some(Ok(v)),
+                // A change that did not take: the level shown goes back to
+                // what it was, and says why - the view itself stays.
+                Err(e) if !reading => *failed.lock().unwrap() = Some(e),
+                Err(e) => *slot.lock().unwrap() = Some(Err(e)),
+            }
+            *pending.lock().unwrap() = None;
             *busy.lock().unwrap() = false;
             c.request_repaint();
         });
@@ -153,6 +168,8 @@ impl Access {
                         return;
                     }
                 };
+                // The pick shows at once; the server catches up behind it.
+                let now = self.pending.lock().unwrap().clone().unwrap_or(now);
                 if now == "admin" {
                     ui.label(RichText::new("Admins only: an ndexr admin set this. Choose below to open it up.").size(13.5).color(theme::amber()));
                 }
@@ -165,6 +182,8 @@ impl Access {
                     if busy {
                         ui.spinner();
                         ui.label(RichText::new("Saving…").size(13.0).color(theme::text()));
+                    } else if let Some(e) = self.failed.lock().unwrap().clone() {
+                        ui.label(RichText::new(format!("Not changed: {e}")).size(13.0).color(theme::warn()));
                     } else if let Some(Ok(v)) = &view {
                         if !v.said.is_empty() {
                             ui.label(RichText::new(format!("✓ {}", v.said)).size(13.0).color(theme::ok()));

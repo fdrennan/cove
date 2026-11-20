@@ -127,6 +127,8 @@ pub const FOLDER_STARTERS: &[&str] = &[
     "r-blank-vetiver",
     "r-blank-rmarkdown",
     "r-blank-interactive",
+    "r-blank-shiny",
+    "r-blank-shiny-box",
     "r-blank-quarto",
     "r-inlet-ide",
     "ide-vscode",
@@ -265,7 +267,12 @@ pub const CATEGORIES: &[Category] = &[
             ready("Python", "FastAPI", "A page and a route, reloads on save, /docs included", "python-blank-fastapi"),
             ready("Python", "Flask", "A page and a route, reloads on save", "python-blank-flask"),
             ready("Python", "Streamlit", "One script, reruns on save", "python-blank-streamlit"),
-            ready("R", "Shiny", "One heading and the site's shell, live on save", SHINY_BLANK),
+            // Shiny three ways (operator, 2026-11-17: "a) module b) shiny
+            // (traditional) c) shiny (box)"): a module the platform serves,
+            // app.R on its own server, or box modules on its own server.
+            ready("R", "Shiny module", "A module.r the ndexr platform serves - one heading and the site's shell, live on save", SHINY_BLANK),
+            ready("R", "Shiny", "app.R with ui and server, served by shiny::runApp - a slider and a plot", "r-blank-shiny"),
+            ready("R", "Shiny with box", "app/main.R and box modules under app/view/, imported with box::use - a slider and a plot", "r-blank-shiny-box"),
             ready("Julia", "HTTP.jl", "A page and a handler, restarts on save", "julia-blank"),
             ready("Rust", "tiny_http", "A page and a handler; pages show on save, code after .cove/build.sh", "rust-blank"),
             ready("Rust", "WebAssembly, no bindgen", "Rust in the browser, called from a page", "rust-blank-wasm"),

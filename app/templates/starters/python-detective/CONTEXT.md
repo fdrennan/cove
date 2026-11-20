@@ -36,6 +36,8 @@ stack's env set (env/Python/3.13.15, else env/r4.6_py3.13-release); nothing is
 pip-installed and nothing is downloaded: the four tables are files inside
 scikit-learn.
 
+Logging: log.py (from log import log as applog, since `log` names a log-scale option here), one format across languages; LOG_LEVEL=DEBUG for more.
+
 ## Built on
 - Tukey, J. W. (1977). *Exploratory Data Analysis*. Addison-Wesley. The box
   plot and its 1.5 × IQR fences.
@@ -57,7 +59,7 @@ scikit-learn.
   reverses inside every group.
 
 ## Auth
-Login-gated. The server listens on 127.0.0.1 only; nginx in front decides who
+You and the people you share it with (Project › Access sets who; a new site is never public). The server listens on 127.0.0.1 only; nginx in front decides who
 reaches it.
 
 ## Open

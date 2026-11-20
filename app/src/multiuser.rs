@@ -803,8 +803,97 @@ fn app_access_read(host: &str) -> Result<crate::api::AppAccessView, String> {
     Ok(crate::api::AppAccessView { level, port: vhost.contains("# ndexr-target: port:"), said: String::new() })
 }
 
+/// A page password, as route.ndexr.io sets one (src/r/users/site_password.r):
+/// the row in site_passwords - sha256 of salt and password, hex - and a
+/// vhost that checks it. One SQL statement, sent on psql's stdin with the
+/// password dollar-quoted, so it is never in a process list. A vhost that
+/// does not check it yet is repaired through the platform's own R
+/// (site_password_repair): a stored password nothing checks left four
+/// sites open on 2026-07-30. An empty password removes it.
+fn site_password(host: &str, password: &str, by: &str) -> Result<String, String> {
+    if !crate::host::is_host_name(host) {
+        return Err(format!("{host}: not a domain name"));
+    }
+    if password.is_empty() {
+        crate::host::platform_psql_vars("delete from site_passwords where domain = :'host'", &[("host", host)])?;
+        return Ok(format!("{host} has no page password now"));
+    }
+    if password.chars().count() < 4 {
+        return Err("a page password needs at least 4 characters".into());
+    }
+    // A quote tag the password cannot contain.
+    let tag = loop {
+        let t = format!("cove{}", &crate::account::new_token()[..12]);
+        if !password.contains(&t) {
+            break t;
+        }
+    };
+    let salt = &crate::account::new_token()[..32];
+    let sql = format!(
+        "insert into site_passwords (domain, pass_hash, salt, set_by, updated_at) \
+         values (:'host', encode(sha256(convert_to(:'salt' || ${tag}${password}${tag}$, 'UTF8')), 'hex'), :'salt', :'by', now()) \
+         on conflict (domain) do update set pass_hash = excluded.pass_hash, salt = excluded.salt, set_by = excluded.set_by, updated_at = now()"
+    );
+    crate::host::platform_psql_vars(&sql, &[("host", host), ("salt", salt), ("by", by)])?;
+    let vhost = std::fs::read_to_string(format!("/home/ubuntu/ndexr/nginx/sites-enabled/{host}")).unwrap_or_default();
+    let checked = vhost.lines().any(|l| l.contains("include") && l.contains("conf.d/site_password.conf")) && vhost.contains("auth_request /__site_password_check");
+    if checked {
+        return Ok(format!("{host} asks for its page password now"));
+    }
+    site_password_repair(host)
+}
+
+/// The vhost made to ask for the page password (site_password_repair).
+fn site_password_repair(host: &str) -> Result<String, String> {
+    let r = format!(
+        "options(box.path = '/home/ubuntu/ndexr/src'); box::use(sp = r/users/site_password); x <- sp$site_password_repair('{host}'); cat(if (isTRUE(x$ok)) 'ok' else 'failed', x$message, '\\n')"
+    );
+    let out = Command::new("runuser")
+        .args(["-u", "ubuntu", "--", "bash", "-c"])
+        .arg(format!(
+            "cd /home/ubuntu/ndexr; set -a; . ./.env; set +a; case \"${{POSTGRES_HOST:-}}\" in postgres|pgbouncer) export POSTGRES_HOST=127.0.0.1 ;; esac; \
+             export NDEXR_HOST_LOCAL=1 LANG=C.UTF-8 R_LIBS=/opt/ndexr/eblib/x86_64-pc-linux-gnu/R-4.6.1-foss-2024a; \
+             set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1; module load R/4.6.1-foss-2024a >/dev/null 2>&1; Rscript --no-save -e {} 2>&1 | grep -v 'pool>' | tail -2",
+            crate::api::shell_quote(&r)
+        ))
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if text.starts_with("ok") {
+        Ok(format!("{host} asks for its page password now (its vhost was made to check it)"))
+    } else {
+        Err(format!("the password is stored but {host}'s vhost does not check it yet: {text}"))
+    }
+}
+
 fn app_access_set(host: &str, level: &str) -> Result<String, String> {
     use std::os::unix::fs::PermissionsExt;
+    // A Shiny module's gate is the registry row alone (shell.r reads it on
+    // each render): one UPDATE, in milliseconds, with registry.r
+    // set_access_level's own guards - an owner-only site needs an owner, and
+    // the sign-in host stays public. The R route took ~9 s before doing
+    // anything (the stack, R, then 4 s of box::use), so the choice sat
+    // greyed out (operator, 2026-11-17). An app on its own port also has its
+    // vhost's gate rewritten and nginx reloaded: that keeps the R writer below.
+    let vhost = std::fs::read_to_string(format!("/home/ubuntu/ndexr/nginx/sites-enabled/{host}")).unwrap_or_default();
+    if !vhost.contains("# ndexr-target: port:") {
+        let out = crate::host::platform_psql_vars(
+            "update domain_registry set access_level = :'lvl' where domain = :'host' \
+               and (:'lvl' <> 'owner' \
+                    or exists (select 1 from user_domains where lower(domain) = lower(:'host')) \
+                    or exists (select 1 from domain_registry where domain = :'host' and coalesce(owner_email, '') <> '')) \
+               and (:'host' <> 'console.ndexr.io' or :'lvl' = 'public') \
+             returning 1",
+            &[("host", host), ("lvl", level)],
+        )?;
+        return if String::from_utf8_lossy(&out).trim() == "1" {
+            Ok(format!("{host} is now {level}"))
+        } else if level == "owner" {
+            Err(format!("{host} has no owner on record, so only-you would admit nobody"))
+        } else {
+            Err(format!("the registry has no row for {host}, or it refused '{level}'"))
+        };
+    }
     let d = Path::new("/run/cove");
     std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     let script = d.join("set-access.sh");
@@ -1102,7 +1191,7 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         // deploying and routing an app, which need root and which the session
         // refuses ("apps are routed from cove.ndexr.io"): the operator's Rust
         // and Julia projects never went live (2026-10-26, ggsdfgg.ndexr.io).
-        _ if platform_session && !matches!(q, Query::DeployApp { .. } | Query::DeployJob { .. } | Query::AppRoute { .. } | Query::ProjectRelease { .. } | Query::AppAccess { .. }) => return None,
+        _ if platform_session && !matches!(q, Query::DeployApp { .. } | Query::DeployJob { .. } | Query::AppRoute { .. } | Query::ProjectRelease { .. } | Query::AppAccess { .. } | Query::SitePassword { .. }) => return None,
         Query::AgentRun { domain, prompt, model, cwd, mode } => crate::host::agent_run_as(owner, domain, prompt, model, cwd.as_deref(), mode.as_deref()).map(|run| {
             started_runs().lock().unwrap().insert(run.clone(), owner.to_owned());
             serde_json::Value::String(run)
@@ -1163,6 +1252,16 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                     (Query::GitDiff { sha, path: file, old, .. }, path) => crate::host::git_diff_at(Path::new(&path), sha, file, old).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                     (_, path) => crate::host::versions_at(Path::new(&path)).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                 },
+            }
+        }
+        // A site's requests, from the web server's log (host.rs
+        // `site_requests`): root reads it - it is every site's, with visitors'
+        // addresses - and hands back only the person's own site's lines.
+        Query::SiteRequests { host } => {
+            let h = host.trim().to_ascii_lowercase();
+            match person_domains(owner, &account).into_iter().find(|(x, _)| *x == h) {
+                None => Err(format!("{h} is not one of your domains")),
+                Some(_) => crate::host::site_requests(&h).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
             }
         }
         // The project's container image (docs/container-images.md): ndexr
@@ -1237,6 +1336,19 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                 r.and_then(|said| app_access_read(&h).map(|mut v| { v.said = said; v })).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
             }
         }
+        Query::SitePassword { host, password } => {
+            let h = host.trim().to_ascii_lowercase();
+            let admin = ndexr_admin_cached(owner);
+            let manages = crate::shares::role_of(Path::new(&account.home), &h).as_deref() == Some("manage");
+            if !admin && !manages && !person_domains(owner, &account).iter().any(|(x, _)| *x == h) {
+                Err(format!("{h} is not one of your domains"))
+            } else {
+                let r = site_password(&h, password, owner);
+                // Whether it was set or removed - never the password.
+                audit(ctx, owner, "site-password", &format!("{h} {} {}", if password.is_empty() { "cleared" } else { "set" }, if r.is_ok() { "ok" } else { "refused" }));
+                r.map(serde_json::Value::from)
+            }
+        }
         Query::AppViewer { host, on } => {
             let h = host.trim().to_ascii_lowercase();
             let admin = ndexr_admin_cached(owner);
@@ -1264,7 +1376,8 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         // the person's own session cannot reach the registry, DNS or nginx.
         Query::PublishDomain { host } => {
             // The level the project asks for (.cove/app.env APP_ACCESS, or
-            // app.env at an old-layout root): an Inlet starter says owner.
+            // app.env at an old-layout root); owner - the person and who they
+            // share it with - when it asks for none (operator, 2026-11-17).
             let h = host.trim().to_ascii_lowercase();
             let access = person_domains(owner, &account)
                 .into_iter()
@@ -1274,7 +1387,7 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                 })
                 .and_then(|env| env.lines().find_map(|l| l.trim().strip_prefix("APP_ACCESS=").map(|v| v.trim().trim_matches('"').to_owned())))
                 .filter(|a| ["public", "login", "owner"].contains(&a.as_str()))
-                .unwrap_or_else(|| "login".to_owned());
+                .unwrap_or_else(|| "owner".to_owned());
             let r = crate::host::publish_with(owner, host, &access);
             audit(ctx, owner, "publish", &format!("{host} {}", if r.is_ok() { "started" } else { "refused" }));
             r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
@@ -2325,6 +2438,12 @@ fn handle(ctx: &Ctx, mut req: Request) {
     let pam = matches!(ctx.conf.auth, Auth::Pam);
     if path == "/__rstudio_gate" {
         let resp = rstudio_gate(ctx, &req);
+        let _ = req.respond(resp);
+        return;
+    }
+    // A request from someone not signed in: the one write the public view takes.
+    if path == "/view/request" {
+        let resp = crate::server::anon_request_response(&mut req);
         let _ = req.respond(resp);
         return;
     }

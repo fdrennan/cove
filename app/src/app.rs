@@ -224,6 +224,18 @@ struct Saved {
     listen_secs: u32,
 }
 
+/// The modes, as the top row names them (the review, 2026-11-14: "global
+/// navigation: Workspace · Builds · Atlas · Connections · Account"). IDE was
+/// "IDE" and Connect "Connect" until then.
+const MODES: [(Mode, &str, &str); 6] = [
+    (Mode::Ide, "Workspace", "your projects: agents, files, consoles and the app"),
+    (Mode::Go, "Go", "on the go: the recap, the agent and Exec, a big record button"),
+    (Mode::Connect, "Connections", "every app you may open - yours, shared with you, and public - by what it is built with"),
+    (Mode::Builds, "Builds", "the build machines - start and shut them down here - and where every build is, live, with its history"),
+    (Mode::Atlas, "Atlas", "the whole stack, kernel to application"),
+    (Mode::Account, "Account", "you: your cell, Claude, your domains and API keys"),
+];
+
 pub struct App {
     backend: Backend,
     saved: Saved,
@@ -277,6 +289,8 @@ pub struct App {
     inbox: crate::inbox::Inbox,
     /// Project › Access (access.rs): who may open the open project's app.
     access: crate::access::Access,
+    /// Connections' management of the person's own projects (manage.rs).
+    manage: crate::manage::Manage,
     /// Files dropped on the window while Send a request is open, as they are read.
     request_drops: Arc<Mutex<Vec<crate::api::Attachment>>>,
     /// The request's microphone: say it instead of typing (voice.rs).
@@ -298,6 +312,15 @@ pub struct App {
     #[cfg(not(target_arch = "wasm32"))]
     picked_folder: Arc<Mutex<Option<String>>>,
     about: bool,
+    /// Help, docked at the right (help_panel): searchable, never a cascade.
+    help_open: bool,
+    /// This run has asked for the stack mode once (auto_setup).
+    mode_asked: bool,
+    /// Just signed in on this computer, with a cell: ask whether to go to it
+    /// (cell_offer_modal).
+    cell_offer: bool,
+    /// Cove's other sessions, in a window of their own.
+    sessions_open: bool,
     /// Setting the stack up or applying CVMFS settings: the job, polled
     /// while it runs; and whether this window has started a setup itself.
     stack_job: Arc<Mutex<JobView>>,
@@ -348,6 +371,14 @@ pub struct App {
     /// and whose apps: 0 all, 1 yours, 2 shared with you, 3 public.
     connect_find: String,
     connect_fw: Option<String>,
+    /// Connections' Visibility filter: a registry level ("public", "login"…).
+    connect_level: Option<String>,
+    /// Visibility checked from outside (Query::SiteGate per host): what each
+    /// answered an anonymous visitor, the hosts still to ask, and how many
+    /// are being asked now.
+    connect_gates: Arc<Mutex<std::collections::BTreeMap<String, String>>>,
+    connect_queue: Vec<String>,
+    connect_asking: Arc<std::sync::atomic::AtomicUsize>,
     connect_whose: u8,
     /// Connect's owner filter (a username; "you" for the person's own) and
     /// its sort: 0 last changed, newest first; 1 name.
@@ -510,6 +541,7 @@ impl App {
             request_sent: Default::default(),
             inbox: Default::default(),
             access: Default::default(),
+            manage: Default::default(),
             request_drops: Default::default(),
             request_mic: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -522,6 +554,10 @@ impl App {
             #[cfg(not(target_arch = "wasm32"))]
             picked_folder: Default::default(),
             about: false,
+            help_open: false,
+            mode_asked: false,
+            cell_offer: false,
+            sessions_open: false,
             stack_job: Default::default(),
             stack_asked: f64::NEG_INFINITY,
             stack_inflight: Default::default(),
@@ -551,6 +587,10 @@ impl App {
             mode: Mode::Ide,
             connect_find: String::new(),
             connect_fw: None,
+            connect_level: None,
+            connect_gates: Default::default(),
+            connect_queue: Vec::new(),
+            connect_asking: Default::default(),
             connect_whose: 0,
             connect_owner: None,
             connect_sort: 0,
@@ -610,6 +650,100 @@ impl App {
             let r = crate::account::connect_cell().map(|_| ());
             *slot.lock().unwrap() = (false, Some(r));
             ctx.request_repaint();
+        });
+    }
+
+    /// Signed in, on this computer: their ndexr apps are on their cell. Go
+    /// there (this window starts again on it), or stay here - remembered.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn cell_offer_modal(&mut self, ctx: &egui::Context) {
+        if !self.cell_offer {
+            return;
+        }
+        let a = self.account.lock().unwrap().clone();
+        let (Some(email), Some(cell)) = (a.email.clone(), a.cell.clone()) else {
+            self.cell_offer = false;
+            return;
+        };
+        let mut pick: Option<crate::account::RunOn> = None;
+        egui::Modal::new(egui::Id::new("cell-offer")).show(ctx, |ui| {
+            ui.set_width(460.0f32.min(ctx.content_rect().width() - 40.0));
+            ui.label(RichText::new(format!("Signed in as {email}")).size(18.0).strong().color(theme::text_strong()));
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(RichText::new("Your projects and apps on ndexr are on your cell. This window works on this computer - its own folders and its own stack - so they are not listed here.").size(13.5).color(theme::text())).wrap());
+            ui.add_space(4.0);
+            ui.label(RichText::new(cell.trim_start_matches("https://")).monospace().size(12.0).color(theme::text_strong()));
+            ui.add_space(10.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.add(theme::primary_button("Open my cell's projects")).on_hover_text("this window starts again on your cell: your ndexr projects, apps and agents").clicked() {
+                    pick = Some(crate::account::RunOn::Cell);
+                }
+                if ui.button("Stay on this computer").clicked() {
+                    pick = Some(crate::account::RunOn::Local);
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new("The chip at the left of the status bar shows which you are on, and switches.").size(12.0).color(theme::text()));
+        });
+        if let Some(r) = pick {
+            self.cell_offer = false;
+            if r == crate::account::RunOn::Cell {
+                self.run_on(r, ctx);
+            } else {
+                crate::account::prefer(r);
+            }
+        }
+    }
+
+    /// Where this window works, always on screen (operator, 2026-11-15: "it
+    /// should be obvious somewhere if you are in local or remote connection
+    /// mode"): this computer, or the person's cell on ndexr; its menu says
+    /// what that means and switches.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn connection_chip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let a = self.account.lock().unwrap().clone();
+        let on_cell = a.on_cell.is_some();
+        let (st, word) = if on_cell { (theme::State::Good, "Your cell · ndexr") } else { (theme::State::Idle, "This computer") };
+        let r = ui.scope(|ui| theme::state_mark(ui, st, word)).inner.interact(egui::Sense::click());
+        let tip = if on_cell {
+            "working on your ndexr cell: your projects, apps and agents there".to_owned()
+        } else if a.email.is_some() {
+            "working on this computer: its folders, its stack, its apps at localhost. Your ndexr projects are on your cell - click to go there".to_owned()
+        } else {
+            "working on this computer, with no ndexr connection: its folders, its stack, its apps at localhost".to_owned()
+        };
+        let r = r.on_hover_text(tip);
+        egui::Popup::menu(&r).show(|ui| {
+            theme::chrome_menu(ui, 300.0);
+            if on_cell {
+                ui.label(RichText::new(format!("On your cell: {}", a.on_cell.clone().unwrap_or_default().trim_start_matches("https://"))).size(12.0).color(theme::text_strong()));
+                if ui.button("Work on this computer instead").clicked() {
+                    self.run_on(crate::account::RunOn::Local, ctx);
+                    ui.close();
+                }
+            } else {
+                ui.label(RichText::new("On this computer: its folders and stack; apps run at localhost").size(12.0).color(theme::text_strong()));
+                match (&a.email, &a.cell) {
+                    (Some(_), Some(_)) => {
+                        if ui.button("Open my cell's projects (ndexr)").clicked() {
+                            self.run_on(crate::account::RunOn::Cell, ctx);
+                            ui.close();
+                        }
+                    }
+                    (Some(_), None) => {
+                        ui.label(RichText::new("Your ndexr account has no cell yet.").size(12.0).color(theme::text()));
+                    }
+                    (None, _) => {
+                        if ui.button("Sign in to reach your ndexr projects").clicked() {
+                            match crate::account::sign_in(self.account.clone(), ctx.clone()) {
+                                Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                                Err(e) => self.toast(e, ctx),
+                            }
+                            ui.close();
+                        }
+                    }
+                }
+            }
         });
     }
 
@@ -824,7 +958,76 @@ impl App {
     /// server "should go through inital setup of installing the stack
     /// themselves or consuming it through cvmfs"): setup's Stack step asks.
     /// Nor does airgap mode, or a machine already building its own.
+    /// Asked once, on this computer (api.rs Settings::report): may a failed
+    /// stack build or setup send an anonymous report home? Not while setup or
+    /// a walkthrough is on screen, and never in airgap mode, where nothing is
+    /// sent. The answer is saved with the settings; Global Options changes it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn report_consent(&mut self, ctx: &egui::Context) {
+        let Some(v) = self.settings.lock().unwrap().clone() else { return };
+        if v.settings.report.is_some() || v.settings.airgap || self.setup.open || self.walk.run.is_some() || self.walk.welcome_due() {
+            return;
+        }
+        let mut answer: Option<bool> = None;
+        egui::Modal::new(egui::Id::new("report-consent")).show(ctx, |ui| {
+            ui.set_width(460.0f32.min(ctx.content_rect().width() - 40.0));
+            ui.label(RichText::new("Help improve the ndexr stack?").size(18.0).strong().color(theme::text_strong()));
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(RichText::new("When building or setting up the stack fails on this computer, Cove can send an anonymous report so we can fix it. It arrives as a request, and the fix ships in a release.").size(13.5).color(theme::text())).wrap());
+            ui.add_space(6.0);
+            for line in [
+                "Sent: the step that failed, its exit code and error lines, and this computer's shape - OS, architecture, kernel, glibc, cores, memory",
+                "Never sent: your name, email, user or host name, paths, IP address or files - they are removed from the error lines first",
+                "Only failures, each once, under a random id kept on this computer",
+            ] {
+                ui.add(egui::Label::new(RichText::new(format!("· {line}")).size(12.5).color(theme::text_strong())).wrap());
+            }
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.add(theme::primary_button("Send anonymous reports")).clicked() {
+                    answer = Some(true);
+                }
+                if ui.button("No thanks").clicked() {
+                    answer = Some(false);
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new("Change it any time in Tools › Global Options.").size(12.0).color(theme::text()));
+        });
+        if let Some(yes) = answer {
+            let mut s = v.settings.clone();
+            s.report = Some(yes);
+            // Shown as answered at once, so the dialog does not come back
+            // while the save is on its way.
+            if let Some(view) = self.settings.lock().unwrap().as_mut() {
+                view.settings.report = Some(yes);
+            }
+            let slot = self.settings.clone();
+            self.backend.query(Query::SaveSettings { settings: s }, ctx, move |r: Result<SettingsView, String>| {
+                if let Ok(v) = r {
+                    *slot.lock().unwrap() = Some(v);
+                }
+            });
+        }
+    }
+
     fn auto_setup(&mut self, ctx: &egui::Context) {
+        // Where the stack comes from is asked at every start until it is
+        // chosen, whatever else was skipped (operator, 2026-11-14: "i
+        // installed the tool locally and bypassed setup ... the user is still
+        // not asked").
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.mode_asked && crate::account::stack_mode().is_none() && !self.setup.open {
+            self.mode_asked = true;
+            // A stack already here answers the question (operator, 2026-11-14:
+            // "if it has been set up locally it should auto detect"): the
+            // CVMFS mount is CernVM-FS, a folder built or copied here is
+            // Installed (host.rs stack_root found it). Asked only when none is.
+            match crate::host::use_sh().map(|_| crate::host::stack_root()) {
+                Some(root) => crate::account::set_stack_mode(if root == std::path::Path::new("/opt/ndexr/stack") { crate::api::StackMode::Cvmfs } else { crate::api::StackMode::Installed }),
+                None => self.setup.start_stack(),
+            }
+        }
         if self.first_start {
             let missing = self.settings.lock().unwrap().as_ref().map(|v| stack_missing(&v.stack) && !v.settings.airgap);
             if let Some(missing) = missing {
@@ -840,6 +1043,10 @@ impl App {
             return;
         }
         let quiet = self.settings.lock().unwrap().as_ref().is_some_and(|v| stack_missing(&v.stack) && !v.settings.airgap && !v.stack.building && matches!(v.stack.root_by.as_str(), "root" | "sudo"));
+        // Only for CernVM-FS chosen: an installed stack, or the remote one, is
+        // someone's choice not to mount it (on the desktop, where it is asked).
+        #[cfg(not(target_arch = "wasm32"))]
+        let quiet = quiet && crate::account::stack_mode() == Some(crate::api::StackMode::Cvmfs);
         if quiet {
             self.setup_stack(ctx);
         }
@@ -901,248 +1108,327 @@ impl App {
 
     /// The Cove menu, behind the three dots at the top right (header).
     fn menu_items(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let item = |ui: &mut egui::Ui, label: &str, keys: &str| ui.add(egui::Button::new(label).shortcut_text(keys)).clicked();
-        let lang = self.ide.lang;
         let small = compact(ctx);
-        let unread = self.inbox.unread();
-        // Chrome's ⋮, not RStudio's menu bar (operator, 2026-11-14: "menus
-        // should feel a bit like chrome, no more feeling like rstudio"):
-        // one list in sections - tabs, the open project and file, zoom
-        // and the view, the console, settings and help - each a finger
-        // tall, with few submenus and none two deep.
-        crate::theme::chrome_menu(ui, if small { 280.0 } else { 300.0 });
-        // The whole old menu bar lives here since the tabs took the top row
-        // (operator, 2026-11-14: "should be the top most thing and the rest
-        // of the menubar goes into the side button on top right"): the
-        // modes (a phone has them along the bottom), then Messages, Help,
-        // Save and what is running, then the other sessions.
-        if !small {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                self.mode_tabs(ui, false, 0.0);
-            });
-            crate::theme::menu_sep(ui);
+        // A phone has no keyboard: its shortcuts are noise there.
+        let item = |ui: &mut egui::Ui, label: &str, keys: &str| ui.add(egui::Button::new(label).shortcut_text(if small { "" } else { keys })).clicked();
+        let lang = self.ide.lang;
+        // What can I do, in a short list (the operator's review, 2026-11-14;
+        // 280-340 px). Project, View and Console are sections that open
+        // beside it on hover, as an IDE's menus do (2026-11-18: "hover over
+        // options shows highlight and auto open the menu like normal menubar
+        // ide"); the flat list had run past a phone's screen, Restart Shell
+        // out of reach. Help is a panel; the other sessions a window.
+        crate::theme::chrome_menu(ui, 300.0);
+        if small {
+            ui.spacing_mut().interact_size.y = 40.0;
         }
-        {
-            if small {
-                ui.spacing_mut().interact_size.y = 40.0;
-            }
-            let n = if unread > 0 { format!("Messages · {unread} new") } else { "Messages".to_owned() };
-            if ui.add(egui::Button::new(RichText::new(n).size(if small { 14.0 } else { 12.5 }).color(if unread > 0 { theme::primary() } else { theme::text_strong() })).min_size(egui::vec2(0.0, if small { 40.0 } else { 30.0 }))).clicked() {
-                if self.inbox.open {
-                    self.inbox.open = false;
-                } else {
-                    self.inbox.show_requests();
+        let room = (ctx.content_rect().height() - 90.0).max(240.0);
+        egui::ScrollArea::vertical().max_height(room).auto_shrink([false, true]).show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                if item(ui, "New tab", "") {
+                    self.ide.new_tab();
+                    self.mode = Mode::Ide;
+                    ui.close();
                 }
-                ui.close();
-            }
-            ui.menu_button(RichText::new("Help - walkthroughs, shortcuts, a request").size(if small { 14.0 } else { 12.5 }), |ui| {
-                crate::theme::chrome_menu(ui, 280.0);
-                self.help_items(ui);
+                // Only when there is one to reopen: a greyed row is noise.
+                if let Some(h) = self.ide.tabs.closed.last().map(|h| crate::tabs::Tabs::short(h).to_owned()) {
+                    if item(ui, &format!("Reopen closed tab · {h}"), "") {
+                        self.ide.reopen_tab(ctx);
+                        self.mode = Mode::Ide;
+                        ui.close();
+                    }
+                }
+                if item(ui, "Other sessions…", "") {
+                    self.sessions_open = true;
+                    ui.close();
+                }
+                // This computer's Cove in a browser (localserve.rs): server mode
+                // without a server of anyone else's.
+                #[cfg(unix)]
+                if self.backend.is_local() {
+                    if item(ui, "Open in a browser", "") {
+                        match crate::localserve::open() {
+                            Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                            Err(e) => self.toast(e, ctx),
+                        }
+                        ui.close();
+                    }
+                    if crate::localserve::running() && item(ui, "Stop the browser's Cove", "") {
+                        crate::localserve::stop();
+                        ui.close();
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    // Any folder on this computer as the project - no domain
+                    // needed (operator, 2026-10-19). Only where the consoles run
+                    // on this computer; on a cell a local path means nothing.
+                    let local = self.backend.is_local();
+                    let open = ui
+                        .add_enabled(local, egui::Button::new("Open folder…").shortcut_text(if small { "" } else { "Ctrl+Shift+O" }))
+                        .on_disabled_hover_text("This window runs on your cell: open a folder there, in Files.");
+                    if open.clicked() {
+                        self.pick_folder(ctx);
+                        ui.close();
+                    }
+                }
+                // The open project, a section beside the menu.
+                if let Some(host) = self.ide.domain.as_ref().map(|d| d.host.clone()) {
+                    crate::theme::menu_sep(ui);
+                    let short = crate::tabs::Tabs::short(&host).to_owned();
+                    crate::theme::menu_fold(ui, "Project", &short, false, |ui| {
+                        if item(ui, "Project settings…", "") {
+                            self.project_settings = true;
+                            self.ask_modules(ctx);
+                            ui.close();
+                        }
+                        if item(ui, "History (Git)…", "") {
+                            self.ide.open_versions(ctx);
+                            ui.close();
+                        }
+                        if item(ui, "Save file", "Ctrl+S") {
+                            self.ide.save_current(ctx);
+                            ui.close();
+                        }
+                        if item(ui, "Close file", "") {
+                            self.ide.close_current();
+                            ui.close();
+                        }
+                        // Archive and Delete last, apart, in the colour of what destroys.
+                        crate::theme::menu_sep(ui);
+                        if ui.add(egui::Button::new(RichText::new(format!("Archive {short}…")).color(theme::State::Failed.color()))).clicked() {
+                            self.ide.ask_remove(&host, false);
+                            ui.close();
+                        }
+                        if ui.add(egui::Button::new(RichText::new(format!("Delete {short}…")).color(theme::State::Failed.color()))).clicked() {
+                            self.ide.ask_remove(&host, true);
+                            ui.close();
+                        }
+                    });
+                }
+                crate::theme::menu_sep(ui);
+                let theme_now = self.saved.theme;
+                let z = ctx.zoom_factor();
+                let view_state = if (z - 1.0).abs() > 0.01 { format!("{} · {:.0}%", theme_now.label(), z * 100.0) } else { theme_now.label().to_owned() };
+                crate::theme::menu_fold(ui, "View", &view_state, false, |ui| {
+                    // Zoom: its size is the label (a click puts it back to
+                    // 100%), − and + beside it - one row, not four controls
+                    // pushed against the edge.
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        let h = if small { 38.0 } else { 30.0 };
+                        let side = egui::vec2(h + 4.0, h);
+                        let w = (ui.available_width() - 2.0 * side.x - 8.0).max(80.0);
+                        if ui.add(egui::Button::new(format!("Zoom {:.0}%", z * 100.0)).min_size(egui::vec2(w, h))).on_hover_text("back to 100%").clicked() {
+                            ctx.set_zoom_factor(1.0);
+                        }
+                        if ui.add(egui::Button::new("−").min_size(side)).on_hover_text("smaller (Ctrl+-)").clicked() {
+                            ctx.set_zoom_factor((z - 0.1).max(0.5));
+                        }
+                        if ui.add(egui::Button::new("+").min_size(side)).on_hover_text("larger (Ctrl+=)").clicked() {
+                            ctx.set_zoom_factor((z + 0.1).min(3.0));
+                        }
+                    });
+                    if item(ui, if is_fullscreen(ctx) { "Exit full screen" } else { "Full screen" }, "F11") {
+                        if let Err(why) = toggle_fullscreen(ctx) {
+                            self.toast(why, ctx);
+                        }
+                        ui.close();
+                    }
+                    // Theme: each in its own colours, the one in use ticked. A
+                    // pick applies at once and the menu stays, to compare.
+                    crate::theme::menu_fold(ui, "Theme", theme_now.label(), true, |ui| {
+                        for p in crate::setup::ThemePref::ALL {
+                            let pl = &theme::PALETTES[p.palette(ctx)];
+                            if theme::theme_row(ui, p.label(), pl, theme_now == p, small) {
+                                self.saved.theme = p;
+                                crate::setup::follow_theme(p, ctx);
+                            }
+                        }
+                    });
+                    // Drag a tab to a corner for a window there; this puts them back.
+                    if item(ui, "Reset window layout", "") {
+                        self.saved.grid = Grid::default();
+                        self.saved.zoom_tab = None;
+                        ui.close();
+                    }
+                });
+                crate::theme::menu_sep(ui);
+                // What RStudio called Session: the consoles - the one in front.
+                let busy = self.ide.lang_busy(lang);
+                let word = lang.word();
+                let console_state = if busy { format!("{word} · busy") } else { word.to_owned() };
+                crate::theme::menu_fold(ui, "Console", &console_state, false, |ui| {
+                    if busy && item(ui, &format!("Interrupt {word}"), "Esc") {
+                        self.ide.interrupt(lang, ctx);
+                        ui.close();
+                    }
+                    if item(ui, &format!("Restart {word}"), if lang == Lang::R { "Ctrl+Shift+F10" } else { "" }) {
+                        self.ide.restart(lang, ctx);
+                        ui.close();
+                    }
+                    if lang != Lang::Shell && item(ui, "Restart Shell", "") {
+                        self.ide.restart(Lang::Shell, ctx);
+                        ui.close();
+                    }
+                    if lang != Lang::Shell && item(ui, &format!("Clear workspace ({word})"), "") {
+                        self.ide.clear_workspace(ctx);
+                        ui.close();
+                    }
+                });
+                crate::theme::menu_sep(ui);
+                if item(ui, "Settings…", "") {
+                    self.open_options(ctx);
+                    ui.close();
+                }
+                if item(ui, "Help…", "F1") {
+                    self.help_open = true;
+                    ui.close();
+                }
             });
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(8.0);
-                self.ide.push_button(ui, ctx, "Save");
-                self.session_blocks(ui);
+        });
+    }
+
+    /// Help, docked at the right (the operator's review, 2026-11-14: "Help:
+    /// searchable panel"): Show me how, the request, the pages, updates and
+    /// About - beside the work, not over it. F1 or ? opens it.
+    fn help_panel(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        if ctx.input(|i| i.key_pressed(egui::Key::F1)) {
+            self.help_open = !self.help_open;
+        }
+        if !self.help_open {
+            return;
+        }
+        let item = |ui: &mut egui::Ui, label: &str| ui.add(egui::Button::new(label).min_size(egui::vec2(0.0, 30.0))).clicked();
+        egui::Panel::right("rs-help").resizable(false).exact_size(320.0).frame(egui::Frame::new().fill(theme::bg()).inner_margin(egui::Margin::same(12))).show(root, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Help").size(16.0).strong().color(theme::text_strong()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(egui::Button::new("✕").min_size(egui::vec2(32.0, 32.0))).on_hover_text("close help (Esc, F1)").clicked() {
+                        self.help_open = false;
+                    }
+                });
+            });
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.help_open = false;
+            }
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                self.help_items(ui);
+                ui.separator();
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(u) = &self.updater {
+                    if item(ui, "Check for updates") {
+                        u.check_now(ctx);
+                        self.release.check_now(ctx);
+                    }
+                }
+                if crate::release::ReleaseBar::applies(&self.backend) {
+                    if item(ui, "Check for updates") {
+                        self.release.check_now(ctx);
+                    }
+                    let mut auto = self.release.auto();
+                    if ui.checkbox(&mut auto, "Update without asking").on_hover_text("a newer Cove restarts this session's R, Python and terminal as soon as it is ready; your files, settings and agents stay").changed() {
+                        self.release.set_auto(auto);
+                    }
+                }
+                if item(ui, "Set up Cove…") {
+                    self.setup.start();
+                }
+                if item(ui, "Connect Claude…") {
+                    self.setup.start_claude(ctx);
+                }
+                // The install instructions for every environment set the
+                // Builds view shows the status of (repo.ndexr.io, 2026-10-28).
+                if item(ui, "How to use the environments ↗") {
+                    ctx.open_url(egui::OpenUrl::new_tab("https://repo.ndexr.io"));
+                }
+                if item(ui, "About Cove") {
+                    self.about = true;
+                }
+            });
+        });
+    }
+
+    /// What is running and what needs you, along the bottom at the desk (the
+    /// review, 2026-11-14: "running environments, language versions, CPU,
+    /// memory, and connections belong in a persistent status area - not the
+    /// application menu"). Left: Messages, and Claude. Right: the runtime,
+    /// the machine, Save, and Help. A phone keeps them in its menu bar's
+    /// place: the modes take the bottom there.
+    fn status_bar(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        if compact(ctx) {
+            return;
+        }
+        let frame = egui::Frame::new().fill(theme::ground()).inner_margin(egui::Margin::symmetric(8, 2));
+        egui::Panel::bottom("rs-status").resizable(false).show_separator_line(true).exact_size(30.0).frame(frame).show(root, |ui| {
+            crate::tour::mark(ui, "status-bar", ui.max_rect());
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.connection_chip(ui, ctx);
+                    ui.separator();
+                }
+                let unread = self.inbox.unread();
+                let (st, word) = if unread > 0 { (theme::State::Attention, format!("Messages · {unread} new")) } else { (theme::State::Idle, "Messages".to_owned()) };
+                let r = ui.scope(|ui| theme::state_mark(ui, st, &word)).inner.interact(egui::Sense::click());
+                if r.on_hover_text("requests, answers and people - click to open").clicked() {
+                    if self.inbox.open {
+                        self.inbox.open = false;
+                    } else {
+                        self.inbox.show_requests();
+                    }
+                }
+                ui.separator();
                 if crate::setup::chip(ui, self.setup.status()) {
                     self.setup.start_claude(ctx);
                 }
-                if !small {
-                    self.vitals_chip(ui, ctx);
-                }
+                // Where the stack comes from, and the way to change it.
                 #[cfg(not(target_arch = "wasm32"))]
-                self.account_button(ui, ctx);
-            });
-            // Cove's other sessions, which the project button listed before
-            // the tabs replaced it.
-            ui.menu_button(RichText::new("Other sessions").size(if small { 14.0 } else { 12.5 }), |ui| {
-                crate::theme::chrome_menu(ui, 280.0);
-                self.recents.sessions_list(ui, &self.backend);
-            });
-            crate::theme::menu_sep(ui);
-        }
-        if item(ui, "New tab", "") {
-            self.ide.new_tab();
-            self.mode = Mode::Ide;
-            ui.close();
-        }
-        let closed = self.ide.tabs.closed.last().map(|h| crate::tabs::Tabs::short(h).to_owned());
-        let reopen = ui.add_enabled(closed.is_some(), egui::Button::new(match &closed {
-            Some(h) => format!("Reopen closed tab · {h}"),
-            None => "Reopen closed tab".to_owned(),
-        }));
-        if reopen.clicked() {
-            self.ide.reopen_tab(ctx);
-            self.mode = Mode::Ide;
-            ui.close();
-        }
-        crate::theme::menu_sep(ui);
-        // The open project (projects and sessions are the project
-        // button's, ide.rs domain_bar) and the file in front.
-        if let Some(host) = self.ide.domain.as_ref().map(|d| d.host.clone()) {
-            ui.menu_button(format!("Project · {}", crate::tabs::Tabs::short(&host)), |ui| {
-                crate::theme::chrome_menu(ui, 220.0);
-                if item(ui, "Settings…", "") {
-                    self.project_settings = true;
-                    self.ask_modules(ctx);
-                    ui.close();
-                }
-                if item(ui, "Git…", "") {
-                    self.ide.open_versions(ctx);
-                    ui.close();
-                }
-                let verbs = self.ide.app_verbs();
-                if !verbs.is_empty() {
-                    crate::theme::menu_sep(ui);
-                    for (verb, word) in [("build", "Build"), ("up", "Up"), ("down", "Down")] {
-                        if verbs.iter().any(|v| v == verb) && item(ui, word, "") {
-                            self.ide.app_action(verb, ctx);
-                            ui.close();
-                        }
+                {
+                    ui.separator();
+                    let (st, word) = match crate::account::stack_mode() {
+                        Some(m) => (theme::State::Good, m.words().to_owned()),
+                        None => (theme::State::Attention, "Stack · not chosen".to_owned()),
+                    };
+                    let r = ui.scope(|ui| theme::state_mark(ui, st, &word)).inner.interact(egui::Sense::click());
+                    crate::tour::mark(ui, "stack-chip", r.rect);
+                    if r.on_hover_text("where R, Python and every module come from: installed here, CernVM-FS here, or remote on your cell - click to change").clicked() {
+                        self.setup.start_stack();
                     }
                 }
-                crate::theme::menu_sep(ui);
-                if item(ui, "Archive…", "") {
-                    self.ide.ask_remove(&host, false);
-                    ui.close();
-                }
-                if ui.add(egui::Button::new(RichText::new("Delete…").color(theme::warn()))).clicked() {
-                    self.ide.ask_remove(&host, true);
-                    ui.close();
-                }
-            });
-        }
-        // No New File (operator, 2026-10-26: "a relic of the past"): files
-        // are made in Files and by the agent; Ctrl+Shift+N still opens a script.
-        if item(ui, "Save file", "Ctrl+S") {
-            self.ide.save_current(ctx);
-            ui.close();
-        }
-        if item(ui, "Close file", "") {
-            self.ide.close_current();
-            ui.close();
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // Any folder on this computer as the project - no domain
-            // needed (operator, 2026-10-19). Only where the consoles run
-            // on this computer; on a cell a local path means nothing.
-            let local = self.backend.is_local();
-            let open = ui
-                .add_enabled(local, egui::Button::new("Open folder…").shortcut_text("Ctrl+Shift+O"))
-                .on_disabled_hover_text("This window runs on your cell: open a folder there, in Files.");
-            if open.clicked() {
-                self.pick_folder(ctx);
-                ui.close();
-            }
-        }
-        crate::theme::menu_sep(ui);
-        // Zoom as Chrome has it: one row, − the size +, and full screen.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.add_space(14.0);
-            ui.label("Zoom");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let full = is_fullscreen(ctx);
-                if ui.add(egui::Button::new(if full { "⛶ exit" } else { "⛶" }).min_size(egui::vec2(36.0, 30.0))).on_hover_text(if full { "exit full screen (F11)" } else { "full screen (F11)" }).clicked() {
-                    if let Err(why) = toggle_fullscreen(ctx) {
-                        self.toast(why, ctx);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let help = ui.add(egui::Button::selectable(self.help_open, RichText::new("? Help").size(12.5)).min_size(egui::vec2(0.0, 26.0)));
+                    crate::tour::mark(ui, "help-button", help.rect);
+                    if help.on_hover_text("help: show me how, a request, shortcuts (F1)").clicked() {
+                        self.help_open = !self.help_open;
                     }
-                }
-                ui.add_space(6.0);
-                let z = ctx.zoom_factor();
-                if ui.add(egui::Button::new("+").min_size(egui::vec2(32.0, 30.0))).on_hover_text("larger (Ctrl+=)").clicked() {
-                    ctx.set_zoom_factor((z + 0.1).min(3.0));
-                }
-                if ui.add(egui::Button::new(format!("{:.0}%", z * 100.0)).min_size(egui::vec2(52.0, 30.0))).on_hover_text("back to 100%").clicked() {
-                    ctx.set_zoom_factor(1.0);
-                }
-                if ui.add(egui::Button::new("−").min_size(egui::vec2(32.0, 30.0))).on_hover_text("smaller (Ctrl+-)").clicked() {
-                    ctx.set_zoom_factor((z - 0.1).max(0.5));
-                }
+                    if self.mode == Mode::Ide {
+                        self.ide.push_button(ui, ctx, "Save");
+                    }
+                    ui.separator();
+                    self.vitals_chip(ui, ctx);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.account_button(ui, ctx);
+                    self.session_blocks(ui);
+                });
             });
         });
-        ui.menu_button("Theme", |ui| {
-            crate::theme::chrome_menu(ui, 200.0);
-            for p in crate::setup::ThemePref::ALL {
-                if ui.radio(self.saved.theme == p, p.label()).clicked() {
-                    self.saved.theme = p;
-                    crate::setup::follow_theme(p, ctx);
-                    ui.close();
-                }
-            }
-        });
-        // Drag a tab to a corner for a window there; this puts them back.
-        if item(ui, "Reset layout", "") {
-            self.saved.grid = Grid::default();
-            self.saved.zoom_tab = None;
-            ui.close();
+    }
+
+    /// Cove's other sessions, in a window of their own (they were a submenu).
+    fn sessions_window(&mut self, ctx: &egui::Context) {
+        if !self.sessions_open {
+            return;
         }
-        crate::theme::menu_sep(ui);
-        // What RStudio called Session: the consoles.
-        ui.menu_button("Console", |ui| {
-            crate::theme::chrome_menu(ui, 260.0);
-            if item(ui, &format!("Interrupt {}", lang.word()), "Esc") {
-                self.ide.interrupt(lang, ctx);
-            }
-            if item(ui, "Restart R", "Ctrl+Shift+F10") {
-                self.ide.restart(Lang::R, ctx);
-            }
-            if item(ui, "Restart Shell", "") {
-                self.ide.restart(Lang::Shell, ctx);
-            }
-            if lang != Lang::Shell {
-                crate::theme::menu_sep(ui);
-                if item(ui, &format!("Clear workspace ({})", lang.word()), "") {
-                    self.ide.clear_workspace(ctx);
-                }
-            }
+        let mut open = true;
+        egui::Window::new("Other sessions").open(&mut open).order(egui::Order::Foreground).default_width(320.0).collapsible(false).show(ctx, |ui| {
+            self.recents.sessions_list(ui, &self.backend);
         });
-        crate::theme::menu_sep(ui);
-        if item(ui, "Settings…", "") {
-            self.open_options(ctx);
-            ui.close();
-        }
-        ui.menu_button("Help", |ui| {
-            crate::theme::chrome_menu(ui, 260.0);
-            // Check for Updates, in a browser session and the desktop app
-            // alike: release.rs shows what it finds and takes a newer one.
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(u) = &self.updater {
-                if item(ui, "Check for Updates", "") {
-                    u.check_now(ctx);
-                    self.release.check_now(ctx);
-                }
-            }
-            if crate::release::ReleaseBar::applies(&self.backend) {
-                if item(ui, "Check for Updates", "") {
-                    self.release.check_now(ctx);
-                }
-                let mut auto = self.release.auto();
-                if ui.checkbox(&mut auto, "Update without asking").on_hover_text("a newer Cove restarts this session's R, Python and terminal as soon as it is ready; your files, settings and agents stay").changed() {
-                    self.release.set_auto(auto);
-                }
-            }
-            if item(ui, "Set up Cove…", "") {
-                self.setup.start();
-            }
-            if item(ui, "Connect Claude…", "") {
-                self.setup.start_claude(ctx);
-            }
-            // The install instructions for every environment set the
-            // Builds view shows the status of (repo.ndexr.io, 2026-10-28).
-            if item(ui, "How to use the environments", "") {
-                ctx.open_url(egui::OpenUrl::new_tab("https://repo.ndexr.io"));
-            }
-            ui.separator();
-            if item(ui, "Send a Request…", "") {
-                self.request = Some(Default::default());
-            }
-            ui.separator();
-            if item(ui, "About Cove", "") {
-                self.about = true;
-            }
-        });
+        self.sessions_open = open;
     }
 
     /// Where RStudio Server shows who is signed in: the machine, and the
@@ -1423,6 +1709,13 @@ impl App {
                 self.toast(format!("{note} - connecting to your cell"), ctx);
                 self.run_on(crate::account::RunOn::Cell, ctx);
                 return;
+            }
+            // Signed in on this computer, with a cell: the apps on ndexr are
+            // there, not here - say so and offer it (operator, 2026-11-15: "I
+            // signed in and on the desktop version I didn't see my apps I'd
+            // deployed on ndexr"). Asked at each sign-in, whatever was picked.
+            if fresh && a.on_cell.is_none() && a.cell.is_some() {
+                self.cell_offer = true;
             }
             self.toast(note, ctx);
         }
@@ -1715,41 +2008,52 @@ impl App {
             // files"). One of them already in front stays, so it can be left.
             let phone = compact(ctx);
             let strip = theme::strip(ui, theme::TAB_H, theme::pane_hdr(), |ui| {
-                for &t in &tabs {
-                    if phone && t != front && matches!(t, Tab::Console | Tab::Terminal | Tab::Files) {
-                        continue;
-                    }
-                    // No status light in the strip (operator, 2026-10-20: "we
-                    // dont need the * in the tabs"); the state is in the tip.
-                    let (label, _, tip) = self.ide.tab_head(t);
-                    let (r, _) = theme::tab(ui, &label, t == front, None, false);
-                    crate::tour::mark(ui, &format!("tab:{t:?}"), r.rect);
-                    let r = r.interact(egui::Sense::drag());
-                    if r.drag_started() {
-                        self.drag.tab = Some(t);
-                    }
-                    let r = if tip.is_empty() || self.drag.tab.is_some() { r } else { r.on_hover_text(tip) };
-                    if r.clicked() {
-                        click = Some(t);
-                    }
-                    if solo_url(t).is_some() {
-                        r.context_menu(|ui| {
-                            if ui.button(format!("Open {} in a new page", t.name())).clicked() {
-                                out = Some(t);
-                                ui.close();
-                            }
-                        });
-                    }
-                }
+                // The tools first, from the right; the tabs get what is left
+                // and scroll sideways when they need more. Drawn tabs-first,
+                // a phone's tabs ran under the tools ("Settings" under the
+                // window buttons; operator's screenshot, 2026-11-14: "looks
+                // bad on mobile").
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     z = theme::zoom_button(ui, zoomed);
                     if solo_url(front).is_some() && theme::tool(ui, "↗", &format!("open {} in a new page of its own", front.name())).clicked() {
                         out = Some(front);
                     }
                     self.ide.tab_tools(ui, ctx, front);
-                    if at == (0, 0) && ctx.content_rect().width() < 600.0 && self.ide.domain.is_some() && self.ide.app_strip_wanted() {
-                        self.ide.app_strip_compact(ui, ctx);
-                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        egui::ScrollArea::horizontal()
+                            .id_salt(("pane-tabs", at))
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    for &t in &tabs {
+                                        if phone && t != front && matches!(t, Tab::Console | Tab::Terminal | Tab::Files) {
+                                            continue;
+                                        }
+                                        // No status light in the strip (operator, 2026-10-20: "we
+                                        // dont need the * in the tabs"); the state is in the tip.
+                                        let (label, _, tip) = self.ide.tab_head(t);
+                                        let (r, _) = theme::tab(ui, &label, t == front, None, false);
+                                        crate::tour::mark(ui, &format!("tab:{t:?}"), r.rect);
+                                        let r = r.interact(egui::Sense::drag());
+                                        if r.drag_started() {
+                                            self.drag.tab = Some(t);
+                                        }
+                                        let r = if tip.is_empty() || self.drag.tab.is_some() { r } else { r.on_hover_text(tip) };
+                                        if r.clicked() {
+                                            click = Some(t);
+                                        }
+                                        if solo_url(t).is_some() {
+                                            r.context_menu(|ui| {
+                                                if ui.button(format!("Open {} in a new page", t.name())).clicked() {
+                                                    out = Some(t);
+                                                    ui.close();
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
+                            });
+                    });
                 });
                 ui.max_rect()
             });
@@ -1779,7 +2083,7 @@ impl App {
     /// of a window: into that window. Near a window's left or right edge: a
     /// new column there - between two columns when that edge is between them;
     /// near its top or bottom: a new window above or below it in its column.
-    /// Beyond 3×3 an edge takes the tab into the window instead.
+    /// Beyond 4×4 an edge takes the tab into the window instead.
     fn drop_target(&self, t: Tab, p: egui::Pos2) -> Option<Drop> {
         if let Some(&(at, _)) = self.drag.strips.iter().find(|(_, r)| r.contains(p)) {
             return Some(Drop::Join(at.0, at.1));
@@ -1948,12 +2252,21 @@ impl App {
                                 });
                                 ui.add_space(14.0);
                                 heading(ui, "Stack");
-                                ui.label(RichText::new("Where modules come from. Empty: the CVMFS mount at /opt/ndexr/stack, else a local build at ~/.ndexr/stack. With neither, R, Python and the shell run from this computer's PATH.").size(12.0).color(theme::muted()));
+                                ui.label(RichText::new("Where modules come from. Empty: the CVMFS mount at /opt/ndexr/stack, else a local build at ~/.ndexr/stack. With neither, the consoles do not start: they run on the stack only.").size(12.0).color(theme::muted()));
                                 ui.add_space(4.0);
                                 egui::Grid::new("options-stack").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
                                     ui.label("Stack folder");
                                     ui.add(egui::TextEdit::singleline(&mut draft.stack_dir).font(egui::TextStyle::Monospace).hint_text("/path/with/use.sh — empty: automatic").desired_width(field_w))
                                         .on_hover_text("a stack built or copied to its own folder (it has use.sh, or <platform>/use.sh)");
+                                    ui.end_row();
+                                    ui.label("Error reports");
+                                    let mut on = draft.report == Some(true);
+                                    if ui.checkbox(&mut on, "send an anonymous report when a stack build or setup fails")
+                                        .on_hover_text("the failed step, its exit code and error lines, and this computer's shape; names, paths and addresses are removed first. Filed as a request; never sent in airgap mode")
+                                        .changed()
+                                    {
+                                        draft.report = Some(on);
+                                    }
                                     ui.end_row();
                                 });
                             }
@@ -1984,7 +2297,7 @@ impl App {
         });
         self.options_page = page;
         if setup {
-            self.setup_stack(ctx);
+            crate::setup::ask_cvmfs("app");
         }
         if run_test {
             self.testing = true;
@@ -2017,10 +2330,14 @@ impl App {
                 let last = job.lines.last().cloned().unwrap_or_default();
                 ui.add(egui::Label::new(RichText::new(format!("{} — {last}", job.what)).size(11.5).color(theme::muted())).truncate());
             } else if job.ok == Some(false) {
-                let last = job.lines.last().cloned().unwrap_or_default();
+                // The cause, not the summary: `ndexr install cvmfs` ends with
+                // "preflight failed - fix the ✘ items above", and the ✘ line
+                // that says which was off screen (operator, 2026-11-14, a new
+                // laptop). The first ✘ line and its → remedy, else the last line.
+                let last = job.why();
                 ui.label(RichText::new(format!("{} failed:", job.what)).size(11.5).color(theme::warn()));
                 ui.add(egui::Label::new(RichText::new(last).monospace().size(11.0).color(theme::muted())).truncate());
-                options = ui.small_button("Details").clicked();
+                options = ui.small_button("Details").on_hover_text("the setup's whole output, why it failed, and the ways to try again").clicked();
             } else if stack_missing(&stack) {
                 ui.label(RichText::new("The ndexr stack is not on this machine yet - R, Python and every module come from it.").size(11.5).color(theme::warn()));
                 if stack.root_by.is_empty() {
@@ -2031,10 +2348,15 @@ impl App {
             }
         });
         if setup {
+            crate::setup::ask_cvmfs("app");
+        }
+        if crate::setup::cvmfs_consent(ctx, "app", &stack) {
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::account::set_stack_mode(crate::api::StackMode::Cvmfs);
             self.setup_stack(ctx);
         }
         if options {
-            self.open_options(ctx);
+            self.setup.show_job(job.clone());
         }
     }
 
@@ -2191,6 +2513,7 @@ impl App {
         } else {
             self.ide.domain.as_ref().map(|x| x.host.clone()).unwrap_or_else(|| "cove.ndexr.io".into())
         };
+        let system = if d.system { self.system_info(ctx, &domain) } else { String::new() };
         let (mut keep, mut send) = (true, false);
         let (mic, backend) = (&mut self.request_mic, &self.backend);
         // One even column: a heading and one line on what happens to it, then
@@ -2272,6 +2595,15 @@ impl App {
             }
             ui.add_space(6.0);
             ui.checkbox(&mut d.blocked, "I'm blocked - I can't continue without this");
+            // Asked, never assumed (operator, 2026-11-14: "must be granted
+            // permission in the request though checkbox selected defaults to
+            // no"): ticked, the exact text that goes is shown under it.
+            ui.checkbox(&mut d.system, "Send system information, so an agent can understand what failed");
+            if d.system {
+                egui::CollapsingHeader::new(RichText::new("What is sent").size(12.0)).id_salt("request-system").default_open(true).show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(&system).monospace().size(11.0).color(theme::text())).wrap());
+                });
+            }
             });
             ui.add_space(14.0);
             ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 30.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2286,26 +2618,75 @@ impl App {
         if send {
             d.sending = true;
             let slot = self.request_sent.clone();
+            // Only what was shown under the box, and only when it is ticked.
+            let trying = crate::api::with_system(&d.trying, &system);
             // The desktop app files it itself, with the person's key: the
             // machine's half needs the platform's R, which only a Cove server
             // has (a laptop, a Mac and a cell all failed). A browser on a Cove
             // server still asks that server.
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let (what, trying, blocked, ctx2) = (d.filed_what(), d.trying.clone(), d.blocked, ctx.clone());
+                let (what, blocked, ctx2) = (d.filed_what(), d.blocked, ctx.clone());
                 std::thread::spawn(move || {
                     *slot.lock().unwrap() = Some(crate::account::send_request(&domain, &what, &trying, blocked));
                     ctx2.request_repaint();
                 });
             }
             #[cfg(target_arch = "wasm32")]
-            self.backend.query(Query::SendRequest { domain, what: d.filed_what(), trying: d.trying.clone(), blocked: d.blocked, files: d.files.clone() }, ctx, move |r: Result<i64, String>| {
+            self.backend.query(Query::SendRequest { domain, what: d.filed_what(), trying, blocked: d.blocked, files: d.files.clone() }, ctx, move |r: Result<i64, String>| {
                 *slot.lock().unwrap() = Some(r);
             });
         }
         if keep {
             self.request = Some(d);
         }
+    }
+
+    /// What a request carries about this Cove when the person allows it:
+    /// enough for an agent to place a failure - the build, the machine's
+    /// kind, the stack, the runtime, the project and its app's last job, the
+    /// window. No user name, host name, home folder or file contents.
+    fn system_info(&self, ctx: &egui::Context, domain: &str) -> String {
+        let mut l: Vec<String> = Vec::new();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            l.push(format!("Cove: v{} desktop · {}", update::VERSION, update::platform()));
+            l.push(format!("Stack: {}", crate::account::stack_mode().map_or("not chosen", |m| m.words())));
+        }
+        #[cfg(target_arch = "wasm32")]
+        l.push("Cove: in a browser".to_owned());
+        if let Some(p) = self.probe.lock().unwrap().clone() {
+            if !p.os.is_empty() {
+                l.push(format!("System: {}", p.os));
+            }
+            if let Some(v) = p.version.filter(|v| !v.is_empty()) {
+                l.push(format!("ndexr CLI: {v}"));
+            }
+        }
+        let banner = self.ide.banner(Lang::R);
+        if !banner.is_empty() {
+            l.push(format!("Runtime: {banner}"));
+        }
+        let mode = MODES.iter().find(|m| m.0 == self.mode).map_or("", |m| m.1);
+        l.push(format!("About: {domain} · in {mode}"));
+        let seen = self.ide.tour_seen();
+        if seen.project.is_some() {
+            let mut app = format!("Project app: {} {}", if seen.language.is_empty() { "?" } else { &seen.language }, if seen.kind.is_empty() { "" } else { &seen.kind });
+            app.push_str(if seen.running { " · running" } else { " · not running" });
+            if seen.job_running {
+                app.push_str(" · a job is running");
+            }
+            if !seen.env_module.is_empty() {
+                app.push_str(&format!(" · {}", seen.env_module));
+            }
+            l.push(app);
+            if let Some(e) = &seen.job_failed {
+                l.push(format!("Last app job failed: {}", e.chars().take(600).collect::<String>()));
+            }
+        }
+        let r = ctx.content_rect();
+        l.push(format!("Window: {:.0}×{:.0} at {:.2}x", r.width(), r.height(), ctx.pixels_per_point()));
+        l.join("\n")
     }
 
     fn about_dialog(&mut self, ctx: &egui::Context) {
@@ -2401,6 +2782,9 @@ struct RequestDraft {
     kind: usize,
     /// Pasted, dropped or picked: screenshots, recordings, documents.
     files: Vec<crate::api::Attachment>,
+    /// The person allowed the system information to go with it (`system_info`);
+    /// off until they tick it, each request.
+    system: bool,
 }
 
 /// What a requested piece of software is, as the stack files it.
@@ -2689,10 +3073,9 @@ fn environment(ui: &mut egui::Ui, s: &api::StackView, c: &mut CvmfsSettings, job
         ui.label(RichText::new(format!("{} {state}", job.what)).size(11.5).color(if job.ok == Some(false) { theme::warn() } else { theme::muted() }));
         egui::Frame::new().fill(theme::surface()).inner_margin(6).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            egui::ScrollArea::vertical().id_salt("stack-job").max_height(140.0).stick_to_bottom(true).show(ui, |ui| {
-                for l in job.lines.iter().rev().take(200).rev() {
-                    ui.label(RichText::new(l).monospace().size(10.5).color(theme::text()));
-                }
+            theme::log_scroll(egui::ScrollArea::vertical().id_salt("stack-job").max_height(140.0).stick_to_bottom(true), ui, |ui| {
+                let from = job.lines.len().saturating_sub(200);
+                theme::selectable_lines(ui, &job.lines[from..], egui::FontId::monospace(10.5), theme::text(), true);
             });
         });
     }
@@ -2762,17 +3145,12 @@ impl App {
     /// The IDE: RStudio's frame, the windows.
     fn ide_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         let bar = |fill| egui::Frame::new().fill(fill).inner_margin(egui::Margin::symmetric(6, 2));
-        // The project and the toolbar are the header's now (header); the
-        // strip shows only while it has something to act on (app_strip_wanted)
-        // and never over a window zoomed to fill the screen.
+        // The app's controls are the App pane's, right above its site
+        // (operator, 2026-11-14: "node/start/build/logs should go into the
+        // app sub menu ... where the app is running right above its viewer
+        // and we should remove that top second row"); this keeps its state.
         if self.ide.domain.is_some() {
-            // A phone has no row to spare: the strip folds into the first
-            // window's tab row (pane, app_strip_compact).
-            if self.ide.app_strip_wanted() && self.saved.zoom_tab.is_none() && ctx.content_rect().width() >= 600.0 {
-                egui::Panel::top("rs-appstrip").resizable(false).show_separator_line(true).exact_size(28.0).frame(bar(theme::surface())).show(root, |ui| self.ide.app_strip(Some(ui), ctx));
-            } else {
-                self.ide.app_strip(None, ctx);
-            }
+            self.ide.app_strip(ctx);
         }
         let strip = {
             let job = self.stack_job.lock().unwrap();
@@ -2869,6 +3247,7 @@ impl App {
                     // Five on a phone: Go is a desk view (operator, 2026-11-07).
                     let tab = (ui.available_width() - 4.0 * 2.0) / 5.0;
                     self.mode_tabs(ui, true, tab);
+                    crate::tour::mark(ui, "modes", ui.min_rect());
                 });
             });
         }
@@ -2881,10 +3260,12 @@ impl App {
                 // own mark (operator, 2026-11-14: "tab on top right should
                 // have a cove icon"; three dots before it), and the unread count.
                 let unread = self.inbox.unread();
-                let ink = if unread > 0 { theme::primary() } else { theme::text_strong() };
+                // Unread is something waiting for you: Attention, not the accent.
+                let ink = if unread > 0 { theme::State::Attention.color() } else { theme::text_strong() };
                 let pad = if unread > 0 { RichText::new(format!("     {unread}")).size(12.5).strong().color(ink) } else { RichText::new("") };
                 let btn = egui::Button::new(pad).frame(false).min_size(egui::vec2(if small { 36.0 } else { 30.0 }, if small { 34.0 } else { 28.0 }));
                 let (r, _) = egui::containers::menu::MenuButton::from_button(btn).ui(ui, |ui| self.menu_items(ui, ctx));
+                crate::tour::mark(ui, "cove-menu", r.rect);
                 let c = egui::pos2(r.rect.left() + if small { 18.0 } else { 15.0 }, r.rect.center().y);
                 let side = if small { 26.0 } else { 22.0 };
                 match crate::frameworks::cove_mark(ctx) {
@@ -2892,7 +3273,7 @@ impl App {
                         let at = egui::Rect::from_center_size(c, egui::vec2(side, side));
                         egui::Image::new(egui::load::SizedTexture::new(t.id(), at.size())).corner_radius(5).paint_at(ui, at);
                         if unread > 0 {
-                            ui.painter().circle_filled(at.right_top() + egui::vec2(-2.0, 2.0), 3.5, theme::primary());
+                            ui.painter().circle_filled(at.right_top() + egui::vec2(-2.0, 2.0), 3.5, ink);
                         }
                     }
                     None => {
@@ -2901,7 +3282,24 @@ impl App {
                         }
                     }
                 }
-                r.on_hover_text("Cove: the modes, Messages, Help, Save, the project and file, zoom, the console, settings");
+                r.on_hover_text("Cove menu: tabs, the project and file, view, the console, settings and help");
+                // The modes, always on screen at the desk (the review: "global
+                // navigation" its own level, not inside a menu). In their own
+                // left-to-right box, so the row's right-to-left order does not
+                // reverse them.
+                if !small {
+                    theme::tool_sep(ui);
+                    let font = egui::FontId::proportional(12.5);
+                    let pad = ui.spacing().button_padding.x * 2.0 + ui.spacing().item_spacing.x;
+                    let w: f32 = MODES.iter().filter(|m| m.0 != Mode::Go || self.go_is_admin()).map(|(_, n, _)| ui.fonts_mut(|f| f.layout_no_wrap((*n).to_owned(), font.clone(), egui::Color32::WHITE).size().x) + pad).sum::<f32>() + 4.0;
+                    let h = ui.available_height();
+                    let modes = ui.allocate_ui_with_layout(egui::vec2(w, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        self.mode_tabs(ui, false, 0.0);
+                    });
+                    crate::tour::mark(ui, "modes", modes.response.rect);
+                    theme::tool_sep(ui);
+                }
                 if small && ide {
                     self.pane_switcher(ui);
                 }
@@ -2940,18 +3338,7 @@ impl App {
     }
 
     fn mode_tabs(&mut self, ui: &mut egui::Ui, small: bool, w: f32) {
-        // IDE, Go, Connect, Builds, Atlas (operator, 2026-10-24:
-        // "cove should always start in IDE mode (Go can be after IDE now)";
-        // 2026-10-28: Connect, the apps you may open; 2026-10-29: Packages
-        // removed, "that is covered in builds mostly").
-        let tabs: [(Mode, &str, &str); 6] = [
-            (Mode::Ide, "IDE", "the domain you are working in"),
-            (Mode::Go, "Go", "on the go: the recap, the agent and Exec, a big record button"),
-            (Mode::Connect, "Connect", "every app you may open - yours, shared with you, and public - by what it is built with"),
-            (Mode::Builds, "Builds", "the build machines - start and shut them down here - and where every build is, live, with its history"),
-            (Mode::Atlas, "Atlas", "the whole stack, kernel to application"),
-            (Mode::Account, "Account", "you: your cell, Claude, your domains and API keys"),
-        ];
+        let tabs = MODES;
         // On a phone every tab is `w` wide, and the widest name must fit in it
         // with the button's padding: at 14.5 "Account" was wider than its
         // sixth of a phone, so its button grew and the row ran past the edge
@@ -2964,7 +3351,7 @@ impl App {
             12.5
         };
         for (m, name, tip) in tabs {
-            if small && m == Mode::Go {
+            if (small || !self.go_is_admin()) && m == Mode::Go {
                 continue;
             }
             let on = m == self.mode;
@@ -3387,7 +3774,13 @@ impl App {
                     // No wider than the screen: a vertical scroll area lets its
                     // content keep the width of its widest line last frame.
                     ui.set_max_width(vw - 4.0);
-                    // The machines first: start and shut them down here, and only here.
+                    // This computer's own build first, when the stack is installed here.
+                    if self.ide.local_wanted(ctx) {
+                        let backend = self.backend.clone();
+                        self.ide.local.ui(ui, ctx, &backend, false);
+                        ui.add_space(8.0);
+                    }
+                    // The machines: start and shut them down here, and only here.
                     self.machines_panel(ui, ctx);
                     self.ide.builds_now(ui, ctx);
                 });
@@ -3480,6 +3873,8 @@ impl App {
         let levels: std::collections::HashMap<String, String> = canopy.into_iter().map(|d| (d.host, d.target)).collect();
         let now = crate::software::now_secs();
         let mut open_ide = None;
+        let mut acts: Vec<crate::manage::Act> = Vec::new();
+        let backend = self.backend.clone();
         // Laid out like Posit Connect's content list (operator's screenshot,
         // 2026-10-28, "example connect view"): one centred column - the
         // search, the title, the tabs with their counts, Filter and Sort,
@@ -3622,6 +4017,30 @@ impl App {
                                 }
                             }
                         });
+                        // Visibility: who the registry lets open each one
+                        // (operator, 2026-11-17: "search by visibility level,
+                        // for example see all public and make sure theyre all
+                        // properly public").
+                        let mut lv: Vec<(String, usize)> = Vec::new();
+                        for d in &base {
+                            let l = level(d).to_owned();
+                            match lv.iter_mut().find(|(k, _)| *k == l) {
+                                Some(t) => t.1 += 1,
+                                None => lv.push((l, 1)),
+                            }
+                        }
+                        lv.sort_by(|a, b| b.1.cmp(&a.1));
+                        let shown_level = self.connect_level.as_deref().map_or("Visibility: any".to_owned(), |l| format!("Visibility: {}", level_word(l)));
+                        egui::ComboBox::from_id_salt("connect-level").selected_text(RichText::new(shown_level).size(14.0)).width(menu_w).show_ui(ui, |ui| {
+                            if ui.selectable_label(self.connect_level.is_none(), "any").clicked() {
+                                self.connect_level = None;
+                            }
+                            for (l, c) in &lv {
+                                if ui.selectable_label(self.connect_level.as_deref() == Some(l.as_str()), format!("{}  ({c})", level_word(l))).clicked() {
+                                    self.connect_level = Some(l.clone());
+                                }
+                            }
+                        });
                         if !narrow {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 sort_menu(ui, &mut self.connect_sort);
@@ -3639,11 +4058,12 @@ impl App {
                     } else {
                         ui.horizontal(filters);
                     }
-                    let (fw, who) = (self.connect_fw.clone(), self.connect_owner.clone());
+                    let (fw, who, lvl) = (self.connect_fw.clone(), self.connect_owner.clone(), self.connect_level.clone());
                     let mut shown: Vec<&crate::api::DomainInfo> = base
                         .into_iter()
                         .filter(|d| fw.as_deref().is_none_or(|f| d.framework == f))
                         .filter(|d| who.as_deref().is_none_or(|o| owner_of(d) == o))
+                        .filter(|d| lvl.as_deref().is_none_or(|l| level(d) == l))
                         .collect();
                     let by_name = |a: &&crate::api::DomainInfo, b: &&crate::api::DomainInfo| connect_name(a).to_lowercase().cmp(&connect_name(b).to_lowercase());
                     match self.connect_sort {
@@ -3654,12 +4074,30 @@ impl App {
                         _ => shown.sort_by(by_name),
                     }
                     ui.add_space(6.0);
+                    // Check them from outside: each asked as a stranger would.
+                    let pairs: Vec<(String, String)> = shown.iter().map(|d| (d.host.clone(), level(d).to_owned())).collect();
+                    if let Some(h) = self.visibility_check(ui, ctx, &pairs) {
+                        self.access.open_for(&h, &backend, ctx);
+                    }
+                    // What the last action said, and the bar for ticked projects.
+                    self.manage.settle();
+                    self.manage.note_ui(ui);
+                    self.manage.queue_ui(ui);
+                    if let Some(a) = self.manage.bulk_bar(ui, &backend, ctx) {
+                        acts.push(a);
+                    }
                     ui.separator();
                     // Only the rows on screen are drawn: hundreds of apps scroll.
+                    // The person's own get the working row (manage.rs); others'
+                    // stay a row to open.
                     egui::ScrollArea::vertical().id_salt("connect-apps").auto_shrink([false, false]).show_rows(ui, if narrow { CONNECT_ROW_H_NARROW } else { CONNECT_ROW_H }, shown.len(), |ui, range| {
                         for i in range {
                             let d = shown[i];
-                            if let Some(o) = connect_row(ui, d, level(d), col, now, narrow) {
+                            if !narrow && !d.path.is_empty() {
+                                if let Some(a) = self.manage.row(ui, d, col, CONNECT_ROW_H, &backend, ctx) {
+                                    acts.push(a);
+                                }
+                            } else if let Some(o) = connect_row(ui, d, level(d), col, now, narrow) {
                                 open_ide = Some(o);
                             }
                         }
@@ -3667,11 +4105,93 @@ impl App {
                 });
             });
         });
+        if let Some(a) = self.manage.details_ui(ctx, &backend) {
+            acts.push(a);
+        }
+        // Several ticked for Archive or Delete: the next one, once the
+        // dialog is free.
+        if self.ide.remove_idle() {
+            if let Some((h, delete)) = self.manage.next_remove() {
+                acts.push(crate::manage::Act::Remove(h, delete));
+            }
+        }
+        for a in acts {
+            use crate::manage::Act;
+            match a {
+                Act::OpenIde(d) => open_ide = Some(d),
+                Act::Share(h) => self.access.open_for(&h, &backend, ctx),
+                Act::Publish(h) => self.ide.publish_domain(h, ctx),
+                Act::Remove(h, delete) => self.ide.ask_remove(&h, delete),
+            }
+        }
         if let Some(d) = open_ide {
             self.mode = Mode::Ide;
             self.saved.zoom_tab = None;
             self.ide.open_domain(d, ctx);
         }
+    }
+
+    /// Connections' visibility check: "Check N from outside" asks each shown
+    /// site, with no sign-in, what it answers (host.rs site_gate: open, login,
+    /// password, down), eight at a time; then one line of how many match their
+    /// level and a row for each that does not, with Share to fix it. Returns
+    /// a host whose Share was asked for.
+    fn visibility_check(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, pairs: &[(String, String)]) -> Option<String> {
+        use std::sync::atomic::Ordering;
+        // Start what is queued, eight at a time.
+        while !self.connect_queue.is_empty() && self.connect_asking.load(Ordering::Relaxed) < 8 {
+            let host = self.connect_queue.remove(0);
+            self.connect_asking.fetch_add(1, Ordering::Relaxed);
+            let (gates, asking, c) = (self.connect_gates.clone(), self.connect_asking.clone(), ctx.clone());
+            let h = host.clone();
+            self.backend.query(Query::SiteGate { host }, ctx, move |r: Result<String, String>| {
+                gates.lock().unwrap().insert(h, r.unwrap_or_else(|e| format!("unknown: {e}")));
+                asking.fetch_sub(1, Ordering::Relaxed);
+                c.request_repaint();
+            });
+        }
+        let busy = self.connect_asking.load(Ordering::Relaxed) > 0 || !self.connect_queue.is_empty();
+        if busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(300));
+        }
+        let gates = self.connect_gates.lock().unwrap().clone();
+        let checked: Vec<&(String, String)> = pairs.iter().filter(|(h, _)| gates.contains_key(h)).collect();
+        let wrong: Vec<(&String, &String, &String)> = checked.iter().filter_map(|(h, l)| gates.get(h).filter(|g| !gate_fits(l, g)).map(|g| (h, l, g))).collect();
+        let mut fix = None;
+        ui.horizontal_wrapped(|ui| {
+            let word = if busy { format!("Checking… {} of {}", checked.len(), pairs.len()) } else { format!("Check {} from outside", pairs.len()) };
+            if ui.add_enabled(!busy && !pairs.is_empty() && pairs.len() <= 400, egui::Button::new(RichText::new(word).size(13.5)).min_size(egui::vec2(0.0, 28.0)))
+                .on_hover_text("open each shown site with no sign-in, as a stranger would, and compare what it does with its visibility")
+                .clicked()
+            {
+                self.connect_gates.lock().unwrap().retain(|h, _| !pairs.iter().any(|(p, _)| p == h));
+                self.connect_queue = pairs.iter().map(|(h, _)| h.clone()).collect();
+            }
+            if busy {
+                ui.spinner();
+            } else if !checked.is_empty() {
+                let ok = checked.len() - wrong.len();
+                let (st, said) = if wrong.is_empty() {
+                    (theme::State::Good, format!("all {ok} checked do what their visibility says"))
+                } else {
+                    (theme::State::Failed, format!("{} of {} do not do what their visibility says", wrong.len(), checked.len()))
+                };
+                theme::state_mark(ui, st, &said);
+            }
+        });
+        for (h, l, g) in &wrong {
+            ui.horizontal_wrapped(|ui| {
+                theme::state_mark(ui, theme::State::Failed, h);
+                ui.label(RichText::new(format!("is {}, but {}", level_word(l), gate_word(g))).size(13.0).color(theme::text_strong()));
+                if ui.button("Who can view it…").clicked() {
+                    fix = Some((*h).clone());
+                }
+                if ui.button("Open ↗").clicked() {
+                    ctx.open_url(egui::OpenUrl::new_tab(format!("https://{h}/")));
+                }
+            });
+        }
+        fix
     }
 
     /// The atlas, full screen over the night sky; its answers step into the IDE.
@@ -3800,6 +4320,10 @@ impl eframe::App for App {
         self.poll_stack(ctx);
         self.poll_storage(false, ctx);
         self.auto_setup(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.report_consent(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.cell_offer_modal(ctx);
         self.poll_source(ctx);
         // A revision was just made (Files' Make environment): into it.
         if let Some(m) = self.ide.take_switch_env() {
@@ -3852,17 +4376,6 @@ impl eframe::App for App {
             self.ndexr_due = false;
             if self.ide.domain.is_none() {
                 self.ide.want_folder = Some(format!("{}/ndexr", self.ide.home.trim_end_matches('/')));
-            }
-        }
-        // The project menu's Inlet: the newest Inlet module the stack has,
-        // opened as its source like any star (never a typed-in version).
-        if std::mem::take(&mut self.ide.want_inlet) {
-            let cat = self.ide.software_catalog(ctx);
-            let found = cat.as_ref().and_then(|c| (0..c.len()).rev().find(|&i| c.sw(i).kind == crate::software::Kind::EasyBuild && c.sw(i).module.starts_with("Inlet/")));
-            match (cat, found) {
-                (Some(c), Some(i)) => self.open_source(&c, i, ctx),
-                (None, _) => self.toast("the stack's catalog is still loading - try Inlet again in a moment".to_owned(), ctx),
-                (Some(_), None) => self.toast("this stack has no Inlet module".to_owned(), ctx),
             }
         }
         if let Some(f) = self.ide.want_folder.take() {
@@ -3938,7 +4451,10 @@ impl eframe::App for App {
             });
         } else {
             self.header(root, ctx);
+            self.status_bar(root, ctx);
+            self.help_panel(root, ctx);
         }
+        self.sessions_window(ctx);
         match self.mode {
             Mode::Go => self.go_view(root, ctx),
             Mode::Connect => self.connect_view(root, ctx),
@@ -4047,6 +4563,7 @@ impl eframe::App for App {
         }
         let covered = floating || tour_covers || matches!(self.mode, Mode::Atlas | Mode::Builds | Mode::Connect | Mode::Account) || ended || self.setup.covering() || self.drag.tab.is_some() || self.splitting;
         crate::ide::viewer_frame_end(covered);
+        crate::paste::end_frame();
         #[cfg(not(target_arch = "wasm32"))]
         crate::webview::end_frame(ctx, frame, covered);
         #[cfg(target_arch = "wasm32")]
@@ -4349,7 +4866,7 @@ fn connect_row_narrow(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str
 }
 
 /// An age as a person says it: "4 min", "3 h", "12 days", "5 months", "2 years".
-fn age_words(secs: i64) -> String {
+pub(crate) fn age_words(secs: i64) -> String {
     let s = secs.max(0);
     let (n, unit) = match s {
         0..=59 => return "under a minute".to_owned(),
@@ -4394,5 +4911,41 @@ mod connect_tests {
         assert_eq!(super::age_words(12 * 86_400), "12 days");
         assert_eq!(super::age_words(90 * 86_400), "3 months");
         assert_eq!(super::age_words(800 * 86_400), "2 years");
+    }
+}
+
+/// A registry level as Connections names it.
+fn level_word(l: &str) -> String {
+    match l {
+        "public" => "Public".into(),
+        "login" => "Signed in".into(),
+        "owner" => "Owner and shared".into(),
+        "admin" => "Admins".into(),
+        "password" => "Site password".into(),
+        "shared" => "Shared with you".into(),
+        "" => "Not in the registry".into(),
+        other => other.to_owned(),
+    }
+}
+
+/// What a site did for a stranger (host.rs site_gate), in words.
+fn gate_word(g: &str) -> String {
+    match g {
+        "open" => "it opens for anyone".into(),
+        "login" => "it asks to sign in".into(),
+        "password" => "it asks for a site password".into(),
+        "down" => "nothing answers".into(),
+        other => format!("it answered {other}"),
+    }
+}
+
+/// Whether what a stranger met (`gate`) is what the level promises: public
+/// opens, the signed-in levels send to sign-in, a site password asks for it.
+fn gate_fits(level: &str, gate: &str) -> bool {
+    match level {
+        "public" => gate == "open",
+        "login" | "owner" | "admin" | "shared" => gate == "login",
+        "password" => gate == "password",
+        _ => gate != "down" && !gate.starts_with("unknown"),
     }
 }

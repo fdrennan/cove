@@ -4,6 +4,16 @@
 #* @apiTitle __HOST__
 #* @apiDescription A blank Plumber API, running.
 
+# r/log.r: one log format across Cove's languages (LOG_LEVEL=DEBUG for more).
+box::use(./r/log)
+
+#* Every request, one line: method and path.
+#* @filter log
+function(req) {
+  log$log_info("{req$REQUEST_METHOD} {req$PATH_INFO}")
+  plumber::forward()
+}
+
 #* The page at the root: what this is and where the docs are.
 #* @get /
 #* @serializer html
