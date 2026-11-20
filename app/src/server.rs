@@ -530,6 +530,24 @@ pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<
             .with_header(header("Cache-Control", "no-cache"))),
         "software.json" => open(software_response(req)),
         "builds.json" => open(builds_response()),
+        // Live Development (host.rs development_status): every requested
+        // change as code_changes records it, sanitized, and the publishing
+        // pipeline. Read on every request - the page reports the backend's
+        // state, delays and failures included, never a cached hope.
+        "development/status.json" => open(match crate::host::development_status() {
+            Ok(b) => Response::from_data(b).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store")),
+            Err(e) => text(503, &e),
+        }),
+        t if t.starts_with("development/changes/") => {
+            let id: i64 = t["development/changes/".len()..].trim_end_matches(".json").parse().unwrap_or(-1);
+            open(match crate::host::development_status().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).map_err(|e| e.to_string())) {
+                Ok(v) => match v["changes"].as_array().and_then(|a| a.iter().find(|c| c["id"].as_i64() == Some(id))) {
+                    Some(c) => Response::from_data(serde_json::to_vec(c).unwrap_or_default()).with_header(header("Content-Type", "application/json")).with_header(header("Cache-Control", "no-store")),
+                    None => text(404, "no such change among the latest hundred"),
+                },
+                Err(e) => text(503, &e),
+            })
+        }
         "kernels.json" => open(kernels_response()),
         // An env set's settings for the tour (host.rs env_tour_facts).
         "env.json" => {

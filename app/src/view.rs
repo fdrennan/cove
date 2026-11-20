@@ -26,6 +26,9 @@ enum Tab {
     Packages,
     Builds,
     Logs,
+    /// Live Development: requested changes and the publishing pipeline, as
+    /// the backend records them (server.rs development/status.json).
+    Development,
 }
 
 impl Tab {
@@ -42,6 +45,7 @@ impl Tab {
             "packages" => Some(Tab::Packages),
             "builds" => Some(Tab::Builds),
             "logs" => Some(Tab::Logs),
+            "development" | "dev" => Some(Tab::Development),
             _ => None,
         }
     }
@@ -69,6 +73,8 @@ pub struct ViewApp {
     ask_contact: String,
     asked: std::sync::Arc<std::sync::Mutex<Option<Result<i64, String>>>>,
     sending: bool,
+    dev: std::sync::Arc<std::sync::Mutex<Option<Result<serde_json::Value, String>>>>,
+    dev_at: f64,
 }
 
 /// Cove on this computer, in one line: packaging/install.sh, which this
@@ -105,7 +111,29 @@ impl ViewApp {
             ask_contact: String::new(),
             asked: Default::default(),
             sending: false,
+            dev: Default::default(),
+            dev_at: f64::NEG_INFINITY,
         }
+    }
+
+    /// The development snapshot, every 15 s while the tab is open.
+    fn ask_dev(&mut self, now: f64, ctx: &egui::Context) {
+        ctx.request_repaint_after(std::time::Duration::from_secs(15));
+        if now - self.dev_at < 15.0 {
+            return;
+        }
+        self.dev_at = now;
+        let Backend::Http { base } = &self.backend;
+        let (slot, ctx) = (self.dev.clone(), ctx.clone());
+        ehttp::fetch(ehttp::Request::get(format!("{base}/development/status.json")), move |r| {
+            let v = match r {
+                Ok(r) if r.ok => serde_json::from_slice(&r.bytes).map_err(|e| e.to_string()),
+                Ok(r) => Err(format!("the development status answered {}: {}", r.status, String::from_utf8_lossy(&r.bytes).chars().take(200).collect::<String>())),
+                Err(e) => Err(e),
+            };
+            *slot.lock().unwrap() = Some(v);
+            ctx.request_repaint();
+        });
     }
 
     fn ask_domains(&mut self, now: f64, ctx: &egui::Context) {
@@ -267,6 +295,7 @@ impl ViewApp {
                                 (Tab::Packages, "Packages", "search everything the stack builds: every Prefix package, EasyBuild module, R and Python package"),
                                 (Tab::Builds, "Builds", "how it got built and what is building now: curves, branches, 3D, the timeline and the queue"),
                                 (Tab::Logs, "Logs", "each build machine's log, live as it builds"),
+                                (Tab::Development, "Development", "changes people asked for, the agents' work, review and installs, and the public source - live"),
                             ] {
                                 if segment(ui, name, tip, self.tab == t).clicked() {
                                     self.tab = t;
@@ -336,6 +365,15 @@ impl eframe::App for ViewApp {
                     None => {}
                 }
             }
+            Tab::Development => {
+                self.ask_dev(now, ctx);
+                let data = self.dev.lock().unwrap().clone();
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::new().fill(theme::bg().gamma_multiply(theme::win_alpha())).inner_margin(12.0))
+                    .show(root, |ui| {
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| development(ui, data.as_ref()));
+                    });
+            }
             Tab::Packages | Tab::Builds | Tab::Logs => {
                 // Logs and Builds are one Software tab's views: the top bar
                 // picks which, and the pane's own switch still moves between them.
@@ -386,5 +424,138 @@ impl eframe::App for ViewApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(500));
             }
         }
+    }
+}
+
+
+// ── Live Development ────────────────────────────────────────────────────────
+
+/// A stage's word and colour, from the status `ndexr change` recorded.
+fn stage(status: &str) -> (&'static str, egui::Color32) {
+    match status {
+        "requested" => ("Requested", theme::primary()),
+        "running" => ("Agent working", theme::amber()),
+        "proposed" => ("Under review", theme::primary()),
+        "merged" => ("Installed", theme::ok()),
+        "rejected" => ("Rejected", theme::alt()),
+        "conflict" => ("Blocked", theme::alt()),
+        "failed" => ("Failed", theme::alt()),
+        "no_change" => ("Nothing to change", theme::text()),
+        _ => ("Unknown", theme::text()),
+    }
+}
+
+/// "5 min ago" from an RFC 3339 time or Unix seconds.
+fn ago(v: &serde_json::Value) -> String {
+    let then = match v {
+        serde_json::Value::Number(n) => n.as_f64().map(|s| s * 1000.0),
+        serde_json::Value::String(s) => Some(js_sys::Date::parse(s)).filter(|t| t.is_finite()),
+        _ => None,
+    };
+    let Some(then) = then else { return "—".into() };
+    let s = ((js_sys::Date::now() - then) / 1000.0).max(0.0) as i64;
+    match s {
+        0..=59 => format!("{s} s ago"),
+        60..=3599 => format!("{} min ago", s / 60),
+        3600..=86_399 => format!("{} h ago", s / 3600),
+        _ => format!("{} d ago", s / 86_400),
+    }
+}
+
+fn development(ui: &mut egui::Ui, data: Option<&Result<serde_json::Value, String>>) {
+    ui.label(RichText::new("Live Development").size(22.0).strong().color(theme::text_strong()));
+    ui.label(
+        RichText::new("Anyone signed in can ask for a change to a public project at api.ndexr.io. An agent makes it away from the live site, code checks what it changed, and it is installed only when a person approves. This is what the backend recorded, failures included; what an agent says it did is not shown.")
+            .size(14.0)
+            .color(theme::text()),
+    );
+    ui.add_space(10.0);
+    let v = match data {
+        None => {
+            ui.spinner();
+            return;
+        }
+        Some(Err(e)) => {
+            ui.label(RichText::new(format!("Not available: {e}")).size(14.0).color(theme::alt()));
+            return;
+        }
+        Some(Ok(v)) => v,
+    };
+    // The stages, counted.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 18.0;
+        for st in ["requested", "running", "proposed", "merged", "conflict", "failed", "rejected", "no_change"] {
+            let n = v["counts"][st].as_i64().unwrap_or(0);
+            let (word, color) = stage(st);
+            ui.label(RichText::new(format!("{word} {n}")).size(15.0).strong().color(if n > 0 { color } else { theme::text() }));
+        }
+    });
+    ui.add_space(12.0);
+    // The publishing pipeline.
+    let p = &v["pipeline"];
+    egui::Frame::new().fill(theme::surface()).corner_radius(8).inner_margin(12.0).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.label(RichText::new("Publishing").size(16.0).strong().color(theme::text_strong()));
+        // Lines that wrap, not a grid: a release id does not fit beside its
+        // label on a phone, and a grid that cannot wrap widened everything
+        // below it past the screen's edge.
+        let row = |ui: &mut egui::Ui, name: &str, value: egui::RichText| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("{name}:")).size(14.0).color(theme::text()));
+                ui.add(egui::Label::new(value).wrap());
+            });
+        };
+        row(ui, "Cove release", RichText::new(format!("{}  ·  {}", p["release"].as_str().unwrap_or("—"), ago(&p["release_at"]))).monospace().size(13.5).color(theme::text_strong()));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Public source:").size(14.0).color(theme::text()));
+            let src = p["source"].as_str().unwrap_or("https://github.com/fdrennan/cove").to_owned();
+            ui.hyperlink_to(RichText::new(format!("{}  ·  {}", p["source_commit"].as_str().unwrap_or("—"), ago(&p["source_at"]))).monospace().size(13.5), src);
+        });
+        let (word, color) = if p["push_held"].as_bool() == Some(true) {
+            (format!("held: {}", p["last_push"].as_str().unwrap_or("")), theme::alt())
+        } else if p["release"] == p["source_release"] {
+            ("the public source is this release".to_owned(), theme::ok())
+        } else {
+            (format!("behind: the public source is release {}; it follows within the hour", p["source_release"].as_str().unwrap_or("—")), theme::amber())
+        };
+        row(ui, "In step", RichText::new(word).size(14.0).color(color));
+    });
+    ui.add_space(14.0);
+    ui.label(RichText::new("Changes").size(16.0).strong().color(theme::text_strong()));
+    let changes = v["changes"].as_array().cloned().unwrap_or_default();
+    if changes.is_empty() {
+        ui.label(RichText::new("None yet.").size(14.0).color(theme::text()));
+    }
+    for c in &changes {
+        egui::Frame::new().stroke(egui::Stroke::new(1.0, theme::pane_brd())).corner_radius(8).inner_margin(10.0).outer_margin(egui::Margin::symmetric(0, 4)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                let (word, color) = stage(c["status"].as_str().unwrap_or(""));
+                ui.label(RichText::new(format!("#{}", c["id"])).monospace().size(14.0).color(theme::text_strong()));
+                ui.label(RichText::new(word).size(14.0).strong().color(color));
+                ui.label(RichText::new(c["project"].as_str().unwrap_or("")).size(14.0).color(theme::text_strong()));
+                if let Some(l) = c["level"].as_i64() {
+                    let lw = ["", "copy and style", "code", "privileged", "refused"].get(l as usize).copied().unwrap_or("");
+                    ui.label(RichText::new(format!("level {l} · {lw}")).size(13.0).color(if l >= 4 { theme::alt() } else if l == 3 { theme::amber() } else { theme::text() }));
+                }
+                ui.label(RichText::new(format!("{} file(s)", c["files"])).size(13.0).color(theme::text()));
+            });
+            if let Some(t) = c["title"].as_str() {
+                ui.label(RichText::new(t).size(14.0).color(theme::text()));
+            }
+            ui.horizontal_wrapped(|ui| {
+                for k in c["checks"].as_array().into_iter().flatten() {
+                    let ok = k["ok"].as_bool() == Some(true);
+                    ui.label(RichText::new(format!("{} {}", if ok { "✓" } else { "✘" }, k["name"].as_str().unwrap_or(""))).size(13.0).color(if ok { theme::ok() } else { theme::alt() }));
+                }
+                ui.label(RichText::new(format!("asked {}", ago(&c["created_at"]))).size(13.0).color(theme::text()));
+                if !c["decided_at"].is_null() {
+                    ui.label(RichText::new(format!("decided {}", ago(&c["decided_at"]))).size(13.0).color(theme::text()));
+                }
+                if let Some(h) = c["installed"].as_str() {
+                    ui.label(RichText::new(format!("installed as {h}")).monospace().size(13.0).color(theme::ok()));
+                }
+            });
+        });
     }
 }

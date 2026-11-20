@@ -1,9 +1,9 @@
 {
-  "at": "2026-11-19T06:02:47Z",
-  "cove_commit": "1ac3731",
+  "at": "2026-11-20T06:02:34Z",
+  "cove_commit": "9048cea",
   "counts": {
-    "pass": 13,
-    "fail": 0,
+    "pass": 12,
+    "fail": 1,
     "skip": 0
   },
   "checks": [
@@ -61,12 +61,12 @@
       "duty": "No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only)",
       "gate": true,
       "status": "pass",
-      "evidence": "69778 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "evidence": "70363 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "check": "cove.not-derivative",
       "product": "cove",
-      "summary": "69778 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "summary": "70363 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "details": {
-        "cove_lines": 69778,
+        "cove_lines": 70363,
         "reference_lines": 408860,
         "allow_listed": 26,
         "matches": []
@@ -78,10 +78,10 @@
       "duty": "No Posit mark (RStudio, Posit, Positron, Shiny) in any served ndexr hostname",
       "gate": true,
       "status": "pass",
-      "evidence": "613 vhosts, none names a Posit mark",
+      "evidence": "615 vhosts, none names a Posit mark",
       "check": "platform.no-marks-in-hostnames",
       "product": "platform",
-      "summary": "613 vhosts, none names a Posit mark",
+      "summary": "615 vhosts, none names a Posit mark",
       "details": {}
     },
     {
@@ -125,11 +125,11 @@
       "tool": "Inlet",
       "duty": "The published patches and recipe are byte-for-byte the ones the running Inlet was built with",
       "gate": false,
-      "status": "pass",
-      "evidence": "21 files (17+ patches and the recipe) of build 20261030.002319 match the public records",
+      "status": "fail",
+      "evidence": "check raised URLError: <urlopen error [Errno 104] Connection reset by peer>",
       "check": "inlet.records-match-install",
       "product": "inlet",
-      "summary": "21 files (17+ patches and the recipe) of build 20261030.002319 match the public records",
+      "summary": "check raised URLError: <urlopen error [Errno 104] Connection reset by peer>",
       "details": {}
     },
     {

@@ -243,6 +243,66 @@ fn platform_psql(sql: &str) -> Result<Vec<u8>, String> {
 /// what a person typed never becomes SQL. The script goes in on stdin, the
 /// only way psql interpolates variables; `-q` keeps INSERT/UPDATE tags out
 /// of the answer, which is what the last statement selects.
+/// Live Development on the public view (operator, 2026-11-20: ndexr.io as
+/// "the public, real-time status dashboard for community-driven
+/// development"): every requested change as the backend recorded it
+/// (code_changes, written by `ndexr change`), and the publishing pipeline.
+/// What an agent says it did is never shown - only states, risk levels,
+/// counts and check results the code wrote. Sanitized here, in SQL: no
+/// requester, no file paths, no diff; a domain that is not public in the
+/// registry is "a private project", with no title.
+pub fn development_status() -> Result<Vec<u8>, String> {
+    const SQL: &str = r#"
+WITH c AS (
+  SELECT c.*, COALESCE(r.access_level = 'public', false) AS open
+    FROM code_changes c LEFT JOIN domain_registry r ON r.domain = c.domain
+   ORDER BY c.id DESC LIMIT 100)
+SELECT json_build_object(
+  'generated', now(),
+  'counts', COALESCE((SELECT json_object_agg(status, n) FROM (SELECT status, count(*) AS n FROM code_changes GROUP BY status) s), '{}'::json),
+  'changes', COALESCE((SELECT json_agg(json_build_object(
+      'id', id, 'status', status, 'level', risk_level,
+      'project', CASE WHEN open THEN domain ELSE 'a private project' END,
+      'title', CASE WHEN open THEN left(split_part(request, E'
+', 1), 120) END,
+      'files', jsonb_array_length(files),
+      'checks', (SELECT COALESCE(json_agg(json_build_object('name', x->>'name', 'ok', (x->>'ok')::boolean)), '[]'::json) FROM jsonb_array_elements(checks) x),
+      'created_at', created_at, 'updated_at', updated_at, 'decided_at', decided_at,
+      'installed', left(merged_commit, 12)) ORDER BY id DESC) FROM c), '[]'::json))"#;
+    let out = platform_psql_vars(SQL, &[])?;
+    let mut v: Value = serde_json::from_slice(&out).map_err(|e| format!("development status: {e}"))?;
+    v["pipeline"] = development_pipeline();
+    serde_json::to_vec(&v).map_err(|e| e.to_string())
+}
+
+/// The release this server publishes and the public source behind it, read
+/// from the files run.sh and onprem/public-push.sh keep: the current release
+/// link, and the push log's last line and the public clone's last commit.
+fn development_pipeline() -> Value {
+    let unix = |p: &Path| std::fs::symlink_metadata(p).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let shared = Path::new("/usr/local/lib/cove/current");
+    let release = std::fs::read_link(shared).ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_default();
+    let state = platform_root().parent().map(|h| h.join(".local/state/cove-onprem")).unwrap_or_default();
+    let last_push = std::fs::read_to_string(state.join("public-push.log")).ok().and_then(|t| t.lines().rev().find(|l| l.contains(" pushed ") || l.contains(" HELD ") || l.contains(" failed")).map(str::to_owned)).unwrap_or_default();
+    // The server runs as root and the clone is ubuntu's: git refuses it as
+    // "dubious ownership" unless this one directory is named safe.
+    let clone = state.join("public");
+    let public = Command::new("git").arg("-c").arg(format!("safe.directory={}", clone.display())).arg("-C").arg(&clone).args(["log", "-1", "--format=%h%x09%ct%x09%s"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+    let mut p = public.splitn(3, '\t');
+    let (commit, at, subject) = (p.next().unwrap_or(""), p.next().and_then(|t| t.parse::<u64>().ok()), p.next().unwrap_or(""));
+    serde_json::json!({
+        "release": release,
+        "release_at": unix(shared),
+        "source": "https://github.com/fdrennan/cove",
+        "source_commit": commit,
+        "source_at": at,
+        "source_release": subject.strip_prefix("Cove: release ").unwrap_or(subject),
+        // Held or failed is shown as such: the page reports the pipeline, not a hope.
+        "last_push": last_push.split_once(' ').map(|(_, r)| r.to_owned()).unwrap_or_default(),
+        "push_held": last_push.contains(" HELD ") || last_push.contains(" failed"),
+    })
+}
+
 pub(crate) fn platform_psql_vars(sql: &str, vars: &[(&str, &str)]) -> Result<Vec<u8>, String> {
     use std::io::Write;
     let env = std::fs::read_to_string(platform_root().join(".env")).map_err(|e| format!("no build database here ({e}) - the Builds views read it on the ndexr host"))?;
@@ -4935,6 +4995,21 @@ mod tests {
         let mut k = crate::api::AgentChunk::default();
         super::agent_events(r#"{"type":"system","subtype":"init","apiKeySource":"ANTHROPIC_API_KEY"}"#, &mut k);
         assert!(!k.subscription);
+    }
+
+    /// Live Development from the real tables: run on the host with
+    /// `cargo test development_status_live -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn development_status_live() {
+        let v: serde_json::Value = serde_json::from_slice(&super::development_status().unwrap()).unwrap();
+        println!("{}", serde_json::to_string_pretty(&v).unwrap());
+        assert!(v["changes"].is_array() && v["pipeline"]["release"].is_string());
+        // Nothing private leaves: no requester, no paths, no diff, no agent text.
+        let s = v.to_string();
+        for k in ["requester", "\"diff\"", "agent_summary", "\"path\"", "@gmail.com"] {
+            assert!(!s.contains(k), "{k} leaked");
+        }
     }
 
     /// The Logs tab reads .cove/run/app.log (else .run/app.log), from a whole
