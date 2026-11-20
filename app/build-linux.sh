@@ -63,10 +63,21 @@ echo "▸ building cove $version ($target, glibc 2.28, rustc $(rustc --version |
 # machine needs libwebkit2gtk-4.1-0, which a stock install can lack (install.sh checks).
 export PKG_CONFIG_ALLOW_CROSS=1
 multi="/usr/lib/$arch-linux-gnu"
-# The webview needs that arch's GTK/WebKit dev libs (multiarch). This host has
-# none for aarch64 (2026-10-15: link failed, "unable to find dynamic system
-# library 'webkit2gtk-4.1'"), so that build ships without the embedded App
-# panel - it opens the site in the browser instead, as Windows does.
+# The webview needs that arch's GTK/WebKit libraries. This host has none for
+# aarch64 (2026-10-15: "unable to find dynamic system library
+# 'webkit2gtk-4.1'"), and the aarch64 Cove shipped without the embedded App
+# panel until 2026-11-20 (operator: "local needs embedded browser badly we
+# have to keep the experience in the ade"). Now they come from a sysroot of
+# Ubuntu's own packages for that arch, unpacked under ~/.cache by
+# packaging/linux/cross-sysroot.sh - nothing installed on this host.
+if [[ "${WEBVIEW:-1}" != 0 && ! -e "$multi/libwebkit2gtk-4.1.so" && "$arch" != "$(uname -m)" ]]; then
+  sysroot="${COVE_SYSROOT:-$HOME/.cache/cove-sysroot/$arch}"
+  [[ -e "$sysroot/usr/lib/$arch-linux-gnu/libwebkit2gtk-4.1.so" ]] || "$here/packaging/linux/cross-sysroot.sh" "$arch"
+  multi="$sysroot/usr/lib/$arch-linux-gnu"
+  export PKG_CONFIG_SYSROOT_DIR="$sysroot"
+  export PKG_CONFIG_LIBDIR="$multi/pkgconfig:$sysroot/usr/share/pkgconfig"
+  echo "▸ $arch GTK/WebKit from the sysroot $sysroot"
+fi
 features="--features webview"
 if [[ "${WEBVIEW:-1}" == 0 ]]; then
   features=""

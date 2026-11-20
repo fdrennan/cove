@@ -79,6 +79,7 @@ else
     elif command -v pacman >/dev/null 2>&1; then lacks="sudo pacman -S webkit2gtk-4.1"
     elif command -v zypper >/dev/null 2>&1; then lacks="sudo zypper install libwebkit2gtk-4_1-0"
     elif command -v apt-get >/dev/null 2>&1; then lacks="sudo apt install libwebkit2gtk-4.1-0"
+    elif command -v emerge >/dev/null 2>&1; then lacks="sudo emerge --ask net-libs/webkit-gtk:4.1"
     else lacks="install WebKitGTK 4.1 (webkit2gtk-4.1) from your distribution"; fi
   fi
 fi

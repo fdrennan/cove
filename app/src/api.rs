@@ -1624,6 +1624,14 @@ pub struct AppStatus {
     /// None where nobody is limited.
     #[serde(default)]
     pub quota: Option<Quota>,
+    /// Where the App pane shows a port app: a Viewer address (`/port/<n>/`,
+    /// read through `Backend::viewer_url` - 127.0.0.1 on this computer, the
+    /// server's or the cell's own /port/ elsewhere), or "" for the domain's
+    /// public address, which ndexr's servers route to the port (apps.rs
+    /// `seen_at`). One rule for all five places Cove runs, so the desktop
+    /// connected to a cell and the cell in a browser show the same thing.
+    #[serde(default)]
+    pub seen_at: String,
 }
 
 /// What a person may use and uses, read from their cgroup (limits.rs `mine`).

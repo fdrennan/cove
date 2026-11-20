@@ -120,6 +120,10 @@ pub enum Glyph {
     Refresh,
     Upload,
     Download,
+    /// Full screen: four corners pointing out.
+    Expand,
+    /// Leave full screen: four corners pointing in.
+    Collapse,
 }
 
 pub fn paint(p: &egui::Painter, rect: egui::Rect, g: Glyph, c: Color32) {
@@ -173,6 +177,13 @@ pub fn paint(p: &egui::Painter, rect: egui::Rect, g: Glyph, c: Color32) {
         }
         Glyph::Upload => arrow(false),
         Glyph::Download => arrow(true),
+        Glyph::Expand | Glyph::Collapse => {
+            // One corner, turned four ways: out at the edge, or in at the middle.
+            let (e, m) = if g == Glyph::Expand { (6.5, 2.5) } else { (2.5, 6.5) };
+            for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                line(&[(sx * e, sy * m), (sx * e, sy * e), (sx * m, sy * e)]);
+            }
+        }
     }
 }
 

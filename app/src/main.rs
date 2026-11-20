@@ -223,13 +223,28 @@ fn main() -> eframe::Result<()> {
             Err(e) => startup_note = Some(format!("running on this computer: {e}")),
         }
     }
+    // The App panel's site is a WebKitGTK view made a child of Cove's own
+    // window, which wry can do only on X11. Under Wayland, winit made a
+    // Wayland window, the child failed, and the panel said "This build has
+    // no embedded browser - the site opens in yours" (operator's Gentoo
+    // laptop, 2026-11-20: "needs to go away and the site needs to show up
+    // there"). Where the session also runs XWayland (DISPLAY set - GNOME,
+    // KDE and Sway all do by default), the window and WebKit both use it.
+    #[cfg(all(feature = "webview", target_os = "linux"))]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("DISPLAY").is_some() && std::env::var_os("COVE_WAYLAND").is_none() {
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
     let options = eframe::NativeOptions {
         renderer: renderer(),
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Cove")
             .with_app_id("io.ndexr.cove")
             .with_inner_size([1280.0, 820.0])
-            .with_min_inner_size([860.0, 540.0]),
+            .with_min_inner_size([860.0, 540.0])
+            // The tent on its tile (assets/cove-mark.svg): the taskbar and
+            // switcher showed eframe's own icon without it.
+            .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/cove-app-256.png")).unwrap_or_default()),
         ..Default::default()
     };
     eframe::run_native(

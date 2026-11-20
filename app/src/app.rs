@@ -3262,19 +3262,30 @@ impl App {
                 let unread = self.inbox.unread();
                 // Unread is something waiting for you: Attention, not the accent.
                 let ink = if unread > 0 { theme::State::Attention.color() } else { theme::text_strong() };
-                let pad = if unread > 0 { RichText::new(format!("     {unread}")).size(12.5).strong().color(ink) } else { RichText::new("") };
-                let btn = egui::Button::new(pad).frame(false).min_size(egui::vec2(if small { 36.0 } else { 30.0 }, if small { 34.0 } else { 28.0 }));
+                // The count, then the tent at the right end (operator,
+                // 2026-11-20: "the 11 and the icon are overlapping in the top
+                // right and tent should be to the right of the
+                // messages/complains"). The count was button text padded
+                // with five spaces and the tent painted 15 px in from the
+                // left, so two digits ran under it. Now the button is as wide
+                // as the measured count plus the tent, and each is painted in
+                // its own place.
+                let side = if small { 26.0 } else { 22.0 };
+                let count = (unread > 0).then(|| ui.fonts_mut(|f| f.layout_no_wrap(unread.to_string(), egui::FontId::proportional(12.5), ink)));
+                let gap = 5.0;
+                let lead = count.as_ref().map_or(0.0, |g| g.size().x + gap);
+                let btn = egui::Button::new("").frame(false).min_size(egui::vec2(lead + side + if small { 10.0 } else { 8.0 }, if small { 34.0 } else { 28.0 }));
                 let (r, _) = egui::containers::menu::MenuButton::from_button(btn).ui(ui, |ui| self.menu_items(ui, ctx));
                 crate::tour::mark(ui, "cove-menu", r.rect);
-                let c = egui::pos2(r.rect.left() + if small { 18.0 } else { 15.0 }, r.rect.center().y);
-                let side = if small { 26.0 } else { 22.0 };
+                let c = egui::pos2(r.rect.right() - 4.0 - side / 2.0, r.rect.center().y);
+                if let Some(g) = count {
+                    let at = egui::pos2(c.x - side / 2.0 - gap - g.size().x, r.rect.center().y - g.size().y / 2.0);
+                    ui.painter().galley(at, g, ink);
+                }
                 match crate::frameworks::cove_mark(ctx) {
                     Some(t) => {
                         let at = egui::Rect::from_center_size(c, egui::vec2(side, side));
                         egui::Image::new(egui::load::SizedTexture::new(t.id(), at.size())).corner_radius(5).paint_at(ui, at);
-                        if unread > 0 {
-                            ui.painter().circle_filled(at.right_top() + egui::vec2(-2.0, 2.0), 3.5, ink);
-                        }
                     }
                     None => {
                         for dy in [-5.5, 0.0, 5.5] {
@@ -3282,7 +3293,17 @@ impl App {
                         }
                     }
                 }
-                r.on_hover_text("Cove menu: tabs, the project and file, view, the console, settings and help");
+                r.on_hover_text(if unread > 0 { format!("{unread} waiting in Messages and requests · Cove menu: tabs, the project and file, view, the console, settings and help") } else { "Cove menu: tabs, the project and file, view, the console, settings and help".to_owned() });
+                // Full screen at hand, left of the menu and not only inside
+                // it (operator, 2026-11-20: "need a full screen pusher left of
+                // the cove icon in the top right, not hidden in the menu").
+                let full = is_fullscreen(ctx);
+                let (g, tip) = if full { (crate::icons::Glyph::Collapse, "Exit full screen (F11)") } else { (crate::icons::Glyph::Expand, "Full screen (F11)") };
+                if crate::icons::tool(ui, g, None, tip).clicked() {
+                    if let Err(why) = toggle_fullscreen(ctx) {
+                        self.toast(why, ctx);
+                    }
+                }
                 // The modes, always on screen at the desk (the review: "global
                 // navigation" its own level, not inside a menu). In their own
                 // left-to-right box, so the row's right-to-left order does not

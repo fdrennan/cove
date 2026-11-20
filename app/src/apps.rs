@@ -120,6 +120,24 @@ pub fn framework(dir: &Path, language: &str) -> &'static str {
     }
 }
 
+/// Where a port app is seen (AppStatus `seen_at`). On ndexr's own servers,
+/// not in a cell, Up routes the domain's vhost to the port (route-app.sh), so
+/// its public address is the place. Everywhere else - this computer, a
+/// person's cell (whose domain goes to the cell's Shiny, nginx cell.conf), a
+/// customer's own server - nothing routes a domain to it, and Cove's own
+/// /port/<n>/ shows it, behind Cove's sign-in.
+fn seen_at(kind: &str, port: &str) -> String {
+    let port = port.trim();
+    if kind != "port" || port.is_empty() || !port.chars().all(|c| c.is_ascii_digit()) {
+        return String::new();
+    }
+    let cell = std::env::var("COVE_TRUST_LOOPBACK").as_deref() == Ok("1");
+    if !cell && Path::new(crate::host::PLATFORM_DOMAINS).is_dir() {
+        return String::new();
+    }
+    format!("/port/{port}/")
+}
+
 /// What a project is (language()), the verbs it has, and whether it is up.
 pub fn status(dir: &Path) -> crate::api::AppStatus {
     // A project from before .cove/ moves in the first time it is looked
@@ -141,6 +159,7 @@ pub fn status(dir: &Path) -> crate::api::AppStatus {
             }
         }
     }
+    s.seen_at = seen_at(&s.kind, &s.port);
     // In .cove/ every project has all four verbs; a module app's Up and
     // Down have nothing to do, so it shows Build alone, as before.
     s.verbs = VERBS.iter().filter(|v| is_executable(&cdir.join(format!("{v}.sh"))) && (s.kind == "port" || **v == "build")).map(|v| (*v).to_owned()).collect();

@@ -84,9 +84,10 @@ pub fn icon(ui: &mut egui::Ui, key: &str, size: f32) -> Option<egui::Response> {
     Some(ui.add(img).on_hover_text(m.name))
 }
 
-/// Cove's own mark: the app icon (packaging/macos/cove-icon-1024.png, at
-/// 96 px), for the menu button at the top right (operator, 2026-11-14: "tab
-/// on top right should have a cove icon"). Decoded once per context.
+/// Cove's own mark, the tent (assets/cove-mark.svg at 96 px), for the menu
+/// button at the top right (operator, 2026-11-14: "tab on top right should
+/// have a cove icon"). It was the app icon's photograph until 2026-11-20 -
+/// "mainly dark with a light blob" at 22 px. Decoded once per context.
 pub fn cove_mark(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     const PNG: &[u8] = include_bytes!("../assets/cove-icon-96.png");
     let id = egui::Id::new("cove-mark");

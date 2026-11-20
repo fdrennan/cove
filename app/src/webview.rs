@@ -130,6 +130,29 @@ mod imp {
     }
 }
 
+/// Why the panel could not show a site inside Cove, in a sentence that says
+/// what would fix it - not "this build has no embedded browser", which left
+/// the person with nothing to do (operator, 2026-11-20).
+pub fn why_not() -> String {
+    #[cfg(all(feature = "webview", any(target_os = "macos", target_os = "linux")))]
+    {
+        if cfg!(target_os = "linux") && std::env::var_os("DISPLAY").is_none() {
+            return "This Wayland session has no XWayland, which Cove's site view needs - enable XWayland and start Cove again.".into();
+        }
+        if cfg!(target_os = "linux") {
+            return "WebKitGTK 4.1 could not start here - install webkit2gtk-4.1 (libwebkit2gtk-4.1-0) and start Cove again.".into();
+        }
+        return "The system web view could not start.".into();
+    }
+    #[cfg(not(all(feature = "webview", any(target_os = "macos", target_os = "linux"))))]
+    {
+        if cfg!(windows) {
+            return "Cove for Windows shows sites in your browser.".into();
+        }
+        "This copy of Cove is the server build, which has no site view - install the desktop Cove (ndexr.io/install.sh).".into()
+    }
+}
+
 /// The App panel wants the site at `rect`. False when this build or display
 /// has no embedded browser (built without `webview`, Windows, Wayland): the
 /// panel then offers a link.

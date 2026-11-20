@@ -109,8 +109,12 @@ if stack_here; then
   SITE="$(julia_set Julia/1.11.7)" || { echo "env: the Julia package set Julia/1.11.7 is not on this computer and could not be fetched" >&2; exit 127; }
   export JULIA_DEPOT_PATH="$HOME/.julia:$SITE/depot:"
   export JULIA_LOAD_PATH="@:@v#.#:$SITE:@stdlib"
-  # A declared package ndexr has not built still comes: Pkg adds it to this
-  # person's default environment from the General registry and compiles it.
+  # A declared package the set holds only as another's dependency (JSON, under
+  # HTTP) is not on the load path; Pkg adds it to this person's default
+  # environment at the version already installed from the set's pieces
+  # (PRESERVE_TIERED_INSTALLED), not the newest. One ndexr has not built at
+  # all comes from the General registry and compiles here.
+  export JULIA_PKG_PRESERVE_TIERED_INSTALLED=true
   missing="$(julia --startup-file=no -e 'for n in ARGS; Base.find_package(n) === nothing && println(n); end' $(julia_needs | sort -u) 2>/dev/null || true)"
   if [ -n "$missing" ]; then
     printf '%s INFO    [env] not in ndexr'"'"'s Julia set, adding from the General registry: %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$(echo $missing)" >&2

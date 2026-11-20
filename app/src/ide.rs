@@ -8511,16 +8511,18 @@ impl Ide {
     /// someone else's page or nothing (operator's screenshot, 2026-11-15: the
     /// app ran at localhost:8830 while App showed hello.ndexr.io, ndexr's
     /// front page, so an agent's change "is not showing up"). A module app
-    /// is the platform's to serve, and a cell's or the platform's apps are
-    /// reached at their domains.
+    /// is the platform's to serve, at its domain; so is a port app on ndexr's
+    /// own servers, where Up routes the domain to it.
     fn site_url(&self, d: &DomainInfo) -> String {
-        #[cfg(not(target_arch = "wasm32"))]
-        if matches!(self.backend, Backend::Local) {
-            if let Some(Ok(s)) = &*self.app_status.lock().unwrap() {
-                let port = s.port.trim();
-                if s.kind == "port" && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
-                    return format!("http://127.0.0.1:{port}/");
-                }
+        // A port app is seen where its host says (apps.rs `seen_at`): on this
+        // computer at 127.0.0.1:<port>; in the person's cell or on a server
+        // through that Cove's own /port/<n>/. A cell's domain goes to the
+        // cell's Shiny (nginx cell.conf), never to a port app, so the desktop
+        // connected to a cell showed nothing for one (operator, 2026-11-20:
+        // "when connected to the cell its display and status").
+        if let Some(Ok(s)) = &*self.app_status.lock().unwrap() {
+            if !s.seen_at.is_empty() {
+                return self.backend.viewer_url(&s.seen_at);
             }
         }
         format!("https://{}/", d.host)
@@ -8534,7 +8536,9 @@ impl Ide {
         // and the site reloads itself on every save in the domain (operator,
         // 2026-10-15: "hide that line which has open and the domain").
         let url = self.site_url(&d);
-        let local = url.starts_with("http://127.0.0.1:");
+        // Shown where it runs (seen_at), not at the domain's public address:
+        // no gate of that address applies.
+        let local = !url.starts_with(&format!("https://{}/", d.host));
         if self.launch.as_ref().is_some_and(|l| l.quiet && l.host == d.host) {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
@@ -8575,7 +8579,7 @@ impl Ide {
             }
         }
         // What is in front of the domain's public address: nothing to do with
-        // an app shown where it runs on this computer.
+        // an app shown where it runs.
         let gate = if local { String::new() } else { self.gate.lock().unwrap().clone().filter(|(h, _)| *h == d.host).map(|(_, s)| s).unwrap_or_default() };
         if gate == "down" {
             ui.add_space(12.0);
@@ -8679,7 +8683,7 @@ impl Ide {
             ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 ui.add_space(12.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("This build has no embedded browser - the site opens in yours.").color(theme::muted()));
+                    ui.label(RichText::new(crate::webview::why_not()).color(theme::text()));
                     if ui.add(theme::primary_button("Open the site")).clicked() {
                         ctx.open_url(egui::OpenUrl::new_tab(&url));
                     }
@@ -8865,7 +8869,7 @@ impl Ide {
             ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 ui.add_space(12.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("This build has no embedded browser - the page opens in yours.").color(theme::muted()));
+                    ui.label(RichText::new(crate::webview::why_not()).color(theme::text()));
                     if ui.add(theme::primary_button("Open the page")).clicked() {
                         ctx.open_url(egui::OpenUrl::new_tab(&url));
                     }
@@ -9024,7 +9028,7 @@ mod site_frame {
         e.set_id(LOADER);
         let _ = e.set_attribute("aria-hidden", "true");
         e.set_inner_html(concat!(
-            r#"<div><svg class="gem" viewBox="-15 -15 30 30"><path d="M-13,-6 L-7,-13 L7,-13 L13,-6 L0,13 Z M-13,-6 L13,-6 M-7,-13 L-3.5,-6 L0,13 M7,-13 L3.5,-6 L0,13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>"#,
+            r##"<div><svg class="mark" viewBox="0 0 32 32"><path d="M12.6 2.8 L16 8 L19.4 2.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 6.2 L29.5 27.5 H2.5 Z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M16 13.2 L21.2 27.5 H10.8 Z" fill="#e8a75d"/></svg>"##,
             r#"<p class="title">Cove</p><div class="bar sweep"><span></span></div><p class="status">loading the site…</p></div>"#
         ));
         doc.body()?.append_child(&e).ok()?;
