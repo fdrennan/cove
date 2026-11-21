@@ -1363,6 +1363,11 @@ pub struct Ide {
     /// Which log the Logs tab shows: 0 the app, 1 the last Build, 2 the
     /// site's requests from the web server.
     run_log_kind: u8,
+    /// Whether this Cove's server is ndexr's platform, and the domain its
+    /// projects are named under when it is not (api.rs SettingsView.platform,
+    /// Settings.domain), as the settings last said; None until they come.
+    pub platform: Option<bool>,
+    pub own_domain: String,
     /// The Logs tab's find box and its Errors-only switch: which lines show.
     log_find: String,
     log_errors: bool,
@@ -1819,6 +1824,8 @@ impl Ide {
             run_log: Default::default(),
             run_log_asked: 0.0,
             run_log_kind: 0,
+            platform: None,
+            own_domain: String::new(),
             log_find: String::new(),
             log_errors: false,
             app_status_at: f64::NEG_INFINITY,
@@ -2343,7 +2350,7 @@ impl Ide {
             // (operator, 2026-11-19: "500 test.localhost: only names under
             // ndexr.io publish from Cove"). A Rust one builds and starts by its
             // own scripts, as any port app does.
-            let local = d.host.ends_with(crate::tabs::LOCAL);
+            let local = !self.on_platform();
             let rust = self.creating_rust.remove(&d.host) && !local;
             self.site_fresh = Some((d.host.clone(), ctx.input(|i| i.time), 0));
             let quiet = self.first_site_for.take().is_some_and(|h| h == d.host);
@@ -6944,12 +6951,15 @@ impl Ide {
     /// - over the IDE until it is live (or says why not). It cannot be put
     /// away while it works: the person stays with it to the end.
     fn launch_window(&mut self, ctx: &egui::Context) {
+        let on_platform = self.on_platform();
         let Some(l) = self.launch.as_mut() else { return };
         let now = ctx.input(|i| i.time);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
         let publish = l.publish.lock().unwrap().clone();
         let published = matches!(publish, Some(Ok(_)));
-        let local = l.host.ends_with(crate::tabs::LOCAL);
+        // Off ndexr's platform nothing is registered or routed at ndexr: the
+        // project starts where it is, under its Cove's own domain.
+        let local = !on_platform || l.host.ends_with(crate::tabs::LOCAL);
         // Shown where it runs (AppStatus seen_at, apps.rs): on this computer,
         // or in the person's cell through its own Cove's /port/<n>/. There is
         // no domain to route then, and the public address is not where it
@@ -7312,6 +7322,7 @@ impl Ide {
             self.bring(Tab::Agents);
             self.show_lower(Lower::App);
         } else if retry {
+            let platform = self.on_platform() && !host.ends_with(crate::tabs::LOCAL);
             if let Some(l) = self.launch.as_mut() {
                 l.started = now;
                 *l.publish.lock().unwrap() = None;
@@ -7324,11 +7335,11 @@ impl Ide {
                 l.route_sent = false;
                 l.up_asked = f64::NEG_INFINITY;
                 l.gate_asked = f64::NEG_INFINITY;
-                if host.ends_with(crate::tabs::LOCAL) {
+                if !platform {
                     *l.publish.lock().unwrap() = Some(Ok(host.clone()));
                 }
             }
-            if !host.ends_with(crate::tabs::LOCAL) {
+            if platform {
                 self.publish_domain(host, ctx);
             }
         }
@@ -8498,9 +8509,17 @@ impl Ide {
         false
     }
 
+    /// New projects are ndexr.io names, registered and routed by the
+    /// platform's provisioner - only on ndexr's own platform. Anywhere else (a
+    /// desktop, a person's own server) they are named under that Cove's own
+    /// domain and start where they are, with nothing registered at ndexr.
+    pub fn on_platform(&self) -> bool {
+        self.platform.unwrap_or_else(|| !self.on_this_computer())
+    }
+
     /// The names a new project may take for what was typed.
     fn name_offers(&self, typed: &str, v: &[DomainInfo]) -> Vec<String> {
-        if self.on_this_computer() { local_offers(typed, v) } else { new_domain_offers(typed, v) }
+        if self.on_platform() { new_domain_offers(typed, v) } else { local_offers(typed, &self.own_domain, v) }
     }
 
     /// The open file is what starts the project's own server: its language's
@@ -9372,16 +9391,21 @@ fn own_domain(v: &[DomainInfo]) -> Option<DomainInfo> {
         .cloned()
 }
 
-/// A new project's name on a computer with no ndexr behind it: the word typed,
-/// as `<word>.localhost` (tabs.rs LOCAL), never a domain of ndexr's. Its
-/// home folder's name is not an ndexr account - a laptop's /home/freddy was
-/// offered freddy.ndexr.io and test.freddy.ndexr.io (operator's screenshot,
-/// 2026-11-15).
-fn local_offers(typed: &str, v: &[DomainInfo]) -> Vec<String> {
+/// A new project's name away from ndexr's platform: the name typed under this
+/// Cove's own domain (Global Options › Project › Domain), or under
+/// `.localhost` (tabs.rs LOCAL) until one is set - never a domain of ndexr's.
+/// A home folder's name is not an ndexr account - a laptop's /home/freddy was
+/// offered freddy.ndexr.io (operator's screenshot, 2026-11-15) - and a
+/// server of someone else's is not ndexr.io (2026-11-21). The name may be
+/// several labels ("stories.box").
+fn local_offers(typed: &str, domain: &str, v: &[DomainInfo]) -> Vec<String> {
+    let domain = domain.trim().trim_matches('.').to_ascii_lowercase();
+    let suffix = if domain.is_empty() { crate::tabs::LOCAL.to_owned() } else { format!(".{domain}") };
     let t = typed.trim().trim_end_matches('.').to_ascii_lowercase();
-    let word = t.strip_suffix(crate::tabs::LOCAL).unwrap_or(&t);
-    let ok = !word.is_empty() && word.len() <= 63 && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !word.starts_with('-') && !word.ends_with('-');
-    let host = format!("{word}{}", crate::tabs::LOCAL);
+    let word = t.strip_suffix(suffix.as_str()).unwrap_or(&t);
+    let label_ok = |l: &str| !l.is_empty() && l.len() <= 63 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !l.starts_with('-') && !l.ends_with('-');
+    let ok = !word.is_empty() && word.split('.').all(label_ok);
+    let host = format!("{word}{suffix}");
     if ok && !v.iter().any(|d| d.host == host) { vec![host] } else { Vec::new() }
 }
 
@@ -9721,12 +9745,16 @@ mod tests {
     #[test]
     fn a_computer_with_no_ndexr_names_projects_localhost() {
         let v = vec![DomainInfo { host: "hello.localhost".into(), path: "/home/freddy/hello.localhost".into(), ..Default::default() }];
-        assert_eq!(super::local_offers("rix", &v), vec!["rix.localhost"]);
-        assert_eq!(super::local_offers("rix.localhost", &v), vec!["rix.localhost"]);
-        assert!(super::local_offers("hello", &v).is_empty(), "already a project");
-        assert!(super::local_offers("bad name", &v).is_empty());
+        assert_eq!(super::local_offers("rix", "", &v), vec!["rix.localhost"]);
+        assert_eq!(super::local_offers("rix.localhost", "", &v), vec!["rix.localhost"]);
+        assert!(super::local_offers("hello", "", &v).is_empty(), "already a project");
+        assert!(super::local_offers("bad name", "", &v).is_empty());
         // Never an ndexr name from the computer's own user (/home/freddy).
-        assert!(super::local_offers("test", &v).iter().all(|h| !h.contains("ndexr.io")));
+        assert!(super::local_offers("test", "", &v).iter().all(|h| !h.contains("ndexr.io")));
+        // A server of someone's own names its projects under its domain.
+        assert_eq!(super::local_offers("lab", "example.org", &v), vec!["lab.example.org"]);
+        assert_eq!(super::local_offers("stories.box", ".example.org.", &v), vec!["stories.box.example.org"]);
+        assert_eq!(super::local_offers("lab.example.org", "example.org", &v), vec!["lab.example.org"]);
         assert_eq!(crate::tabs::Tabs::short("hello.localhost"), "hello");
     }
 

@@ -444,6 +444,11 @@ impl Setup {
             .inner_margin(egui::Margin { left: 28, right: 28, top: 22, bottom: 22 })
             .shadow(egui::epaint::Shadow { offset: [0, 14], blur: 48, spread: 0, color: Color32::from_black_alpha(if theme::is_light() { 50 } else { 150 }) });
         let mut close: Option<Option<String>> = None;
+        let asking = *ASK_CVMFS.lock().unwrap() == Some("setup");
+        let mut mount = false;
+        if self.step != Step::Stack {
+            self.consent_for = None;
+        }
         let mut env = env;
         egui::Modal::new("cove-setup".into()).frame(frame).backdrop_color(Color32::from_black_alpha(if theme::is_light() { 70 } else { 150 })).show(ctx, |ui| {
             ui.set_width(w - 56.0);
@@ -456,6 +461,11 @@ impl Setup {
             let room = (ctx.content_rect().height() - 190.0).max(120.0);
             egui::ScrollArea::vertical().id_salt("setup-step").max_height(room).auto_shrink([false, true]).show(ui, |ui| match self.step {
                 Step::Look => self.look(ui, ctx, env.theme),
+                // The mount ask, when it is open, is this step's content (one dialog).
+                Step::Stack if asking && self.consent_for.is_some() => {
+                    let s = self.consent_for.clone().unwrap_or_default();
+                    mount = cvmfs_consent_inline(ui, ctx, "setup", &s);
+                }
                 Step::Stack => self.stack(ui, ctx, &mut env),
                 Step::Account => self.account(ui, ctx, &mut env),
                 Step::Claude => self.claude(ui, ctx, &mut env),
@@ -466,13 +476,10 @@ impl Setup {
             ui.add_space(4.0);
             close = self.nav(ui);
         });
-        // The mount dialog over it, once the setup dialog is drawn.
-        if let Some(s) = self.consent_for.take() {
-            if cvmfs_consent(ctx, "setup", &s) {
-                #[cfg(not(target_arch = "wasm32"))]
-                crate::account::set_stack_mode(crate::api::StackMode::Cvmfs);
-                self.stack_job(Query::StackSetup, "Setting up the ndexr stack", ctx, &mut env);
-            }
+        if mount {
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::account::set_stack_mode(crate::api::StackMode::Cvmfs);
+            self.stack_job(Query::StackSetup, "Setting up the ndexr stack", ctx, &mut env);
         }
         match close {
             Some(toast) => {
@@ -1314,6 +1321,35 @@ pub fn cvmfs_consent(ctx: &egui::Context, who: &'static str, s: &crate::api::Sta
     }
     let (mut yes, mut no) = (false, false);
     let w = (ctx.content_rect().width() - 32.0).clamp(300.0, 600.0);
+    egui::Modal::new(egui::Id::new("cvmfs-consent")).show(ctx, |ui| {
+        ui.set_width(w);
+        (yes, no) = consent_body(ui, ctx, s);
+    });
+    if yes || no {
+        *ASK_CVMFS.lock().unwrap() = None;
+    }
+    yes
+}
+
+/// The same ask inside a dialog already open - setup's own, in place of its
+/// Stack step. Two dialogs at once took turns on top of each other every
+/// frame, too fast to read (operator, 2026-11-19, and again 2026-11-21 in a
+/// browser): there is one now. True on the frame they agree.
+pub fn cvmfs_consent_inline(ui: &mut egui::Ui, ctx: &egui::Context, who: &'static str, s: &crate::api::StackView) -> bool {
+    if *ASK_CVMFS.lock().unwrap() != Some(who) {
+        return false;
+    }
+    let (yes, no) = consent_body(ui, ctx, s);
+    if yes || no {
+        *ASK_CVMFS.lock().unwrap() = None;
+    }
+    yes
+}
+
+/// The mount ask itself: what it does, why root, what it leaves, how to
+/// undo it, the command, and the two answers - (yes, no).
+fn consent_body(ui: &mut egui::Ui, ctx: &egui::Context, s: &crate::api::StackView) -> (bool, bool) {
+    let (mut yes, mut no) = (false, false);
     let how = match s.root_by.as_str() {
         "root" => "Cove is running as root here, so nothing is asked.",
         "sudo" => "sudo runs it: this account may use sudo without a password, so nothing is asked.",
@@ -1321,8 +1357,7 @@ pub fn cvmfs_consent(ctx: &egui::Context, who: &'static str, s: &crate::api::Sta
         _ => "Cove cannot ask for root on this machine: run the command below in a terminal yourself, then press Check again.",
     };
     let sudo = if s.root_by == "root" { "" } else { "sudo " };
-    egui::Modal::new(egui::Id::new("cvmfs-consent")).show(ctx, |ui| {
-        ui.set_width(w);
+    {
         ui.label(RichText::new("Mount the ndexr stack on this computer").size(19.0).strong().color(theme::text_strong()));
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new("The stack is R, Python, Julia, compilers and thousands of scientific libraries, built once by ndexr. CernVM-FS - the file system research computing centres use to share software - shows all of it at /opt/ndexr/stack and downloads each file the first time something uses it. Nothing is copied up front.").size(13.0).color(theme::text())).wrap());
@@ -1335,7 +1370,7 @@ pub fn cvmfs_consent(ctx: &egui::Context, who: &'static str, s: &crate::api::Sta
                 ui.add(egui::Label::new(RichText::new(format!("·  {t}")).size(12.5).color(theme::text())).wrap());
             };
             head(ui, "What it does");
-            item(ui, "Installs the CernVM-FS client from CERN's package repository, through this computer's package manager (apt or dnf).");
+            item(ui, "Installs the CernVM-FS client through this computer's package manager: from CERN's repository with apt or dnf, or from Gentoo's own tree with emerge.");
             item(ui, "Fetches ndexr's public signing key: the client accepts only files ndexr signed, and checks every one.");
             item(ui, "Writes the stack's settings to /etc/cvmfs/config.d/stack.ndexr.io.conf and adds one line to /etc/fstab, so the stack mounts read-only at /opt/ndexr/stack, now and after a restart.");
             item(ui, "Adds /etc/profile.d/ndexr-modules.sh and a line in /etc/bash.bashrc, so a new terminal can load software with `ml R/...`.");
@@ -1362,11 +1397,8 @@ pub fn cvmfs_consent(ctx: &egui::Context, who: &'static str, s: &crate::api::Sta
                 no = ui.button("Not now").clicked();
             }
         });
-    });
-    if yes || no {
-        *ASK_CVMFS.lock().unwrap() = None;
     }
-    yes
+    (yes, no)
 }
 
 /// A command to run by hand, selectable.

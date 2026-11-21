@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-21T15:45Z · First-start setup: choosing Set up CernVM-FS shows "Mount the ndexr stack" in place of the Stack step, in the one dialog - two dialogs had kept taking turns on top of each other, flickering too fast to read. It also says that Gentoo gets the client from its own tree
 - 2026-11-21T21:50Z · Starting an app from Cove connected to your cell no longer fails at "Not routed" and waits ten minutes on its public address: an app that runs in your cell is started there and checked where it runs, through your cell's own Cove, as on your computer
 - 2026-11-21T00:25Z · Logs has a find box and Errors only: type to keep the lines that hold it, or switch to the lines that say something failed - errors, panics, tracebacks, a non-zero exit, a 5xx
 - 2026-11-21T00:10Z · An app's log keeps its history and says what Cove did: each Start appends instead of wiping it, and [cove] lines mark when it started, when it answered (after how many seconds), when it was stopped, and when it exited on its own and with what code - a crash ends with "exited 1" in red. Past 2 MB it keeps the last 1 MB. Projects made before get the new Start and Stop scripts, their old ones kept beside them

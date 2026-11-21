@@ -2237,6 +2237,14 @@ impl App {
                                     ui.add(egui::TextEdit::singleline(&mut draft.project_dir).font(egui::TextStyle::Monospace).hint_text("/absolute/path — empty: home").desired_width(field_w));
                                     ui.end_row();
                                     // Where New project puts every project (host.rs projects_root).
+                                    // The domain this Cove's projects are named under, away
+                                    // from ndexr's platform (api.rs Settings.domain).
+                                    if !self.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform) {
+                                        ui.label("Domain");
+                                        ui.add(egui::TextEdit::singleline(&mut draft.domain).font(egui::TextStyle::Monospace).hint_text("lab.example.org — empty: name.localhost").desired_width(field_w))
+                                            .on_hover_text("new projects are named under it: \"report\" becomes report.lab.example.org; point that name (and *.lab.example.org) at this server to reach them");
+                                        ui.end_row();
+                                    }
                                     ui.label("Projects folder");
                                     ui.add(egui::TextEdit::singleline(&mut draft.projects_dir).font(egui::TextStyle::Monospace).hint_text("/absolute/path — empty: ~/.cove/projects").desired_width(field_w))
                                         .on_hover_text("every new project is made here, in a folder of its own; projects you already have stay where they are and still open. On ndexr's own servers your ndexr projects folder is used");
@@ -4321,6 +4329,13 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = &root.ctx().clone();
+        // Where this Cove names and places new projects (ide.rs on_platform).
+        if let Some(v) = self.settings.lock().unwrap().as_ref() {
+            self.ide.platform = Some(v.platform);
+            if self.ide.own_domain != v.settings.domain {
+                self.ide.own_domain = v.settings.domain.clone();
+            }
+        }
         // The look follows the pick, and "Match system" follows the system.
         crate::setup::follow_theme(self.saved.theme, ctx);
         // Which Claude the agent runs on: at start, then every ten minutes.
@@ -4566,12 +4581,21 @@ impl eframe::App for App {
             m.top_modal_layer().is_some()
                 || m.areas().visible_layer_ids().iter().any(|l| l.order == egui::Order::Foreground && m.area_rect(l.id).is_some_and(|r| r.width() >= 200.0 && r.height() >= 150.0))
         });
-        // And among egui's own layers the dialog stays on top: Messages lifts
-        // itself to the top each frame (inbox.rs), and a window drawn after
-        // a dialog opened sat over it.
-        if let Some(top) = ctx.memory(|m| m.top_modal_layer()) {
-            ctx.move_to_top(top);
-        }
+        // What opened this frame goes in front of everything already open
+        // (operator, 2026-11-21: "clicking on something opens window behind
+        // window - we must make sure all windows show at a level that makes
+        // sense"). egui keeps each window's place in the stack between
+        // showings, so a dialog shown once before came back under the one
+        // open now - the stack-setup dialog flickered with the setup steps,
+        // Messages and the top dialog each lifted themselves every frame and
+        // covered whatever they opened. One rule instead: the newest is on top.
+        ctx.memory_mut(|m| {
+            let a = m.areas_mut();
+            let fresh: Vec<egui::LayerId> = a.visible_layer_ids().into_iter().filter(|l| !a.visible_last_frame(l) && matches!(l.order, egui::Order::Middle | egui::Order::Foreground)).collect();
+            for l in fresh {
+                a.move_to_top(l);
+            }
+        });
         let covered = floating || tour_covers || matches!(self.mode, Mode::Atlas | Mode::Builds | Mode::Connect | Mode::Account) || ended || self.setup.covering() || self.drag.tab.is_some() || self.splitting;
         crate::ide::viewer_frame_end(covered);
         crate::paste::end_frame();

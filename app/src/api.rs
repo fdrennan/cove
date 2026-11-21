@@ -1068,6 +1068,14 @@ pub struct Settings {
     /// ndexr's own servers the platform's folder decides, as before.
     #[serde(default)]
     pub projects_dir: String,
+    /// The domain this Cove's projects are named under, away from ndexr's
+    /// platform: "lab.example.com" makes a new project "<name>.lab.example.com"
+    /// (operator, 2026-11-21: "ndexr.io is never going to be that domain for
+    /// someone else ... the server version will ultimately match whatever
+    /// domain that person will have set up"). Empty: "<name>.localhost".
+    /// Ignored on ndexr's platform, whose names are under ndexr.io.
+    #[serde(default)]
+    pub domain: String,
     /// The ONE Lmod module the whole IDE runs in - R, Python and the shell
     /// alike ("" = the R / python3 on PATH, the shell on the bare stack).
     /// Operator, 2026-10-13: "a module switcher in the main top panel not
@@ -1205,6 +1213,12 @@ pub struct SettingsView {
     /// coupled to our CVMFS distribution - no stack folder to choose).
     #[serde(default)]
     pub stack: StackView,
+    /// This server is ndexr's own platform (its checkout is here): new
+    /// projects are ndexr.io names, registered and routed by its provisioner.
+    /// Anywhere else - a desktop, a person's own server - they are named
+    /// under `settings.domain` and start where they are.
+    #[serde(default)]
+    pub platform: bool,
 }
 
 /// Where this computer's Cove gets the ndexr stack - asked until chosen,

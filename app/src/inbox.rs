@@ -290,10 +290,10 @@ impl Inbox {
         // screenshot, 2026-11-16).
         let w = (screen.width() - if phone { 12.0 } else { 48.0 }).min(1180.0);
         let h = if phone { screen.height() - 76.0 } else { (screen.height() - 96.0).min(780.0) };
-        // In front of the windows, always: Builds' charts paint on the
-        // foreground layer and had covered it (operator, 2026-10-18).
+        // On the foreground layer, over Builds' charts (operator, 2026-10-18);
+        // in front of what was open when it opened, and behind what it opens
+        // (app.rs: the newest is on top).
         let id = egui::Id::new("messages-window");
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, id));
         let mut window = egui::Window::new("Messages").id(id).order(egui::Order::Foreground).open(&mut open).collapsible(false);
         window = if phone { window.resizable(false).fixed_size([w, h]).anchor(egui::Align2::CENTER_TOP, [0.0, 40.0]) } else { window.resizable(true).default_size([w, h]).min_size([640.0f32.min(w), 420.0f32.min(h)]) };
         window.show(ctx, |ui| {
