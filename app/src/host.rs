@@ -124,8 +124,12 @@ pub fn answer(q: &Query) -> Result<Value, String> {
                 "" => crate::starters::SHINY_CHAOS,
                 s => s,
             };
-            let parent = own_domains().map(|p| p.display().to_string()).unwrap_or_else(|| parent.clone());
-            serde_json::to_value(create_domain(host, &parent, starter)?)
+            // The host decides, not the client's guess (`parent`, the folder
+            // of the open project): every new project goes to one folder.
+            let _ = parent;
+            let root = projects_root(&saved_settings());
+            std::fs::create_dir_all(&root).map_err(|e| format!("cannot make the projects folder {}: {e}", root.display()))?;
+            serde_json::to_value(create_domain(host, &root.display().to_string(), starter)?)
         }
         Query::PushAll { root } => serde_json::to_value(push_all(&own_domains().map(|p| p.display().to_string()).unwrap_or_else(|| root.clone()))?),
         Query::PushJob => serde_json::to_value(stack::jobs::view("push")),
@@ -946,6 +950,24 @@ pub fn saved_settings() -> Settings {
     std::fs::read(settings_file()).ok().and_then(|b| serde_json::from_slice::<Settings>(&b).ok()).unwrap_or_default().one_module()
 }
 
+/// Where new projects are made, one folder each (operator, 2026-11-20: "there
+/// needs to be a default location for the projects which the user can
+/// choose. All projects will be stored in that folder"). On ndexr's own
+/// servers the platform's folder (`own_domains`: nginx, autosave and cells
+/// read it). Elsewhere - a desktop, a customer's own server - the person's
+/// choice, else ~/.cove/projects. Before this a desktop project was made
+/// beside whichever project happened to be open.
+pub fn projects_root(s: &Settings) -> PathBuf {
+    if let Some(p) = own_domains() {
+        return p;
+    }
+    let chosen = s.projects_dir.trim();
+    if Path::new(chosen).is_absolute() {
+        return PathBuf::from(chosen);
+    }
+    Path::new(&home()).join(".cove").join("projects")
+}
+
 /// Where the kernels start and Files opens: the chosen project, else home.
 pub fn project_dir(s: &Settings) -> String {
     let p = s.project_dir.trim();
@@ -1541,6 +1563,15 @@ fn save_settings(s: &Settings) -> Result<(), String> {
     }
     if !s.project_dir.is_empty() && !Path::new(&s.project_dir).is_dir() {
         return Err(format!("{} is not a folder", s.project_dir));
+    }
+    // The projects folder may not exist yet: it is made here, so a mistyped
+    // path fails now, not at the next New project.
+    let projects = s.projects_dir.trim();
+    if !projects.is_empty() {
+        if !Path::new(projects).is_absolute() {
+            return Err("the projects folder must be an absolute path".into());
+        }
+        std::fs::create_dir_all(projects).map_err(|e| format!("cannot make the projects folder {projects}: {e}"))?;
     }
     if let Some(bad) = s.module.split_whitespace().find(|m| !kernel::valid_module(m)) {
         return Err(format!("not a module name: {bad}"));
@@ -2253,7 +2284,19 @@ fn app_dir(host: &str) -> Result<String, String> {
 fn list_domains() -> Vec<crate::api::DomainInfo> {
     let s = saved_settings();
     let roots = [domains_root(Path::new(&project_dir(&s))), PathBuf::from(home()).join("domains"), PathBuf::from(home()).join("ndexr/src/domains")];
-    let mut out: Vec<crate::api::DomainInfo> = Vec::new();
+    // The projects folder always, and the older places as before: the loop
+    // below stops at the first of them that holds projects, so the projects
+    // folder is read on its own - otherwise a person's first project there
+    // hid every project they already had elsewhere.
+    // With a folder chosen, the default is read too: projects made there
+    // before the choice stay listed (they are left where they are).
+    let mut ours = vec![projects_root(&s)];
+    let fallback = projects_root(&Settings { projects_dir: String::new(), ..s.clone() });
+    if !ours.contains(&fallback) {
+        ours.push(fallback);
+    }
+    let mut out: Vec<crate::api::DomainInfo> = ours.iter().flat_map(|r| std::fs::read_dir(r).into_iter().flatten().flatten()).filter_map(|e| domain_at(&e.path())).collect();
+    let mine = out.len();
     for root in roots {
         let Ok(rd) = std::fs::read_dir(&root) else { continue };
         let mut owners = Vec::new();
@@ -2268,7 +2311,7 @@ fn list_domains() -> Vec<crate::api::DomainInfo> {
         // Owner folders only inside a domains folder: a home directory's
         // subfolders are not owners (~/ndexr-stray's retired stubs were
         // listed as the person's domains, 2026-10-13).
-        if out.is_empty() && root.file_name().is_none_or(|n| n != "domains") {
+        if out.len() == mine && root.file_name().is_none_or(|n| n != "domains") {
             continue;
         }
         // The person's own owner folder, when it is here: theirs, not every
@@ -2288,7 +2331,7 @@ fn list_domains() -> Vec<crate::api::DomainInfo> {
                 }
             }
         }
-        if !out.is_empty() {
+        if out.len() > mine {
             break;
         }
     }

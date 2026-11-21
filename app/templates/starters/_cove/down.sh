@@ -21,4 +21,6 @@ for _ in $(seq 1 10); do
 done
 kill -0 "$pid" 2>/dev/null && kill -KILL -- "-$pid" 2>/dev/null
 rm -f .cove/run/app.pid
+# Said in the app's log too, as up.sh says its start (up.sh mark).
+printf '%s %-7s [cove] %s\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" INFO "stopped (pid $pid)" >>.cove/run/app.log 2>/dev/null || true
 echo "down: stopped pid $pid, port ${APP_PORT:-} free"

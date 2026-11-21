@@ -1363,6 +1363,9 @@ pub struct Ide {
     /// Which log the Logs tab shows: 0 the app, 1 the last Build, 2 the
     /// site's requests from the web server.
     run_log_kind: u8,
+    /// The Logs tab's find box and its Errors-only switch: which lines show.
+    log_find: String,
+    log_errors: bool,
     app_status_at: f64,
     app_host: String,
     app_job: Arc<Mutex<Option<Result<JobView, String>>>>,
@@ -1816,6 +1819,8 @@ impl Ide {
             run_log: Default::default(),
             run_log_asked: 0.0,
             run_log_kind: 0,
+            log_find: String::new(),
+            log_errors: false,
             app_status_at: f64::NEG_INFINITY,
             app_host: String::new(),
             app_job: Default::default(),
@@ -8078,6 +8083,11 @@ impl Ide {
                     self.run_log_asked = 0.0;
                 }
             }
+            // Find in a long log, or only what went wrong (operator, 2026-11-17:
+            // "logs arent helpful if they never say anything" - and when they
+            // do, the line that matters is one of thousands).
+            ui.add(egui::TextEdit::singleline(&mut self.log_find).hint_text("find").desired_width(110.0).font(egui::FontId::monospace(11.5)));
+            ui.toggle_value(&mut self.log_errors, RichText::new("Errors only").size(11.5)).on_hover_text("only lines that say something failed: errors, panics, tracebacks, a non-zero exit, a 5xx");
             ui.add(egui::Label::new(RichText::new(where_).monospace().size(11.5).color(theme::hush())).truncate());
         });
         match got {
@@ -8098,8 +8108,14 @@ impl Ide {
                 ui.vertical_centered(|ui| ui.label(RichText::new(none).color(theme::hush())));
             }
             Some(Ok(f)) => {
+                let text = shown_log(&f.text, &self.log_find, self.log_errors);
+                if text.is_empty() {
+                    ui.add_space(12.0);
+                    ui.vertical_centered(|ui| ui.label(RichText::new(if self.log_errors { "No errors in this log" } else { "No line has that in it" }).color(theme::text())));
+                    return;
+                }
                 theme::log_scroll(egui::ScrollArea::both().id_salt("app-log").auto_shrink([false, false]).stick_to_bottom(true), ui, |ui| {
-                    theme::selectable_job(ui, crate::ansi::job(&f.text, egui::FontId::monospace(11.5), theme::text()), false);
+                    theme::selectable_job(ui, crate::ansi::job(&text, egui::FontId::monospace(11.5), theme::text()), false);
                 });
             }
         }
@@ -9550,6 +9566,40 @@ fn table_head(ui: &mut egui::Ui, h: f32) -> egui::Rect {
 /// should be available to select prior to download when clicking on
 /// download"): a file as it is or packed either way, a folder as .zip or
 /// .tar.gz. The format it picked, for host::download.
+/// The lines of a log the Logs tab shows: those holding `find` (any case),
+/// and with `errors` only those that say something failed. Colour codes stay
+/// on the lines kept; a match looks past them.
+fn shown_log(text: &str, find: &str, errors: bool) -> String {
+    let find = find.trim().to_lowercase();
+    if find.is_empty() && !errors {
+        return text.to_owned();
+    }
+    let plain = |l: &str| {
+        let mut out = String::with_capacity(l.len());
+        let mut esc = false;
+        for c in l.chars() {
+            match (esc, c) {
+                (false, '\x1b') => esc = true,
+                (true, c) if c.is_ascii_alphabetic() => esc = false,
+                (true, _) => {}
+                (false, c) => out.push(c),
+            }
+        }
+        out
+    };
+    let failed = |l: &str| {
+        let low = l.to_lowercase();
+        l.contains(" ERROR ") || l.contains("ERROR:") || low.contains("error:") || low.contains("panicked") || low.contains("traceback") || low.contains("execution halted") || low.contains("exception") || (l.contains("[cove] exited ") && !l.trim_end().ends_with("exited 0")) || l.split_whitespace().any(|w| w.len() == 3 && w.starts_with('5') && w.chars().all(|c| c.is_ascii_digit()) && l.contains("HTTP"))
+    };
+    text.lines()
+        .filter(|l| {
+            let p = plain(l);
+            (find.is_empty() || p.to_lowercase().contains(&find)) && (!errors || failed(&p))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn download_choices(ui: &mut egui::Ui, dir: bool) -> Option<&'static str> {
     let mut pick = None;
     if !dir && ui.button("Download").clicked() {
@@ -9834,6 +9884,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_logs_tab_finds_and_keeps_only_errors() {
+        let log = "2026-11-21 00:04:29 INFO    [cove] up · julia · port 8830\n\x1b[31mERROR: LoadError: Package HTTP not found\x1b[0m\n2026-11-21 00:04:30 INFO    [request] GET / 200 3 ms\n2026-11-21 00:04:31 ERROR   [cove] exited 1\nfine";
+        assert_eq!(shown_log(log, "", false), log);
+        let e = shown_log(log, "", true);
+        assert!(e.contains("Package HTTP") && e.contains("exited 1") && !e.contains("GET /") && !e.contains("fine"), "{e}");
+        assert_eq!(shown_log(log, "get /", false), "2026-11-21 00:04:30 INFO    [request] GET / 200 3 ms");
+        assert_eq!(shown_log(log, "loaderror", false), "\x1b[31mERROR: LoadError: Package HTTP not found\x1b[0m", "matched past the colour, kept with it");
+        assert_eq!(shown_log("[cove] exited 0", "", true), "");
+    }
 
     #[test]
     fn a_new_name_gets_the_persons_top_domains() {

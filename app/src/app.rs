@@ -2236,6 +2236,11 @@ impl App {
                                     ui.label("Project folder");
                                     ui.add(egui::TextEdit::singleline(&mut draft.project_dir).font(egui::TextStyle::Monospace).hint_text("/absolute/path — empty: home").desired_width(field_w));
                                     ui.end_row();
+                                    // Where New project puts every project (host.rs projects_root).
+                                    ui.label("Projects folder");
+                                    ui.add(egui::TextEdit::singleline(&mut draft.projects_dir).font(egui::TextStyle::Monospace).hint_text("/absolute/path — empty: ~/.cove/projects").desired_width(field_w))
+                                        .on_hover_text("every new project is made here, in a folder of its own; projects you already have stay where they are and still open. On ndexr's own servers your ndexr projects folder is used");
+                                    ui.end_row();
                                     // Changed files show on their own; this is how often to look.
                                     ui.label("Refresh files");
                                     let every = draft.refresh_every() as u8;
@@ -3258,30 +3263,15 @@ impl App {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 // The menu button first, so it is always on screen: Cove's
                 // own mark (operator, 2026-11-14: "tab on top right should
-                // have a cove icon"; three dots before it), and the unread count.
-                let unread = self.inbox.unread();
-                // Unread is something waiting for you: Attention, not the accent.
-                let ink = if unread > 0 { theme::State::Attention.color() } else { theme::text_strong() };
-                // The count, then the tent at the right end (operator,
-                // 2026-11-20: "the 11 and the icon are overlapping in the top
-                // right and tent should be to the right of the
-                // messages/complains"). The count was button text padded
-                // with five spaces and the tent painted 15 px in from the
-                // left, so two digits ran under it. Now the button is as wide
-                // as the measured count plus the tent, and each is painted in
-                // its own place.
+                // have a cove icon"; three dots before it). No unread count
+                // here: Messages at the bottom left carries it (operator,
+                // 2026-11-20: "doesnt need the number on the top right as we
+                // have the number next to messages in the bottom left").
                 let side = if small { 26.0 } else { 22.0 };
-                let count = (unread > 0).then(|| ui.fonts_mut(|f| f.layout_no_wrap(unread.to_string(), egui::FontId::proportional(12.5), ink)));
-                let gap = 5.0;
-                let lead = count.as_ref().map_or(0.0, |g| g.size().x + gap);
-                let btn = egui::Button::new("").frame(false).min_size(egui::vec2(lead + side + if small { 10.0 } else { 8.0 }, if small { 34.0 } else { 28.0 }));
+                let btn = egui::Button::new("").frame(false).min_size(egui::vec2(side + if small { 10.0 } else { 8.0 }, if small { 34.0 } else { 28.0 }));
                 let (r, _) = egui::containers::menu::MenuButton::from_button(btn).ui(ui, |ui| self.menu_items(ui, ctx));
                 crate::tour::mark(ui, "cove-menu", r.rect);
                 let c = egui::pos2(r.rect.right() - 4.0 - side / 2.0, r.rect.center().y);
-                if let Some(g) = count {
-                    let at = egui::pos2(c.x - side / 2.0 - gap - g.size().x, r.rect.center().y - g.size().y / 2.0);
-                    ui.painter().galley(at, g, ink);
-                }
                 match crate::frameworks::cove_mark(ctx) {
                     Some(t) => {
                         let at = egui::Rect::from_center_size(c, egui::vec2(side, side));
@@ -3289,11 +3279,11 @@ impl App {
                     }
                     None => {
                         for dy in [-5.5, 0.0, 5.5] {
-                            ui.painter().circle_filled(c + egui::vec2(0.0, dy), if small { 2.2 } else { 1.9 }, ink);
+                            ui.painter().circle_filled(c + egui::vec2(0.0, dy), if small { 2.2 } else { 1.9 }, theme::text_strong());
                         }
                     }
                 }
-                r.on_hover_text(if unread > 0 { format!("{unread} waiting in Messages and requests · Cove menu: tabs, the project and file, view, the console, settings and help") } else { "Cove menu: tabs, the project and file, view, the console, settings and help".to_owned() });
+                r.on_hover_text("Cove menu: tabs, the project and file, view, the console, settings and help");
                 // Full screen at hand, left of the menu and not only inside
                 // it (operator, 2026-11-20: "need a full screen pusher left of
                 // the cove icon in the top right, not hidden in the menu").

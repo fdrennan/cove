@@ -103,7 +103,14 @@ licence_gate() {
 
 build() {
   notices
-  log "building $(cd "$app" && git rev-parse --short HEAD 2>/dev/null || echo tree)…"
+  # What this build compiles, named once, at its start: the commit, and
+  # "+dirty" when app/ held uncommitted edits (the working tree is what is
+  # compiled). publish() names the release by it. It used to read HEAD when
+  # the build ENDED, so a commit landing mid-build named a release that did
+  # not contain it: 20261120T231025Z-f7692fb was dc293ce's code, and a test
+  # of f7692fb's fix against it failed (2026-11-20).
+  ( cd "$app" && printf '%s%s' "$(git rev-parse --short HEAD 2>/dev/null || echo tree)" "$([[ -n "$(git status --porcelain -- . 2>/dev/null)" ]] && echo +dirty)" ) > "$state/build-commit.new" && mv -f "$state/build-commit.new" "$state/build-commit"
+  log "building $(cat "$state/build-commit")…"
   local t0=$SECONDS
   # The stamp is when the build STARTED: an edit saved mid-build is newer than
   # it and builds again. (Stamped at the end, an edit landing during a 17 s
@@ -158,7 +165,7 @@ shared=/usr/local/lib/cove
 # (multiuser.rs current_release).
 publish() {
   local id rel
-  id="$(date -u +%Y%m%dT%H%M%SZ)-$(cd "$app" && git rev-parse --short HEAD 2>/dev/null || echo tree)"
+  id="$(date -u +%Y%m%dT%H%M%SZ)-$(cat "$state/build-commit" 2>/dev/null || echo tree)"
   rel="$shared/releases/$id"
   sudo -n install -d -m 755 "$shared" "$shared/releases" "$rel" "$rel/web" &&
     sudo -n install -m 755 -o root -g root "$bin" "$rel/cove" &&

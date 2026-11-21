@@ -243,6 +243,22 @@ fn refresh_verbs(dir: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static
             }
         }
     }
+    // Cove's lines in the app's log (operator, 2026-11-17: "logs arent
+    // helpful if they never say anything"): an up.sh or down.sh Cove wrote
+    // before them - its own heading, no [cove] mark - gets the current one,
+    // the old kept beside it. One a person changed so it lost that heading is
+    // theirs and stays.
+    for (verb, heading) in [("up.sh", "# Up: start .cove/run.sh in the background"), ("down.sh", "# Down: stop what .cove/up.sh started")] {
+        let f = cove.join(verb);
+        if let Ok(t) = std::fs::read_to_string(&f) {
+            if t.contains(heading) && !t.contains("[cove]") {
+                if let Some((_, now)) = files("_cove").into_iter().find(|(p, _)| *p == verb) {
+                    let _ = std::fs::write(cove.join(format!("{verb}.prev")), &t);
+                    changed |= std::fs::write(&f, now).is_ok();
+                }
+            }
+        }
+    }
     let gi = dir.join(".gitignore");
     if cove.join("app.env").is_file() {
         let g = std::fs::read_to_string(&gi).unwrap_or_default();
@@ -423,6 +439,26 @@ mod tests {
         std::fs::write(d.join(DIR).join("build.sh"), "#!/bin/sh\nmake\n").unwrap();
         refresh_verbs(&d, &crate::host::starter_files);
         assert_eq!(std::fs::read_to_string(d.join(DIR).join("build.sh")).unwrap(), "#!/bin/sh\nmake\n");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_up_from_before_the_marks_gets_the_one_that_writes_them() {
+        let d = std::env::temp_dir().join(format!("cove-marks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(DIR)).unwrap();
+        std::fs::write(d.join(DIR).join("app.env"), "APP_LANGUAGE=node\n").unwrap();
+        let old_up = "#!/usr/bin/env bash\n# Up: start .cove/run.sh in the background and wait until APP_HEALTH answers.\nsetsid nohup .cove/run.sh >.cove/run/app.log 2>&1 </dev/null &\n";
+        std::fs::write(d.join(DIR).join("up.sh"), old_up).unwrap();
+        assert!(refresh_verbs(&d, &crate::host::starter_files));
+        let up = std::fs::read_to_string(d.join(DIR).join("up.sh")).unwrap();
+        assert!(up.contains("[cove]") && up.contains(">>\"$log\""), "up.sh writes no marks or overwrites the log");
+        assert_eq!(std::fs::read_to_string(d.join(DIR).join("up.sh.prev")).unwrap(), old_up, "the old one is kept beside it");
+        assert!(!refresh_verbs(&d, &crate::host::starter_files), "a second look changed something");
+        // Someone's own up.sh is theirs.
+        std::fs::write(d.join(DIR).join("up.sh"), "#!/bin/sh\n./serve &\n").unwrap();
+        refresh_verbs(&d, &crate::host::starter_files);
+        assert_eq!(std::fs::read_to_string(d.join(DIR).join("up.sh")).unwrap(), "#!/bin/sh\n./serve &\n");
         let _ = std::fs::remove_dir_all(&d);
     }
 

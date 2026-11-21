@@ -1061,6 +1061,13 @@ pub struct Settings {
     /// Where the kernels start and the Files pane opens. Empty: home.
     #[serde(default)]
     pub project_dir: String,
+    /// Where new projects are made, each in a folder of its own (host.rs
+    /// `projects_root`). Empty: ~/.cove/projects - a hidden folder, so a
+    /// person's home is left as it was (operator, 2026-11-20: "~/domains seems
+    /// too intrusive on someones box, we can put them in a ~/. folder"). On
+    /// ndexr's own servers the platform's folder decides, as before.
+    #[serde(default)]
+    pub projects_dir: String,
     /// The ONE Lmod module the whole IDE runs in - R, Python and the shell
     /// alike ("" = the R / python3 on PATH, the shell on the bare stack).
     /// Operator, 2026-10-13: "a module switcher in the main top panel not
