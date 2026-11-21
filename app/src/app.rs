@@ -2239,10 +2239,16 @@ impl App {
                                     // Where New project puts every project (host.rs projects_root).
                                     // The domain this Cove's projects are named under, away
                                     // from ndexr's platform (api.rs Settings.domain).
-                                    if !self.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform) {
-                                        ui.label("Domain");
-                                        ui.add(egui::TextEdit::singleline(&mut draft.domain).font(egui::TextStyle::Monospace).hint_text("lab.example.org — empty: name.localhost").desired_width(field_w))
-                                            .on_hover_text("new projects are named under it: \"report\" becomes report.lab.example.org; point that name (and *.lab.example.org) at this server to reach them");
+                                    let (platform, served) = self.settings.lock().unwrap().as_ref().map_or((false, String::new()), |v| (v.platform, crate::api::primary_domain(&v.served_as)));
+                                    if !platform {
+                                        ui.label("Domains");
+                                        // Comma-separated as typed; empty entries are dropped where it is read.
+                                        let mut text = draft.domains.join(", ");
+                                        let hint = if served.is_empty() { "lab.example.org — empty: name.localhost".to_owned() } else { format!("{served} already · add more, comma-separated") };
+                                        let tip = if served.is_empty() { "new projects are named under the first: \"report\" becomes report.lab.example.org; point that name (and its *.) at this server".to_owned() } else { format!("this Cove is reached under {served}, so new projects are named there first: \"report\" becomes report.{served}; add more domains to offer them too") };
+                                        if ui.add(egui::TextEdit::singleline(&mut text).font(egui::TextStyle::Monospace).hint_text(hint).desired_width(field_w)).on_hover_text(tip).changed() {
+                                            draft.domains = text.split(',').map(|d| d.trim().to_owned()).collect();
+                                        }
                                         ui.end_row();
                                     }
                                     ui.label("Projects folder");
@@ -4332,8 +4338,9 @@ impl eframe::App for App {
         // Where this Cove names and places new projects (ide.rs on_platform).
         if let Some(v) = self.settings.lock().unwrap().as_ref() {
             self.ide.platform = Some(v.platform);
-            if self.ide.own_domain != v.settings.domain {
-                self.ide.own_domain = v.settings.domain.clone();
+            let domains = v.domains();
+            if self.ide.own_domains != domains {
+                self.ide.own_domains = domains;
             }
         }
         // The look follows the pick, and "Match system" follows the system.

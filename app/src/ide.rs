@@ -1367,7 +1367,7 @@ pub struct Ide {
     /// projects are named under when it is not (api.rs SettingsView.platform,
     /// Settings.domain), as the settings last said; None until they come.
     pub platform: Option<bool>,
-    pub own_domain: String,
+    pub own_domains: Vec<String>,
     /// The Logs tab's find box and its Errors-only switch: which lines show.
     log_find: String,
     log_errors: bool,
@@ -1825,7 +1825,7 @@ impl Ide {
             run_log_asked: 0.0,
             run_log_kind: 0,
             platform: None,
-            own_domain: String::new(),
+            own_domains: Vec::new(),
             log_find: String::new(),
             log_errors: false,
             app_status_at: f64::NEG_INFINITY,
@@ -8519,7 +8519,7 @@ impl Ide {
 
     /// The names a new project may take for what was typed.
     fn name_offers(&self, typed: &str, v: &[DomainInfo]) -> Vec<String> {
-        if self.on_platform() { new_domain_offers(typed, v) } else { local_offers(typed, &self.own_domain, v) }
+        if self.on_platform() { new_domain_offers(typed, v) } else { local_offers(typed, &self.own_domains, v) }
     }
 
     /// The open file is what starts the project's own server: its language's
@@ -9398,15 +9398,21 @@ fn own_domain(v: &[DomainInfo]) -> Option<DomainInfo> {
 /// offered freddy.ndexr.io (operator's screenshot, 2026-11-15) - and a
 /// server of someone else's is not ndexr.io (2026-11-21). The name may be
 /// several labels ("stories.box").
-fn local_offers(typed: &str, domain: &str, v: &[DomainInfo]) -> Vec<String> {
-    let domain = domain.trim().trim_matches('.').to_ascii_lowercase();
-    let suffix = if domain.is_empty() { crate::tabs::LOCAL.to_owned() } else { format!(".{domain}") };
+fn local_offers(typed: &str, domains: &[String], v: &[DomainInfo]) -> Vec<String> {
+    let suffixes: Vec<String> = if domains.is_empty() { vec![crate::tabs::LOCAL.to_owned()] } else { domains.iter().map(|d| format!(".{}", d.trim().trim_matches('.').to_ascii_lowercase())).collect() };
     let t = typed.trim().trim_end_matches('.').to_ascii_lowercase();
-    let word = t.strip_suffix(suffix.as_str()).unwrap_or(&t);
     let label_ok = |l: &str| !l.is_empty() && l.len() <= 63 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !l.starts_with('-') && !l.ends_with('-');
-    let ok = !word.is_empty() && word.split('.').all(label_ok);
-    let host = format!("{word}{suffix}");
-    if ok && !v.iter().any(|d| d.host == host) { vec![host] } else { Vec::new() }
+    // Typed whole under one of them: that one only.
+    let whole = suffixes.iter().find(|x| t.ends_with(x.as_str()) && t.len() > x.len());
+    let mut out = Vec::new();
+    for x in whole.into_iter().chain(suffixes.iter().filter(|_| whole.is_none())) {
+        let word = t.strip_suffix(x.as_str()).unwrap_or(&t);
+        let host = format!("{word}{x}");
+        if !word.is_empty() && word.split('.').all(label_ok) && !v.iter().any(|d| d.host == host) && !out.contains(&host) {
+            out.push(host);
+        }
+    }
+    out
 }
 
 fn new_domain_offers(typed: &str, v: &[DomainInfo]) -> Vec<String> {
@@ -9745,16 +9751,24 @@ mod tests {
     #[test]
     fn a_computer_with_no_ndexr_names_projects_localhost() {
         let v = vec![DomainInfo { host: "hello.localhost".into(), path: "/home/freddy/hello.localhost".into(), ..Default::default() }];
-        assert_eq!(super::local_offers("rix", "", &v), vec!["rix.localhost"]);
-        assert_eq!(super::local_offers("rix.localhost", "", &v), vec!["rix.localhost"]);
-        assert!(super::local_offers("hello", "", &v).is_empty(), "already a project");
-        assert!(super::local_offers("bad name", "", &v).is_empty());
+        assert_eq!(super::local_offers("rix", &[], &v), vec!["rix.localhost"]);
+        assert_eq!(super::local_offers("rix.localhost", &[], &v), vec!["rix.localhost"]);
+        assert!(super::local_offers("hello", &[], &v).is_empty(), "already a project");
+        assert!(super::local_offers("bad name", &[], &v).is_empty());
         // Never an ndexr name from the computer's own user (/home/freddy).
-        assert!(super::local_offers("test", "", &v).iter().all(|h| !h.contains("ndexr.io")));
+        assert!(super::local_offers("test", &[], &v).iter().all(|h| !h.contains("ndexr.io")));
         // A server of someone's own names its projects under its domain.
-        assert_eq!(super::local_offers("lab", "example.org", &v), vec!["lab.example.org"]);
-        assert_eq!(super::local_offers("stories.box", ".example.org.", &v), vec!["stories.box.example.org"]);
-        assert_eq!(super::local_offers("lab.example.org", "example.org", &v), vec!["lab.example.org"]);
+        let mine = vec!["example.org".to_owned(), "lab.io".to_owned()];
+        assert_eq!(super::local_offers("lab", &mine, &v), vec!["lab.example.org", "lab.lab.io"], "the primary first");
+        assert_eq!(super::local_offers("stories.box", &mine[..1], &v), vec!["stories.box.example.org"]);
+        assert_eq!(super::local_offers("x.lab.io", &mine, &v), vec!["x.lab.io"], "typed whole under one: that one");
+        // The domain a Cove builds for is the one it is reached at.
+        assert_eq!(crate::api::primary_domain("cove.example.org"), "example.org");
+        assert_eq!(crate::api::primary_domain("cove.ndexr.io:443"), "ndexr.io");
+        assert_eq!(crate::api::primary_domain("example.org"), "example.org");
+        assert_eq!(crate::api::primary_domain("3.139.234.231:8000"), "");
+        assert_eq!(crate::api::primary_domain("localhost:8788"), "");
+        assert_eq!(crate::api::primary_domain("[::1]:8788"), "");
         assert_eq!(crate::tabs::Tabs::short("hello.localhost"), "hello");
     }
 

@@ -1068,14 +1068,14 @@ pub struct Settings {
     /// ndexr's own servers the platform's folder decides, as before.
     #[serde(default)]
     pub projects_dir: String,
-    /// The domain this Cove's projects are named under, away from ndexr's
-    /// platform: "lab.example.com" makes a new project "<name>.lab.example.com"
-    /// (operator, 2026-11-21: "ndexr.io is never going to be that domain for
-    /// someone else ... the server version will ultimately match whatever
-    /// domain that person will have set up"). Empty: "<name>.localhost".
+    /// More domains this Cove builds projects under, beyond the one it is
+    /// reached at (SettingsView.served_as, its primary). Operator,
+    /// 2026-11-21: "cove needs to be able to inherit and be aware of the
+    /// domain its running on ... the main domain its on is the primary domain
+    /// it builds for, and as we pass it domains it can be more streamlined".
     /// Ignored on ndexr's platform, whose names are under ndexr.io.
     #[serde(default)]
-    pub domain: String,
+    pub domains: Vec<String>,
     /// The ONE Lmod module the whole IDE runs in - R, Python and the shell
     /// alike ("" = the R / python3 on PATH, the shell on the bare stack).
     /// Operator, 2026-10-13: "a module switcher in the main top panel not
@@ -1219,6 +1219,41 @@ pub struct SettingsView {
     /// under `settings.domain` and start where they are.
     #[serde(default)]
     pub platform: bool,
+    /// The name this Cove's server is reached at (the request's Host, or the
+    /// proxy's X-Forwarded-Host): cove.example.org. Empty when reached by an
+    /// address or as localhost.
+    #[serde(default)]
+    pub served_as: String,
+}
+
+impl SettingsView {
+    /// The domains new projects are named under, the primary first: the one
+    /// this Cove is reached at (`primary_domain`), then those passed in
+    /// Settings.domains. Empty: none - names are `<name>.localhost`.
+    pub fn domains(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for d in std::iter::once(primary_domain(&self.served_as)).chain(self.settings.domains.iter().cloned()) {
+            let d = d.trim().trim_matches('.').to_ascii_lowercase();
+            if !d.is_empty() && !out.contains(&d) {
+                out.push(d);
+            }
+        }
+        out
+    }
+}
+
+/// The domain a Cove reached at `host` builds for: cove.example.org builds
+/// example.org's projects, as cove.ndexr.io does ndexr.io's; a two-label name
+/// is its own. An address, a bare name or localhost is no domain ("").
+pub fn primary_domain(host: &str) -> String {
+    let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let h = h.rsplit_once(':').filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit())).map_or(h.as_str(), |(n, _)| n).to_owned();
+    let labels: Vec<&str> = h.split('.').filter(|l| !l.is_empty()).collect();
+    let numeric = labels.iter().all(|l| l.chars().all(|c| c.is_ascii_digit()));
+    if labels.len() < 2 || numeric || h.contains(':') || labels.last() == Some(&"localhost") {
+        return String::new();
+    }
+    if labels.len() >= 3 { labels[1..].join(".") } else { labels.join(".") }
 }
 
 /// Where this computer's Cove gets the ndexr stack - asked until chosen,

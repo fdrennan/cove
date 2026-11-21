@@ -260,7 +260,24 @@ button{padding:10px 16px;border:0;border-radius:8px;background:#6a96c4;color:#0f
 <form action="/login"><b>Cove</b><p>Paste the token from <code>~/.config/ndexr/cove-token</code> on this server.</p>
 <input name="token" type="password" autofocus><button>Sign in</button></form>"#;
 
+/// The name this server was last reached at (X-Forwarded-Host behind a
+/// proxy, else Host), port dropped: what api.rs primary_domain builds for.
+static SERVED_AS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+pub(crate) fn served_as() -> String {
+    SERVED_AS.lock().unwrap().clone()
+}
+
 fn handle(ctx: &Ctx, mut req: Request) {
+    {
+        let get = |name: &'static str| req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_owned());
+        if let Some(h) = get("X-Forwarded-Host").or_else(|| get("Host")) {
+            let name = h.split(',').next().unwrap_or("").trim().to_owned();
+            if !crate::api::primary_domain(&name).is_empty() {
+                *SERVED_AS.lock().unwrap() = name.rsplit_once(':').map_or(name.as_str(), |(n, _)| n).to_owned();
+            }
+        }
+    }
     let url = req.url().to_owned();
     let path = url.split('?').next().unwrap_or("/").to_owned();
     let method = req.method().clone();

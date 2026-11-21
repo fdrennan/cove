@@ -1541,7 +1541,7 @@ pub fn stack_view() -> StackView {
 
 fn settings_view() -> SettingsView {
     let saved: Option<Settings> = std::fs::read(settings_file()).ok().and_then(|b| serde_json::from_slice::<Settings>(&b).ok()).map(Settings::one_module);
-    SettingsView { chosen: saved.is_some(), settings: saved.unwrap_or_default(), stack: stack::view(), platform: crate::server::has_platform() }
+    SettingsView { chosen: saved.is_some(), settings: saved.unwrap_or_default(), stack: stack::view(), platform: crate::server::has_platform(), served_as: crate::server::served_as() }
 }
 
 /// A session `cove multiuser` starts arrives with its environment and
