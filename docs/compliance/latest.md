@@ -1,6 +1,6 @@
-# Licence compliance - 2026-11-20T06:02:34Z
+# Licence compliance - 2026-11-21T06:03:13Z
 
-Cove commit `9048cea`. 12 pass, 1 fail, 0 skipped. Written by `onprem/compliance.py`; the duties are explained in `docs/ideas-and-licences.md`. Engineering evidence, not a legal opinion.
+Cove commit `acdc377`. 12 pass, 1 fail, 0 skipped. Written by `onprem/compliance.py`; the duties are explained in `docs/ideas-and-licences.md`. Engineering evidence, not a legal opinion.
 
 | | Check | Tool | Duty | Evidence |
 |---|---|---|---|---|
@@ -8,7 +8,7 @@ Cove commit `9048cea`. 12 pass, 1 fail, 0 skipped. Written by `onprem/compliance
 | PASS | `cove.dependency-licences` (gate) | Cove | Every crate linked into Cove is usable under a permissive licence (nothing copyleft reaches Cove's code) | 469 of 469 crates resolve to an allowed licence |
 | PASS | `cove.notices-current` (gate) | Cove | THIRD-PARTY-NOTICES.txt matches the Cargo.lock being built | dependencies sha256 9e2f1007cc847a95; file current; 410 crates from their own notice files, 59 from canonical texts |
 | PASS | `cove.notices-packaged` (gate) | Cove | Every package Cove ships carries LICENSE and the notices | deb, dmg, linux and windows builds copy LICENSE + THIRD-PARTY-NOTICES.txt |
-| PASS | `cove.not-derivative` (gate) | Cove | No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only) | 70363 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match |
+| PASS | `cove.not-derivative` (gate) | Cove | No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only) | 70728 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match |
 | PASS | `platform.no-marks-in-hostnames` (gate) | Cove + Inlet | No Posit mark (RStudio, Posit, Positron, Shiny) in any served ndexr hostname | 615 vhosts, none names a Posit mark |
 | PASS | `positron.not-hosted` (gate) | Positron | Positron (Elastic License 2.0) is not offered to others: no enabled vhost routes its sessions | no enabled vhost includes positron_sessions.conf |
 | PASS | `inlet.licence-text` | Inlet | The installed Inlet carries the AGPLv3 text and RStudio's NOTICE | COPYING is AGPLv3: yes; NOTICE 865416 bytes |

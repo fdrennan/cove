@@ -1,6 +1,6 @@
 {
-  "at": "2026-11-20T06:02:34Z",
-  "cove_commit": "9048cea",
+  "at": "2026-11-21T06:03:13Z",
+  "cove_commit": "acdc377",
   "counts": {
     "pass": 12,
     "fail": 1,
@@ -61,12 +61,12 @@
       "duty": "No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only)",
       "gate": true,
       "status": "pass",
-      "evidence": "70363 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "evidence": "70728 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "check": "cove.not-derivative",
       "product": "cove",
-      "summary": "70363 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "summary": "70728 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "details": {
-        "cove_lines": 70363,
+        "cove_lines": 70728,
         "reference_lines": 408860,
         "allow_listed": 26,
         "matches": []
