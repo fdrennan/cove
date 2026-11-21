@@ -713,9 +713,12 @@ impl SettingsPane {
                 ui.label(RichText::new(format!("This login pulls only your images, until {}.", l.expires_at)).size(13.5).color(theme::text_strong()));
             }
         }
+        // Only a real login goes into a command: with the placeholder in it,
+        // the Podman line copied as it stood failed "authenticating creds ...
+        // 400 Bad Request" (request #180, 2026-11-03).
         let password = match &login {
-            Some(Ok(l)) => l.password.clone(),
-            _ => "<the password from Get a pull login>".to_owned(),
+            Some(Ok(l)) => Some(l.password.clone()),
+            _ => None,
         };
         let registry = s.repository.split('/').next().unwrap_or("").to_owned();
         let (apptainer, podman) = run_commands(&s.needs, &s.port, &reference);
@@ -724,8 +727,16 @@ impl SettingsPane {
         // itself (api.ndexr.io/v1/images): no password to copy.
         let project = s.repository.rsplit('/').next().unwrap_or("");
         command(ui, ctx, "With the ndexr CLI and your API key", &format!("export NDEXR_API_KEY='<your key from api.ndexr.io>'\nndexr image pull {project} --tag {}\nndexr image pull {project} --tag {} --podman", v.tag, v.tag));
-        command(ui, ctx, "Apptainer", &format!("export APPTAINER_DOCKER_USERNAME=AWS APPTAINER_DOCKER_PASSWORD='{password}'\n{apptainer}"));
-        command(ui, ctx, "Podman or Docker", &format!("echo '{password}' | podman login --username AWS --password-stdin {registry}\n{podman}"));
+        match password {
+            Some(password) => {
+                command(ui, ctx, "Apptainer", &format!("export APPTAINER_DOCKER_USERNAME=AWS APPTAINER_DOCKER_PASSWORD='{password}'\n{apptainer}"));
+                command(ui, ctx, "Podman or Docker", &format!("echo '{password}' | podman login --username AWS --password-stdin {registry}\n{podman}"));
+            }
+            None => {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Get a pull login above for the Apptainer and Podman commands; the ndexr CLI fetches its own.").size(13.5).color(theme::text_strong()));
+            }
+        }
     }
 }
 
