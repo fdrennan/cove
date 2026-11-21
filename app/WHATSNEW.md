@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-21T21:50Z · Starting an app from Cove connected to your cell no longer fails at "Not routed" and waits ten minutes on its public address: an app that runs in your cell is started there and checked where it runs, through your cell's own Cove, as on your computer
 - 2026-11-21T00:25Z · Logs has a find box and Errors only: type to keep the lines that hold it, or switch to the lines that say something failed - errors, panics, tracebacks, a non-zero exit, a 5xx
 - 2026-11-21T00:10Z · An app's log keeps its history and says what Cove did: each Start appends instead of wiping it, and [cove] lines mark when it started, when it answered (after how many seconds), when it was stopped, and when it exited on its own and with what code - a crash ends with "exited 1" in red. Past 2 MB it keeps the last 1 MB. Projects made before get the new Start and Stop scripts, their old ones kept beside them
 - 2026-11-20T23:10Z · New projects go to one folder you choose: Settings › Projects folder, ~/.cove/projects unless you pick another; projects you already have stay where they are and still open. On ndexr's servers your ndexr projects folder is used, as before

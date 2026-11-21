@@ -6950,9 +6950,23 @@ impl Ide {
         let publish = l.publish.lock().unwrap().clone();
         let published = matches!(publish, Some(Ok(_)));
         let local = l.host.ends_with(crate::tabs::LOCAL);
+        // Shown where it runs (AppStatus seen_at, apps.rs): on this computer,
+        // or in the person's cell through its own Cove's /port/<n>/. There is
+        // no domain to route then, and the public address is not where it
+        // answers: a desktop on a cell asked its cell to route riemann.ndexr.io
+        // ("500 apps are routed from cove.ndexr.io") and then waited 10
+        // minutes on https://riemann.ndexr.io/ (operator, 2026-11-21).
+        let seen_at = match &*l.app.lock().unwrap() {
+            Some(Ok(s)) => s.seen_at.clone(),
+            _ => String::new(),
+        };
+        let here = local || !seen_at.is_empty();
+        let app_known = l.app.lock().unwrap().is_some();
         // A Rust app: deployed once the provisioner has started (the deploy
-        // waits for the vhost itself), then followed every 2 s.
-        if l.rust && published {
+        // waits for the vhost itself), then followed every 2 s - on ndexr's
+        // own servers. Where it is shown where it runs, it starts like any
+        // other port app.
+        if l.rust && published && app_known && !here {
             if !l.deploy_sent {
                 l.deploy_sent = true;
                 l.deploy_asked = now;
@@ -6978,7 +6992,7 @@ impl Ide {
             });
         }
         let app = l.app.lock().unwrap().clone();
-        let port = !l.rust && matches!(&app, Some(Ok(s)) if s.kind == "port");
+        let port = (!l.rust || here) && matches!(&app, Some(Ok(s)) if s.kind == "port");
         // Until the project has been read, nothing past publishing is decided.
         let known = l.rust || matches!(&app, Some(_));
         if port && published {
@@ -7011,7 +7025,7 @@ impl Ide {
             // Up worked: route https://<host>/ to the port. "not published
             // yet" means the vhost is still being written - asked again.
             let pending = matches!(&*l.route.lock().unwrap(), Some(Ok(m)) if m.starts_with("not published yet"));
-            if !local && matches!(&up, Some(Ok(v)) if ours(v) && v.ok == Some(true)) && (!l.route_sent || (pending && now - l.route_asked > 5.0)) {
+            if !here && matches!(&up, Some(Ok(v)) if ours(v) && v.ok == Some(true)) && (!l.route_sent || (pending && now - l.route_asked > 5.0)) {
                 l.route_sent = true;
                 l.route_asked = now;
                 let slot = l.route.clone();
@@ -7051,11 +7065,11 @@ impl Ide {
         let route = l.route.lock().unwrap().clone();
         // Here, Up answering is the end: up.sh waits for APP_HEALTH.
         let up_ok = matches!(&up, Some(Ok(v)) if v.what.starts_with("up ") && v.ok == Some(true));
-        let routed = (local && up_ok) || matches!(&route, Some(Ok(m)) if !m.starts_with("not published yet"));
+        let routed = (here && up_ok) || matches!(&route, Some(Ok(m)) if !m.starts_with("not published yet"));
         let deploy = l.deploy.lock().unwrap().clone();
-        let deployed = known && if l.rust { matches!(&deploy, Some(Ok(v)) if v.ok == Some(true)) } else { !port || routed };
+        let deployed = known && if l.rust && !here { matches!(&deploy, Some(Ok(v)) if v.ok == Some(true)) } else { !port || routed };
         // The address, asked every 5 s once there is something to answer.
-        if !local && published && deployed && now - l.gate_asked > 5.0 {
+        if !here && published && deployed && now - l.gate_asked > 5.0 {
             l.gate_asked = now;
             let (slot, host) = (l.gate.clone(), l.host.clone());
             self.backend.query(Query::SiteGate { host }, ctx, move |r: Result<String, String>| {
@@ -7063,9 +7077,9 @@ impl Ide {
             });
         }
         let gate = l.gate.lock().unwrap().clone().unwrap_or_default();
-        let live = published && deployed && (local || matches!(gate.as_str(), "open" | "login" | "password"));
+        let live = published && deployed && (here || matches!(gate.as_str(), "open" | "login" | "password"));
         let up_failed = port && matches!(&up, Some(Err(_)) | Some(Ok(JobView { ok: Some(false), .. }))) && l.up_sent;
-        let deploy_failed = (l.rust && matches!(&deploy, Some(Err(_)) | Some(Ok(JobView { ok: Some(false), .. })))) || up_failed || (port && matches!(&route, Some(Err(_))));
+        let deploy_failed = (l.rust && !here && matches!(&deploy, Some(Err(_)) | Some(Ok(JobView { ok: Some(false), .. })))) || up_failed || (port && matches!(&route, Some(Err(_))));
         // A first Rust build is ~7 minutes before routing starts (measured on
         // the host, 2026-10-19), and a first Julia start compiles its
         // packages: they get longer before they are called slow.
@@ -7091,12 +7105,12 @@ impl Ide {
             },
             _ => "",
         };
-        let what = if rust {
+        let what = if rust && !here {
             "A Rust app - built, served and routed for you".to_owned()
         } else if port {
             let lang = if lang.is_empty() { "web" } else { lang };
             let a = if lang.starts_with(['A', 'E', 'I', 'O', 'U']) { "An" } else { "A" };
-            format!("{a} {lang} app on its own port - started {} for you", if local { "on this computer" } else { "and routed" })
+            format!("{a} {lang} app on its own port - started {} for you", if local { "on this computer" } else if here { "in your cell" } else { "and routed" })
         } else if known {
             "A Shiny module - live as soon as its address answers".to_owned()
         } else {
@@ -7198,7 +7212,7 @@ impl Ide {
                     Some(Ok(_)) => row(ui, Some(true), "Registered: DNS, certificate, routing", ""),
                     Some(Err(e)) => row(ui, Some(false), "Not registered", e),
                 }
-                if rust {
+                if rust && !here {
                     match &deploy {
                         _ if !published => row(ui, None, "Build, serve and route the app", "after it is registered"),
                         None => row(ui, None, "Starting the build", ""),
@@ -7234,17 +7248,17 @@ impl Ide {
                         _ => row(ui, None, &format!("Start the app{on}"), ".cove/up.sh"),
                     }
                     match &route {
-                        _ if local => {}
+                        _ if here => {}
                         Some(Err(e)) => row(ui, Some(false), "Not routed", e),
                         Some(Ok(_)) if routed => row(ui, Some(true), &format!("https://{host}/ goes to the app"), ""),
                         _ => row(ui, None, &format!("Route https://{host}/ to the app"), "once it answers"),
                     }
                 }
-                let addr = if local { format!("http://localhost:{port_no}/") } else { format!("https://{host}/") };
+                let addr = if local { format!("http://localhost:{port_no}/") } else if here { self.backend.viewer_url(&seen_at) } else { format!("https://{host}/") };
                 match () {
                     _ if taken => row(ui, Some(false), &format!("{host} is taken"), "someone else holds this name, so it cannot be yours - choose another name and create that; the files made here stay in your domains folder"),
                     _ if failed && !slow => row(ui, Some(false), &format!("{addr} is not live"), "the step above stopped it"),
-                    _ if live => row(ui, Some(true), &format!("Answering at {addr}"), if local { "on this computer only" } else { "only you (and admins) can see it until you make it public" }),
+                    _ if live => row(ui, Some(true), &format!("Answering at {addr}"), if local { "on this computer only" } else if here { "in your cell, through its own Cove - the App tab shows it" } else { "only you (and admins) can see it until you make it public" }),
                     _ if slow => row(ui, Some(false), &format!("{addr} has not answered after {} minutes", if rust { 20 } else { 10 }), "the App tab shows what it says; Try again re-runs every step"),
                     _ if published && deployed => row(ui, None, &format!("Waiting for {addr} to answer"), "DNS and the certificate take a minute or two"),
                     _ => row(ui, None, &addr, "answers once the steps above are done"),
