@@ -111,6 +111,17 @@ pub fn main(args: &[String]) -> i32 {
         println!("trusting the gate's X-Auth-Email for: {}", trusted.join(", "));
     }
     crate::runner::set_serving();
+    // The name this Cove is reached at, before anyone has reached it. Caddy
+    // asks /__tls/ask for the first certificate before any request can come
+    // through, and that ask comes from 127.0.0.1, so a fresh server learned
+    // its name from nothing and refused its own certificate forever
+    // (2026-11-22, found building ndexr's managed servers). COVE_NAME=
+    // cove.example.org in /etc/cove/<user>.env says it up front.
+    if let Some(n) = std::env::var("COVE_NAME").ok().and_then(|n| name_in(&n)) {
+        if !crate::api::primary_domain(&n).is_empty() {
+            *SERVED_AS.lock().unwrap() = n;
+        }
+    }
     let trust_loopback = std::env::var("COVE_TRUST_LOOPBACK").as_deref() == Ok("1");
     if trust_loopback {
         println!("trusting every loopback request (a cell: COVE_TRUST_LOOPBACK=1)");

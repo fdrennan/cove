@@ -1304,6 +1304,14 @@ impl AgentPane {
                     });
                 });
             });
+        // Anthropic's Commercial Terms D.3: tell people the agent's factual
+        // claims are not to be relied on unchecked. One line, in the body's
+        // ink - not hint grey, which the operator cannot read (2026-11 rule).
+        ui.add_space(-2.0);
+        ui.horizontal(|ui| {
+            ui.add_space(12.0);
+            ui.label(RichText::new("The agent is Claude, an AI - check its work before you rely on it.").size(11.0).color(theme::text()));
+        });
         let h = ui.cursor().top() - composer_top;
         if (h - self.composer_h).abs() > 0.5 {
             self.composer_h = h;

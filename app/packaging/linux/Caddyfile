@@ -12,7 +12,10 @@
 #
 # Two things outside this server, once:
 #   your DNS:   example.org and *.example.org -> this server's address
-#   Cove:       running on 127.0.0.1:8788 (packaging/linux/cove@.service)
+#   Cove:       running on 127.0.0.1:8788 (packaging/linux/cove@.service),
+#               told its own name: COVE_NAME=example.org in /etc/cove/<user>.env
+#               (without it the first certificate is refused - nothing has
+#               reached Cove yet to say what it is called)
 #
 #   sudo cp Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
 

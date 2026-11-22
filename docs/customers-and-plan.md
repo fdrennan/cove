@@ -46,7 +46,7 @@ A third source is needed, and the house one changes from commands to dollars. Th
 | source | who it suits | how | status |
 |---|---|---|---|
 | **Their own** Claude subscription or API key | Anyone who has one; free accounts | `--claude-source client` | Built |
-| **Through ndexr**: they pay us, we pay Anthropic | People who'd rather not deal with Anthropic | ndexr's API key. Prepaid in **dollars**, charged at what the model cost + 7%. A customer command averaged $0.245 (measured), and "100 commands a week" can reach about $106 a month, so the allowance must be in dollars, not commands | Metered in commands today; **move to dollars** |
+| **Through ndexr**: Cove credit | People who would rather not deal with Anthropic | Prepaid in dollars at billing.ndexr.io ($10, $25, $50, $100 or any amount). Credit = what was paid, less Stripe's fee, divided by 1.07. ndexr's gateway (the cell agent's house-key proxy) charges every model call at Anthropic's list price: a hold before the call, the exact token cost after, keyed on Anthropic's message id. A failed call costs nothing, and the next call is refused when the credit can't cover it. Hours are shown as an estimate, measured from Cove's own runs: Sonnet 5.5 about $8 an active hour, Opus 5.5 about $18 | **Built 2026-11-22, in Stripe test mode** (`pricing$CLAUDE_CREDIT$live`). Subscribers keep their weekly commands; credit is spent after them |
 | **Their own Amazon Bedrock** | Regeneron, and any company with AWS terms already in place | Claude Code runs on Bedrock as it is: `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`, their AWS credentials (or `AWS_BEARER_TOKEN_BEDROCK`), and models by their Bedrock IDs (`anthropic.`-prefixed). The installed CLI (2.1.330) knows these variables | **Not built**: add `--claude-source bedrock` to `ndexr-claude-run`, which passes those through and never stores them in ndexr. Add a Settings › AI provider row in Cove. Confirm with Regeneron which models their account has enabled |
 
 ## Every place money moves (managed servers)
@@ -58,6 +58,12 @@ A third source is needed, and the house one changes from commands to dollars. Th
 ## What's built, and what's next, in order
 
 **Built:**
+- **pay to start a managed server** (2026-11-22, Stripe test mode, admins only until the operator says sell it: `pricing$MANAGED$live`):
+  - billing.ndexr.io `managed.r`: the checkout, a monthly subscription at break-even + 7% ($14.13 for a `t4g.medium` with 50 GB that stops when idle), and the owner's server with its address, token and Start;
+  - `ndexr aws managed reconcile` (timer `ndexr-managed-reconcile`, every 2 minutes) follows the subscription: active launches it, a failed payment stops it with the disk kept, cancelled removes it;
+  - the server is `https://cove.<name>.ndexr.io`, with the stack, and each project at `<project>.<name>.ndexr.io`;
+  - proven end to end on 2026-11-22 against a real instance: launch, certificate, token, idle stop, Start, cancel and teardown. The stop-on-failed-payment branch is unit-tested only. Stripe's hosted page was not paid through in a browser; the subscription was made through the API;
+- **the desktop app connects to any Cove server** by address and token: one ndexr manages, or one a company runs, with no ndexr account (the status-bar chip › Connect to a server…);
 - the break-even analysis and the accounting section (billing.ndexr.io);
 - the projects folder (`~/.cove/projects`);
 - the stack;
@@ -66,8 +72,14 @@ A third source is needed, and the house one changes from commands to dollars. Th
 - `client` and `house` credentials.
 
 **Next:**
-1. **Start by paying**: Stripe checkout first, then the server launches. Stop it on a failed payment. Serves the first and third customers.
-2. **AI provider choice**: `--claude-source bedrock`, a Settings row in Cove, and the house allowance in dollars. Serves all three customers.
+1. **Sell managed servers**: flip `pricing$MANAGED$live` once the operator has paid through a test checkout in a browser. Then cancel from billing, and email the owner when their server stops for a failed payment.
+2. **Sell Cove credit**: flip `pricing$CLAUDE_CREDIT$live` once these four are done:
+   - ndexr's Anthropic account is funded, with auto-reload on. On 2026-11-22 it was **out of credit**, and every house run failed;
+   - Anthropic has confirmed in writing that metered Cove credit is not resale under Commercial Terms D.4(a);
+   - tax and refund terms for prepaid credit are decided;
+   - one browser payment has been made with Stripe's test card.
+
+   Bedrock is set aside (operator, 2026-11-22: "we wont build on bedrock rn").
 3. **Disk that grows**: resize the server's disk and bill the person. Should it grow automatically near full, or only when they press "Add 10 GB"? That's the operator's call.
 4. **Domains bought through ndexr**: Stripe, then Route 53 registration, renewing a month ahead.
 5. **A complete self-hosted install for Regeneron**:

@@ -221,6 +221,20 @@ fn main() -> eframe::Result<()> {
     // cell - on every machine, unless "this computer" was picked. A cell that
     // cannot be woken falls back here, and the app says why.
     let mut startup_note = None;
+    // A server saved on this computer (account menu › Connect to a server): a
+    // managed one or the person's company's. No ndexr account needed. One that
+    // does not answer leaves the window here, and it says why.
+    if matches!(backend, backend::Backend::Local) && account::choose() == account::RunOn::Server {
+        if let Some((base, token)) = account::saved_server() {
+            match account::probe_server(&base, &token) {
+                Ok(()) => {
+                    backend::set_server_token(&token);
+                    backend = backend::Backend::Http { base };
+                }
+                Err(e) => startup_note = Some(format!("running on this computer: {e}")),
+            }
+        }
+    }
     if matches!(backend, backend::Backend::Local) && account::find_key().is_some() && account::choose() == account::RunOn::Cell {
         match account::connect_cell() {
             Ok((base, session)) => backend = backend::Backend::Cell { base, session },

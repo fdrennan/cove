@@ -4110,43 +4110,11 @@ if (isTRUE(ss$is_owner(email))) out(list(kind = "own_login", label = "this machi
 out(list(kind = "none", label = "nothing yet - Help > Connect Claude in Cove, or /login in claude"))
 "#;
 
-/// Amazon Bedrock as the agent's provider: Claude Code's own Bedrock support
-/// (CLAUDE_CODE_USE_BEDROCK, read by the installed CLI 2.1.330), with the
-/// region, an optional AWS profile and an optional model ID from Settings.
-/// None when Settings name Anthropic. A machine whose own environment already
-/// says Bedrock (an administrator set it for everyone) keeps it, unchanged.
-/// Returns the environment, the words saying which, and the model ID to run.
-pub fn bedrock_env(s: &Settings) -> Option<(Vec<(String, String)>, String, Option<String>)> {
-    if std::env::var("CLAUDE_CODE_USE_BEDROCK").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true")) && s.ai_provider != "bedrock" {
-        return Some((Vec::new(), "Amazon Bedrock (set on this machine)".to_owned(), None));
-    }
-    let region = s.bedrock_region.trim();
-    if s.ai_provider != "bedrock" || region.is_empty() {
-        return None;
-    }
-    let mut env = vec![("CLAUDE_CODE_USE_BEDROCK".to_owned(), "1".to_owned()), ("AWS_REGION".to_owned(), region.to_owned())];
-    let profile = s.bedrock_profile.trim();
-    if !profile.is_empty() {
-        env.push(("AWS_PROFILE".to_owned(), profile.to_owned()));
-    }
-    let model = s.bedrock_model.trim();
-    let model = (!model.is_empty() && model.chars().all(|c| c.is_ascii_alphanumeric() || "-._:/".contains(c))).then(|| model.to_owned());
-    if let Some(m) = &model {
-        env.push(("ANTHROPIC_MODEL".to_owned(), m.clone()));
-    }
-    Some((env, format!("Amazon Bedrock ({region})"), model))
-}
-
 /// The environment that puts `claude` on the person's own Claude, and a few
 /// words saying which. Asked once per server (a terminal opens in a moment
 /// after the first), again after ten minutes, so a Claude connected meanwhile
 /// is picked up by the next terminal.
 pub fn claude_env() -> (Vec<(String, String)>, String) {
-    // Their own Amazon Bedrock, when Settings say so: before any Anthropic
-    // credential, and nothing of Anthropic's goes with it.
-    if let Some((env, label, _)) = bedrock_env(&saved_settings()) {
-        return (env, label);
-    }
     // A session `cove multiuser` started: it keeps the person's Claude in
     // CLAUDE_DIR, rewritten when they connect one in setup.
     if let Some(v) = std::env::var("COVE_OWNER").ok().filter(|o| !o.is_empty() && !o.contains(['/', '.'])).and_then(|o| std::fs::read(Path::new(CLAUDE_DIR).join(format!("{o}.json"))).ok()).and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {

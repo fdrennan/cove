@@ -125,15 +125,11 @@ fn run(domain: &str, prompt: &str, model: &str, cwd: Option<&str>, mode: Option<
     let f = |ext: &str| runs.join(format!("{id}.{ext}"));
     std::fs::write(f("prompt"), prompt).map_err(|e| e.to_string())?;
     std::fs::write(td.join(format!("{id}.prompt")), prompt).map_err(|e| e.to_string())?;
-    // Their own Amazon Bedrock (Settings › AI provider): its environment, and
-    // its model ID in place of Cove's name when one is set.
-    let bedrock = crate::host::bedrock_env(&crate::host::saved_settings());
-    let model = bedrock.as_ref().and_then(|b| b.2.clone()).unwrap_or_else(|| model_name(model));
     let q = |p: PathBuf| crate::api::shell_quote(&p.display().to_string());
     let script = format!(
         "cd {dir} || exit 1; claude -p --output-format stream-json --verbose --model {model} --permission-mode {perm}{resume} < {prompt} > {stream} 2> {err}; echo $? > {done}",
         dir = crate::api::shell_quote(&dir),
-        model = crate::api::shell_quote(&model),
+        model = crate::api::shell_quote(&model_name(model)),
         perm = permission(mode),
         resume = resume.map(|s| format!(" --resume {}", crate::api::shell_quote(&s))).unwrap_or_default(),
         prompt = q(f("prompt")),
@@ -144,9 +140,6 @@ fn run(domain: &str, prompt: &str, model: &str, cwd: Option<&str>, mode: Option<
     let mut cmd = Command::new(crate::runner::login_shell());
     crate::runner::forget_loaded_modules(&mut cmd);
     cmd.args(["-lc", &crate::runner::with_path(&script)]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some((env, _, _)) = bedrock {
-        cmd.envs(env);
-    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

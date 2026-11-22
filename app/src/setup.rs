@@ -1232,6 +1232,24 @@ pub fn chip(ui: &mut egui::Ui, status: Option<Result<ClaudeView, String>>) -> bo
     let (c, text, tip) = match &status {
         None => (theme::hush(), "Claude …".to_owned(), "checking which Claude your agent runs on".to_owned()),
         Some(Err(e)) => (theme::warn(), "Claude ?".to_owned(), e.clone()),
+        // Cove credit, when the agent runs on ndexr's Claude: the balance, and
+        // a click goes to buy more (billing.ndexr.io), then back.
+        Some(Ok(v)) if !matches!(v.kind.as_str(), "own" | "operator") && v.credit_usd.is_some_and(|c| c > 0.0) => {
+            let usd = v.credit_usd.unwrap_or(0.0);
+            let hours = v.credit_hours.clone().unwrap_or_default();
+            let c = if usd < 1.0 { theme::warn() } else { theme::ok() };
+            let r = credit_chip(ui, c, &format!("Cove credit · ${usd:.2}"), &format!("{hours} of building on Sonnet - click to add credit"));
+            if r {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(crate::api::CREDIT_URL));
+            }
+            return false;
+        }
+        Some(Ok(v)) if v.kind == "none" && !v.seat_allowed.unwrap_or(false) => {
+            if credit_chip(ui, theme::alt(), "Add Cove credit", "pay ahead and build at once on Sonnet - or connect your own Claude in setup") {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(crate::api::CREDIT_URL));
+            }
+            return false;
+        }
         Some(Ok(v)) => match v.kind.as_str() {
             "own" => (theme::ok(), "Claude · yours".to_owned(), v.label.clone()),
             "plan" => (theme::ok(), "Claude · plan".to_owned(), format!("{} - {}", v.title, v.detail)),
@@ -1245,6 +1263,18 @@ pub fn chip(ui: &mut egui::Ui, status: Option<Result<ClaudeView, String>>) -> bo
         },
     };
     let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(11.5), theme::text());
+    let size = egui::vec2(galley.size().x + 26.0, 20.0);
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let fill = if resp.hovered() { theme::surface_hi() } else { theme::surface() };
+    ui.painter().rect(r, 99.0, fill, Stroke::new(1.0, c.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+    ui.painter().circle_filled(egui::pos2(r.left() + 10.0, r.center().y), 3.5, c);
+    ui.painter().galley(egui::pos2(r.left() + 18.0, r.center().y - galley.size().y / 2.0), galley, theme::text());
+    resp.on_hover_text(tip).clicked()
+}
+
+/// A chip like `chip`'s, drawn the same way; true when clicked.
+fn credit_chip(ui: &mut egui::Ui, c: Color32, text: &str, tip: &str) -> bool {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.5), theme::text());
     let size = egui::vec2(galley.size().x + 26.0, 20.0);
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
     let fill = if resp.hovered() { theme::surface_hi() } else { theme::surface() };

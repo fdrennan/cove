@@ -307,6 +307,10 @@ pub type Session = Arc<Mutex<String>>;
 pub enum RunOn {
     Cell,
     Local,
+    /// A Cove server the person was given the address and token of
+    /// (`saved_server`): a managed server ndexr runs for them, or one their
+    /// company runs (operator, 2026-11-22). No ndexr account is needed.
+    Server,
 }
 
 fn run_on_file() -> Option<PathBuf> {
@@ -317,6 +321,7 @@ pub fn preferred() -> Option<RunOn> {
     match std::fs::read_to_string(run_on_file()?).ok()?.trim() {
         "cell" => Some(RunOn::Cell),
         "local" => Some(RunOn::Local),
+        "server" => saved_server().map(|_| RunOn::Server),
         _ => None,
     }
 }
@@ -324,8 +329,79 @@ pub fn preferred() -> Option<RunOn> {
 pub fn prefer(r: RunOn) {
     if let Some(f) = run_on_file() {
         let _ = std::fs::create_dir_all(f.parent().unwrap());
-        let _ = std::fs::write(f, if r == RunOn::Cell { "cell\n" } else { "local\n" });
+        let word = match r {
+            RunOn::Cell => "cell\n",
+            RunOn::Local => "local\n",
+            RunOn::Server => "server\n",
+        };
+        let _ = std::fs::write(f, word);
     }
+}
+
+// ── a Cove server: managed by ndexr, or the person's company's ─────────────
+
+/// ~/.config/ndexr/cove-server: the server's address on the first line, its
+/// token (the server's own ~/.config/ndexr/cove-token) on the second. 0600:
+/// the token is the way in.
+fn server_file() -> Option<PathBuf> {
+    Some(key_file()?.with_file_name("cove-server"))
+}
+
+/// The server saved on this computer: (address, token).
+pub fn saved_server() -> Option<(String, String)> {
+    let raw = std::fs::read_to_string(server_file()?).ok()?;
+    let mut lines = raw.lines().map(str::trim);
+    let url = lines.next().filter(|u| u.starts_with("https://") || u.starts_with("http://"))?.trim_end_matches('/').to_owned();
+    let token = lines.next().filter(|t| !t.is_empty())?.to_owned();
+    Some((url, token))
+}
+
+/// An address as typed, made a base URL: https:// unless it says otherwise,
+/// no trailing slash.
+pub fn server_base(typed: &str) -> Result<String, String> {
+    let t = typed.trim().trim_end_matches('/');
+    if t.is_empty() || t.contains(char::is_whitespace) {
+        return Err("type the server's address, e.g. cove.example.com".into());
+    }
+    Ok(if t.starts_with("https://") || t.starts_with("http://") { t.to_owned() } else { format!("https://{t}") })
+}
+
+/// Does a Cove server answer at `base` and take `token`? The same probe the
+/// cell gets, with the token as `Authorization: Bearer` (server.rs `authed`).
+pub fn probe_server(base: &str, token: &str) -> Result<(), String> {
+    let mut req = ehttp::Request::post(format!("{base}/api/q"), br#"{"q":"probe"}"#.to_vec());
+    req.headers.insert("Content-Type", "application/json");
+    req.headers.insert("Authorization", format!("Bearer {}", token.trim()));
+    let r = ehttp::fetch_blocking(&req).map_err(|e| format!("{base} could not be reached: {e}"))?;
+    if r.status == 401 || r.status == 403 {
+        return Err("the server refused that token - copy it again from the server (~/.config/ndexr/cove-token there) or from billing.ndexr.io › Servers".into());
+    }
+    if !r.ok || !r.bytes.trim_ascii_start().starts_with(b"{") {
+        return Err(format!("{base} answered {}, not as a Cove server", r.status));
+    }
+    Ok(())
+}
+
+/// Keep the server for this computer, and run on it from the next launch.
+pub fn save_server(base: &str, token: &str) -> Result<(), String> {
+    let f = server_file().ok_or("no home folder to keep the server in")?;
+    std::fs::create_dir_all(f.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&f, format!("{base}\n{}\n", token.trim())).map_err(|e| format!("could not save the server: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600));
+    }
+    prefer(RunOn::Server);
+    Ok(())
+}
+
+/// Forget the saved server, and run on this computer from the next launch.
+pub fn forget_server() {
+    if let Some(f) = server_file() {
+        let _ = std::fs::remove_file(f);
+    }
+    prefer(RunOn::Local);
 }
 
 fn stack_mode_file() -> Option<PathBuf> {
@@ -694,5 +770,45 @@ mod tests {
         });
         assert_eq!(wait_for_browser(&listener, "s3cr3t").unwrap(), k);
         t.join().unwrap();
+    }
+
+    #[test]
+    fn a_typed_address_becomes_a_base_url() {
+        assert_eq!(server_base("cove.example.com/").unwrap(), "https://cove.example.com");
+        assert_eq!(server_base(" http://10.0.0.5:8788 ").unwrap(), "http://10.0.0.5:8788");
+        assert!(server_base("").is_err());
+        assert!(server_base("two words").is_err());
+    }
+
+    /// Saved, read back, chosen at launch, and forgotten - in a config folder
+    /// of the test's own (XDG_CONFIG_HOME), never the person's.
+    #[test]
+    fn a_saved_server_is_chosen_and_forgotten() {
+        let dir = std::env::temp_dir().join(format!("cove-server-test-{}", std::process::id()));
+        std::env::set_var("XDG_CONFIG_HOME", &dir);
+        assert_eq!(saved_server(), None);
+        save_server("https://cove.example.com", " tok3n ").unwrap();
+        assert_eq!(saved_server(), Some(("https://cove.example.com".into(), "tok3n".into())));
+        assert_eq!(preferred(), Some(RunOn::Server));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.join("ndexr/cove-server")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        forget_server();
+        assert_eq!(saved_server(), None);
+        assert_eq!(preferred(), Some(RunOn::Local));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The probe against a live `cove serve`, when one is named
+    /// (COVE_PROBE_TEST="<base> <token>"): the token is let in, another is not.
+    #[test]
+    fn the_probe_tells_a_good_token_from_a_bad_one() {
+        let Ok(v) = std::env::var("COVE_PROBE_TEST") else { return };
+        let (base, token) = v.split_once(' ').unwrap();
+        probe_server(base, token).unwrap();
+        assert!(probe_server(base, "not-the-token").unwrap_err().contains("refused"));
     }
 }

@@ -304,6 +304,12 @@ pub struct App {
     cell_retry_at: f64,
     #[cfg(not(target_arch = "wasm32"))]
     was_focused: bool,
+    /// Connect to a server (server_modal): open, the address and token typed,
+    /// and the probe out on a thread (Some(answer) when it came back).
+    #[cfg(not(target_arch = "wasm32"))]
+    server_form: Option<(String, String)>,
+    #[cfg(not(target_arch = "wasm32"))]
+    server_try: Arc<Mutex<(bool, Option<Result<(), String>>)>>,
     /// A folder asked for at launch (?folder= / --folder) or picked with
     /// File › Open Folder, opened as the project once the saved settings
     /// have arrived.
@@ -553,6 +559,10 @@ impl App {
             cell_retry_at: 0.0,
             #[cfg(not(target_arch = "wasm32"))]
             was_focused: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            server_form: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            server_try: Default::default(),
             folder: folder.clone(),
             #[cfg(not(target_arch = "wasm32"))]
             picked_folder: Default::default(),
@@ -698,6 +708,83 @@ impl App {
         }
     }
 
+    /// The Cove server this window drives, when it is one: a managed server or
+    /// the person's company's (account.rs `saved_server`), or `--connect`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn on_server(&self) -> Option<String> {
+        match &self.backend {
+            Backend::Http { base } => Some(base.clone()),
+            _ => None,
+        }
+    }
+
+    /// Connect to a server: its address and token, checked before anything is
+    /// kept; a server that answers is saved and this window starts again on it.
+    /// Needs no ndexr account (operator, 2026-11-22: a company runs its own).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn server_modal(&mut self, ctx: &egui::Context) {
+        let Some((mut url, mut token)) = self.server_form.clone() else { return };
+        let (trying, answer) = {
+            let mut t = self.server_try.lock().unwrap();
+            (t.0, t.1.take())
+        };
+        let mut close = false;
+        let mut error = None;
+        match answer {
+            Some(Ok(())) => match crate::account::server_base(&url).and_then(|b| crate::account::save_server(&b, &token)) {
+                Ok(()) => {
+                    self.server_form = None;
+                    self.relaunch(ctx);
+                    return;
+                }
+                Err(e) => error = Some(e),
+            },
+            Some(Err(e)) => error = Some(e),
+            None => {}
+        }
+        if let Some(e) = error {
+            self.toast = Some((e, ctx.input(|i| i.time) + 10.0));
+        }
+        egui::Modal::new(egui::Id::new("server-connect")).show(ctx, |ui| {
+            ui.set_width(480.0f32.min(ctx.content_rect().width() - 40.0));
+            ui.label(RichText::new("Connect to a server").size(18.0).strong().color(theme::text_strong()));
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(RichText::new("A Cove server ndexr runs for you, or one your company runs. Its address and token are on billing.ndexr.io › Servers, or with whoever runs it (the token is ~/.config/ndexr/cove-token on the server).").size(13.5).color(theme::text())).wrap());
+            ui.add_space(8.0);
+            egui::Grid::new("server-connect-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label("Address");
+                ui.add(egui::TextEdit::singleline(&mut url).hint_text("cove.example.com").desired_width(320.0));
+                ui.end_row();
+                ui.label("Token");
+                ui.add(egui::TextEdit::singleline(&mut token).password(true).font(egui::TextStyle::Monospace).desired_width(320.0));
+                ui.end_row();
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let ready = !trying && !url.trim().is_empty() && !token.trim().is_empty();
+                let word = if trying { "Checking…" } else { "Connect" };
+                if ui.add_enabled(ready, theme::primary_button(word)).clicked() {
+                    match crate::account::server_base(&url) {
+                        Ok(base) => {
+                            *self.server_try.lock().unwrap() = (true, None);
+                            let (slot, ctx2, t) = (self.server_try.clone(), ctx.clone(), token.clone());
+                            std::thread::spawn(move || {
+                                let r = crate::account::probe_server(&base, &t);
+                                *slot.lock().unwrap() = (false, Some(r));
+                                ctx2.request_repaint();
+                            });
+                        }
+                        Err(e) => self.toast = Some((e, ctx.input(|i| i.time) + 6.0)),
+                    }
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+            });
+        });
+        self.server_form = if close { None } else { Some((url, token)) };
+    }
+
     /// Where this window works, always on screen (operator, 2026-11-15: "it
     /// should be obvious somewhere if you are in local or remote connection
     /// mode"): this computer, or the person's cell on ndexr; its menu says
@@ -706,6 +793,25 @@ impl App {
     fn connection_chip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let a = self.account.lock().unwrap().clone();
         let on_cell = a.on_cell.is_some();
+        if let Some(base) = self.on_server().filter(|_| !on_cell) {
+            let host = base.trim_start_matches("https://").trim_start_matches("http://").to_owned();
+            let r = ui.scope(|ui| theme::state_mark(ui, theme::State::Good, &format!("Server · {host}"))).inner.interact(egui::Sense::click());
+            let r = r.on_hover_text("working on a Cove server: its folders, its stack, its apps - click to switch");
+            egui::Popup::menu(&r).show(|ui| {
+                theme::chrome_menu(ui, 300.0);
+                ui.label(RichText::new(format!("On the server {host}")).size(12.0).color(theme::text_strong()));
+                if ui.button("Connect to a different server…").clicked() {
+                    self.server_form = Some((String::new(), String::new()));
+                    ui.close();
+                }
+                if ui.button("Work on this computer instead").clicked() {
+                    crate::account::forget_server();
+                    self.relaunch(ctx);
+                    ui.close();
+                }
+            });
+            return;
+        }
         let (st, word) = if on_cell { (theme::State::Good, "Your cell · ndexr") } else { (theme::State::Idle, "This computer") };
         let r = ui.scope(|ui| theme::state_mark(ui, st, word)).inner.interact(egui::Sense::click());
         let tip = if on_cell {
@@ -745,6 +851,12 @@ impl App {
                             ui.close();
                         }
                     }
+                }
+                // A managed server, or the company's own: no ndexr account needed.
+                if ui.button("Connect to a server…").on_hover_text("a Cove server ndexr runs for you, or one your company runs: its address and token").clicked() {
+                    let saved = crate::account::saved_server().map(|(u, _)| u).unwrap_or_default();
+                    self.server_form = Some((saved, String::new()));
+                    ui.close();
                 }
             }
         });
@@ -1734,7 +1846,8 @@ impl App {
         // Linux that wanted the cell (no stack here, no "this computer" pick)
         // and did not reach it is in the same place, so it gets the same way back.
         let signed_in = a.email.is_some();
-        let wants_cell = !cfg!(target_os = "linux") || (signed_in && crate::account::choose() == crate::account::RunOn::Cell);
+        // On a server already (managed, or the company's): the cell is not wanted.
+        let wants_cell = self.on_server().is_none() && (!cfg!(target_os = "linux") || (signed_in && crate::account::choose() == crate::account::RunOn::Cell));
         if wants_cell && a.on_cell.is_none() {
             let can = signed_in && a.cell.is_some();
             // A try from this window answered: on the cell → go there; else say why.
@@ -4360,6 +4473,8 @@ impl eframe::App for App {
         self.report_consent(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.cell_offer_modal(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.server_modal(ctx);
         self.poll_source(ctx);
         // A revision was just made (Files' Make environment): into it.
         if let Some(m) = self.ide.take_switch_env() {

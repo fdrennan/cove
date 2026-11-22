@@ -7,6 +7,7 @@
 #
 # Per-user settings (a second user needs another port):
 #   /etc/cove/alice.env   COVE_LISTEN=127.0.0.1:8789
+#                         COVE_NAME=cove.example.org (behind Caddy: its name)
 # It binds loopback by default; for a public URL put nginx with TLS in front.
 [Unit]
 Description=ndexr server for %i (the ndexr UI in a browser)
