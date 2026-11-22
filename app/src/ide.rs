@@ -6320,6 +6320,11 @@ impl Ide {
             // + after the last tab, as in Chrome: its room is kept.
             let tail = side + 6.0;
             let room = (ui.available_width() - tail).max(80.0);
+            // No tabs on a phone (operator, 2026-11-22: "we don't need to see
+            // the tabs on mobile ... the scrolling on the mobile is just too
+            // hard"): + opens Projects, the same place a tab leads, and ⌄ lists
+            // what is open.
+            if !small {
             let strip = egui::ScrollArea::horizontal().id_salt("project-tabs").max_width(room).auto_shrink([true, true]).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // The gap between tabs; the front tab's flares reach into it.
@@ -6387,9 +6392,15 @@ impl Ide {
                 });
             });
             crate::tour::mark(ui, "project-tabs", strip.inner_rect);
+            }
             // + is the way to Projects since the strip took the project
             // button's place, so the walkthroughs point here (tour.rs).
-            let plus = ui.add(egui::Button::new(RichText::new("+").size(16.0).color(theme::text_strong())).frame(false).min_size(egui::vec2(side, side)));
+            // On a phone the one way to Projects: bigger, framed, a thumb's size.
+            let plus = if small {
+                ui.add(egui::Button::new(RichText::new("+").size(24.0).strong().color(theme::text_strong())).min_size(egui::vec2(44.0, 40.0)))
+            } else {
+                ui.add(egui::Button::new(RichText::new("+").size(16.0).color(theme::text_strong())).frame(false).min_size(egui::vec2(side, side)))
+            };
             crate::tour::mark(ui, "project-button", plus.rect);
             if plus.on_hover_text("new tab - go to a project, or create one (Projects)").clicked() {
                 act = Some(TabAct::New);

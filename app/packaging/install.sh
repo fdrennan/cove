@@ -30,6 +30,13 @@ set -eu
 
 base="${COVE_FEED:-https://repo.ndexr.io/ndexr/cove}"
 
+# The flags, read once, here: further down `set --` reuses the positional
+# parameters for the tarball's installer, and the --stack read after it found
+# that path instead, so `sh -s -- --stack` never mounted anything
+# (ndexrtesting.com, 2026-11-21; COVE_MOUNT_STACK=yes was the workaround).
+flag_stack=""
+for a in "$@"; do case "$a" in --stack|--yes|-y) flag_stack=yes ;; --no-stack) flag_stack=no ;; esac; done
+
 if [ -t 1 ]; then b="$(printf '\033[1m')"; d="$(printf '\033[2m')"; g="$(printf '\033[32m')"; r="$(printf '\033[31m')"; n="$(printf '\033[0m')"
 else b=""; d=""; g=""; r=""; n=""; fi
 step() { printf '  %s›%s %s\n' "$d" "$n" "$*"; }
@@ -107,7 +114,7 @@ if [ "$platform" != darwin ]; then
   if [ -r "$stack/use.sh" ]; then
     stack_said="mounted at $stack"
   else
-    answer="${COVE_MOUNT_STACK:-}"
+    answer="${COVE_MOUNT_STACK:-$flag_stack}"
     # Opened, not only present: without a controlling terminal /dev/tty
     # passes -r and -w and then fails to open, and under set -e that ended the
     # installer before its summary (measured with setsid, 2026-11-21). In a
@@ -151,8 +158,7 @@ printf '\n  %s✓ Cove %s is installed%s  %s%s%s\n\n' "$g$b" "$version" "$n" "$d
 # asked at the terminal when there is one. A server is set up in one go:
 #   curl -fsSL https://ndexr.io/install.sh | sh -s -- --stack
 if [ "$platform" != darwin ] && [ ! -r /opt/ndexr/stack/use.sh ]; then
-  want=""
-  for a in "$@"; do case "$a" in --stack|--yes|-y) want=yes ;; --no-stack) want=no ;; esac; done
+  want="$flag_stack"
   if [ -z "$want" ] && [ -r /dev/tty ] && [ -t 1 ]; then
     printf '    %sThe ndexr stack%s  R, Python, Julia and their libraries, mounted read-only over\n' "$b" "$n"
     printf '                     CernVM-FS (needs sudo once). Mount it now? [y/N] '

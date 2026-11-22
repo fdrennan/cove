@@ -1068,6 +1068,25 @@ pub struct Settings {
     /// ndexr's own servers the platform's folder decides, as before.
     #[serde(default)]
     pub projects_dir: String,
+    /// Whose model the agent and `claude` in a terminal run on. "" = Anthropic
+    /// (the person's own Claude, or ndexr's). "bedrock" = their own Amazon
+    /// Bedrock, through Claude Code's own Bedrock support - for Regeneron,
+    /// who run Cove themselves on their own AWS terms (operator, 2026-11-22;
+    /// docs/customers-and-plan.md). Credentials are AWS's usual chain on
+    /// this machine (a profile, SSO, an instance role, or
+    /// AWS_BEARER_TOKEN_BEDROCK): Cove stores none of them.
+    #[serde(default)]
+    pub ai_provider: String,
+    /// The AWS region Bedrock is called in (required for "bedrock").
+    #[serde(default)]
+    pub bedrock_region: String,
+    /// An AWS profile from ~/.aws/config; "" = the default chain.
+    #[serde(default)]
+    pub bedrock_profile: String,
+    /// A Bedrock model ID to run every turn on; "" = Claude Code's own
+    /// choice for Cove's model names (opus, sonnet).
+    #[serde(default)]
+    pub bedrock_model: String,
     /// More domains this Cove builds projects under, beyond the one it is
     /// reached at (SettingsView.served_as, its primary). Operator,
     /// 2026-11-21: "cove needs to be able to inherit and be aware of the
