@@ -19,6 +19,9 @@
 # 2026-11-19: "dont need ubuntu specific version instead we just build by
 # arch"). --user, which once meant "not the .deb", is still accepted.
 #
+#   … | sh -s -- --stack       also mount the ndexr stack (CernVM-FS), no question
+#   … | sh -s -- --no-stack    never ask
+#
 # Every download is checked against its published SHA-256 before it is used.
 # Operator, 2026-11-14: "cove.ndexr.io installs should look and feel cleaner"
 # - before this, a .deb fetched into $HOME made apt print "_apt ... Permission
@@ -144,6 +147,24 @@ fi
 version="$( (curl -fsSL "$base/$platform/latest/release.json" || wget -qO- "$base/$platform/latest/release.json") 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')" || true
 
 printf '\n  %s✓ Cove %s is installed%s  %s%s%s\n\n' "$g$b" "$version" "$n" "$d" "$where" "$n"
+# The ndexr stack on this machine (Linux): agreed with --stack (or --yes), or
+# asked at the terminal when there is one. A server is set up in one go:
+#   curl -fsSL https://ndexr.io/install.sh | sh -s -- --stack
+if [ "$platform" != darwin ] && [ ! -r /opt/ndexr/stack/use.sh ]; then
+  want=""
+  for a in "$@"; do case "$a" in --stack|--yes|-y) want=yes ;; --no-stack) want=no ;; esac; done
+  if [ -z "$want" ] && [ -r /dev/tty ] && [ -t 1 ]; then
+    printf '    %sThe ndexr stack%s  R, Python, Julia and their libraries, mounted read-only over\n' "$b" "$n"
+    printf '                     CernVM-FS (needs sudo once). Mount it now? [y/N] '
+    read -r ans </dev/tty || ans=""
+    case "$ans" in y|Y|yes|YES) want=yes ;; *) want=no ;; esac
+    echo
+  fi
+  if [ "$want" = yes ]; then
+    "$where" setup-stack --yes || printf '    %sThe stack was not mounted%s - Cove asks again when it starts, or run: cove setup-stack\n' "$r" "$n"
+    echo
+  fi
+fi
 if [ -n "${lacks:-}" ]; then
   printf '    %sOne more step%s  Cove needs WebKitGTK 4.1:  %s\n\n' "$b" "$n" "$lacks"
 fi

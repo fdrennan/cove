@@ -196,6 +196,10 @@ fn main() -> eframe::Result<()> {
         // its .cove/record.json (record.rs). Up runs it once the app answers.
         #[cfg(unix)]
         Some("record") => std::process::exit(record::cli(&args[2..])),
+        // `cove setup-stack [--yes]`: mount the ndexr stack from a terminal
+        // (stack.rs setup_cli) - a server's, or the installer's --stack.
+        #[cfg(unix)]
+        Some("setup-stack") => std::process::exit(stack::setup_cli(&args[2..])),
         Some("--connect") => match args.get(2) {
             Some(url) => {
                 // The server's token (~/.config/ndexr/cove-token there):

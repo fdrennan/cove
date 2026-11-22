@@ -192,7 +192,7 @@ fn ndx_token(req: &Request) -> Option<String> {
 /// The same request, answered by the person's session on the platform.
 fn from_platform(req: &Request, make: impl Fn(&str) -> ehttp::Request) -> Response<std::io::Cursor<Vec<u8>>> {
     let Some(token) = ndx_token(req) else {
-        return text(401, "this needs ndexr's platform, and the request carried no ndexr sign-in - sign in again");
+        return text(401, "this needs an ndexr sign-in, or Claude Code signed in on this server (claude on its PATH, then claude login) - neither is here");
     };
     match crate::account::platform_request(&token, make) {
         Ok(r) => {
@@ -258,7 +258,8 @@ form{background:#1c1f2b;border:1px solid #2b2f3d;border-radius:12px;padding:28px
 input{width:100%;box-sizing:border-box;padding:10px;margin:12px 0;border-radius:8px;border:1px solid #2b2f3d;background:#0f1220;color:inherit}
 button{padding:10px 16px;border:0;border-radius:8px;background:#6a96c4;color:#0f1220;font-weight:600}</style>
 <form action="/login"><b>Cove</b><p>Paste the token from <code>~/.config/ndexr/cove-token</code> on this server.</p>
-<input name="token" type="password" autofocus><button>Sign in</button></form>"#;
+<input name="token" type="password" autofocus><input type="hidden" name="next" id="next"><button>Sign in</button></form>
+<script>document.getElementById('next').value=new URLSearchParams(location.search).get('next')||''</script>"#;
 
 /// The name this server was last reached at (X-Forwarded-Host behind a
 /// proxy, else Host), port dropped: what api.rs primary_domain builds for.
@@ -268,25 +269,112 @@ pub(crate) fn served_as() -> String {
     SERVED_AS.lock().unwrap().clone()
 }
 
+/// The name a request was sent to (X-Forwarded-Host behind a proxy, else
+/// Host), its port dropped.
+fn asked_name(req: &Request) -> Option<String> {
+    let get = |name: &'static str| req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_owned());
+    name_in(&get("X-Forwarded-Host").or_else(|| get("Host"))?)
+}
+
+/// The name in a Host header's value: the first a proxy chain lists, lower
+/// case, its port dropped (an IPv6 address keeps its colons).
+fn name_in(h: &str) -> Option<String> {
+    let name = h.split(',').next().unwrap_or("").trim().to_ascii_lowercase();
+    let name = match name.rsplit_once(':') {
+        Some((n, p)) if p.chars().all(|c| c.is_ascii_digit()) && !n.contains(':') => n.to_owned(),
+        _ => name,
+    };
+    (!name.is_empty()).then_some(name)
+}
+
+/// After sign-in, back only to a page under this Cove's own domain - never
+/// to another site a link might name.
+fn back_inside(next: &str, domain: &str) -> bool {
+    let host = next.strip_prefix("https://").or_else(|| next.strip_prefix("http://")).and_then(|r| r.split(['/', '?', ':', '#']).next()).unwrap_or("").to_ascii_lowercase();
+    !host.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
+}
+
+/// The cookie's Domain on a server of someone's own: its primary domain, so
+/// the projects at their own names (`<name>.<primary>`) share this Cove's
+/// sign-in. None on the platform and where Cove is reached by address.
+fn cookie_domain() -> Option<String> {
+    if has_platform() {
+        return None;
+    }
+    let p = crate::api::primary_domain(&served_as());
+    (!p.is_empty()).then_some(p)
+}
+
 fn handle(ctx: &Ctx, mut req: Request) {
-    {
-        let get = |name: &'static str| req.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_owned());
-        if let Some(h) = get("X-Forwarded-Host").or_else(|| get("Host")) {
-            let name = h.split(',').next().unwrap_or("").trim().to_owned();
-            if !crate::api::primary_domain(&name).is_empty() {
-                *SERVED_AS.lock().unwrap() = name.rsplit_once(':').map_or(name.as_str(), |(n, _)| n).to_owned();
+    let url = req.url().to_owned();
+    // A project at its own name (`report.example.org`) on a server of
+    // someone's own: the whole request to its port, as it is - private to
+    // whoever is signed in to this Cove unless the project is public
+    // (APP_PUBLIC=1). Anything else names this Cove itself, the name it builds
+    // for (api.rs primary_domain).
+    let name = asked_name(&req);
+    if !has_platform() {
+        if let Some(n) = &name {
+            if let Some((port, public)) = crate::host::project_port(n) {
+                if public || authed(ctx, &req) {
+                    if upgrade_asked(&req) {
+                        tunnel(req, port, &url, None);
+                        return;
+                    }
+                    let mut body = Vec::new();
+                    let _ = req.as_reader().take(64 << 20).read_to_end(&mut body);
+                    let resp = match exchange(&req, port, &url, &body) {
+                        Ok((status, headers, payload)) => {
+                            let mut r = Response::from_data(payload).with_status_code(status);
+                            for (k, v) in headers {
+                                r.add_header(header(&k, &v));
+                            }
+                            r
+                        }
+                        Err(e) => text(502, &format!("{n} is not running - start it in Cove (nothing answers on its port {port}: {e})")),
+                    };
+                    let _ = req.respond(resp);
+                } else {
+                    // Sign in at this Cove, then back here.
+                    let cove = served_as();
+                    let back = format!("https://{n}{url}");
+                    let to = if cove.is_empty() { format!("/login?next={}", crate::backend::url_encode(&back)) } else { format!("https://{cove}/login?next={}", crate::backend::url_encode(&back)) };
+                    let _ = req.respond(text(302, "").with_header(header("Location", &to)));
+                }
+                return;
             }
         }
     }
-    let url = req.url().to_owned();
+    if let Some(n) = &name {
+        if !crate::api::primary_domain(n).is_empty() {
+            *SERVED_AS.lock().unwrap() = n.clone();
+        }
+    }
+    // A certificate for a name, asked by the server's front (Caddy's on-demand
+    // TLS, packaging/linux/Caddyfile) before it issues one: yes only for this
+    // Cove's own name and its projects', so none is issued for a name it does
+    // not serve.
+    if url.split('?').next() == Some("/__tls/ask") {
+        let asked = query_param(&url, "domain").and_then(|d| url_decode(&d)).unwrap_or_default().to_ascii_lowercase();
+        let ours = !asked.is_empty() && (asked == served_as() || crate::host::project_port(&asked).is_some());
+        let _ = req.respond(text(if ours { 200 } else { 404 }, if ours { "yes" } else { "not a name this Cove serves" }));
+        return;
+    }
     let path = url.split('?').next().unwrap_or("/").to_owned();
     let method = req.method().clone();
 
     if path == "/login" {
         let resp = match query_param(&url, "token") {
-            Some(t) if same(&t, &ctx.token) => text(302, "")
-                .with_header(header("Set-Cookie", &format!("{COOKIE}={t}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000")))
-                .with_header(header("Location", "/")),
+            Some(t) if same(&t, &ctx.token) => {
+                // Shared with the projects at their own names, and back to the
+                // one that sent the person here (handle: a private project).
+                let domain = cookie_domain();
+                let scope = domain.as_ref().map(|d| format!("; Domain=.{d}")).unwrap_or_default();
+                let next = query_param(&url, "next").and_then(|n| url_decode(&n)).filter(|n| domain.as_deref().is_some_and(|d| back_inside(n, d)));
+                text(302, "")
+                    .with_header(header("Set-Cookie", &format!("{COOKIE}={t}; Path=/; HttpOnly; SameSite=Lax{scope}; Max-Age=2592000")))
+                    .with_header(header("Location", next.as_deref().unwrap_or("/")))
+            }
             _ => Response::from_data(LOGIN_PAGE.as_bytes().to_vec())
                 .with_status_code(if url.contains("token=") { 401 } else { 200 })
                 .with_header(header("Content-Type", "text/html; charset=utf-8")),
@@ -427,11 +515,20 @@ fn handle(ctx: &Ctx, mut req: Request) {
             // What only the platform answers, from a cell: asked there as the
             // person, so a desktop app from before 0.1.9 works on a cell too
             // (request #187: Messages said "no build database here").
-            Ok(q) if q.platform_only() && !has_platform() => from_platform(&req, |base| {
-                let mut r = ehttp::Request::post(format!("{base}/api/q"), body.clone());
-                r.headers.insert("Content-Type", "application/json");
-                r
-            }),
+            // A server of someone's own (no ndexr sign-in in the request, so
+            // not a cell behind ndexr's gate): its agent runs on that server's
+            // own Claude, as the desktop's does signed out (localagent.rs) -
+            // it had answered "401 this needs ndexr's platform" (operator,
+            // 2026-11-22, Cove on ndexrtesting.com).
+            Ok(q) if q.platform_only() && !has_platform() => match ndx_token(&req).is_none().then(|| crate::localagent::answer(&q)).flatten() {
+                Some(Ok(v)) => json(200, &v),
+                Some(Err(e)) => text(500, &e),
+                None => from_platform(&req, |base| {
+                    let mut r = ehttp::Request::post(format!("{base}/api/q"), body.clone());
+                    r.headers.insert("Content-Type", "application/json");
+                    r
+                }),
+            },
             Ok(q) => match crate::host::answer(&q) {
                 Ok(v) => json(200, &v),
                 Err(e) => text(500, &e),
@@ -1100,5 +1197,27 @@ mod tests {
         }
         assert_eq!(others, 27, "thirty an hour from everyone");
         assert!(super::anon_allowed("1.2.3.4", t + std::time::Duration::from_secs(3601)), "the hour passes");
+    }
+}
+
+#[cfg(test)]
+mod own_names {
+    use super::*;
+
+    #[test]
+    fn a_host_header_names_one_place() {
+        assert_eq!(name_in("Report.Example.org:443").as_deref(), Some("report.example.org"));
+        assert_eq!(name_in("a.example.org, proxy.internal").as_deref(), Some("a.example.org"));
+        assert_eq!(name_in("3.140.141.153:8000").as_deref(), Some("3.140.141.153"));
+        assert_eq!(name_in("").as_deref(), None);
+    }
+
+    #[test]
+    fn sign_in_sends_back_only_inside_the_domain() {
+        assert!(back_inside("https://report.example.org/x?y=1", "example.org"));
+        assert!(back_inside("https://example.org/", "example.org"));
+        assert!(!back_inside("https://evil.org/?example.org", "example.org"));
+        assert!(!back_inside("https://notexample.org/", "example.org"));
+        assert!(!back_inside("javascript:alert(1)", "example.org"));
     }
 }

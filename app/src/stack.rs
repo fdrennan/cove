@@ -524,6 +524,61 @@ pub fn pkgs_sync(set: &str) -> Result<JobView, String> {
     jobs::start("stack", format!("Getting the {lang} packages"), format!("echo '$ ndexr pkgs sync {set}'; {cmd}"), Some(done))
 }
 
+/// `cove setup-stack [--yes]`: the stack mounted on this machine from a
+/// terminal - a server's first start, or the installer's `--stack` (operator,
+/// 2026-11-22: "make sure the stack installs on the server version (ask if
+/// they would like it installed on server or have a --yes kind of
+/// agreement)"). The same job as the app's Set up CernVM-FS, its output
+/// printed as it comes; asks first unless --yes.
+pub fn setup_cli(args: &[String]) -> i32 {
+    let v = view();
+    if v.ok {
+        println!("The ndexr stack is already mounted at {}.", v.root);
+        return 0;
+    }
+    if !v.unsupported.is_empty() {
+        eprintln!("{}", v.unsupported);
+        return 1;
+    }
+    println!("Mount the ndexr stack on this machine: R, Python, Julia, compilers and thousands of");
+    println!("scientific libraries, read-only at /opt/ndexr/stack over CernVM-FS, each file fetched");
+    println!("the first time it is used. It installs the CernVM-FS client, ndexr's public key, one");
+    println!("/etc/fstab line and a profile script; root once ({}), nothing after.", if v.root_by.is_empty() { "run as root, or with sudo" } else { v.root_by.as_str() });
+    if !args.iter().any(|a| a == "--yes" || a == "-y") {
+        use std::io::{BufRead, IsTerminal, Write};
+        if !std::io::stdin().is_terminal() {
+            eprintln!("Not asked: no terminal. Run `cove setup-stack --yes` to agree and mount it.");
+            return 2;
+        }
+        print!("Mount it now? [y/N] ");
+        let _ = std::io::stdout().flush();
+        let mut a = String::new();
+        let _ = std::io::stdin().lock().read_line(&mut a);
+        if !matches!(a.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("Not mounted. Cove asks again in the browser, or run `cove setup-stack --yes`.");
+            return 0;
+        }
+    }
+    if let Err(e) = setup(&crate::host::saved_settings().cvmfs) {
+        eprintln!("{e}");
+        return 1;
+    }
+    let mut shown = 0;
+    loop {
+        let j = jobs::view("stack");
+        for l in j.lines.iter().skip(shown) {
+            println!("{l}");
+        }
+        shown = j.lines.len();
+        if !j.running {
+            let ok = j.ok == Some(true);
+            println!("{}", if ok { "The ndexr stack is mounted." } else { "Setup failed - the reason is above." });
+            return if ok { 0 } else { 1 };
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
 /// Set the stack up on this machine, in the background.
 pub fn setup(c: &CvmfsSettings) -> Result<JobView, String> {
     if crate::host::saved_settings().airgap {

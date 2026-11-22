@@ -861,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "cove"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "crc32fast",
  "eframe",

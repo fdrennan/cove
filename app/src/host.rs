@@ -2276,6 +2276,33 @@ pub(crate) fn domain_target(conf: &str) -> String {
 /// it is one): `<root>/<host>/` and `<root>/<owner>/<host>/`. A session in a
 /// cell starts in its domains/; on a server, ~/ndexr/src/domains is tried too.
 /// The folder of one of this person's domains, by host.
+/// A project of this Cove's that answers at its own name (operator,
+/// 2026-11-22: "what does it take to get the subdomain to work generally" -
+/// "we need cove to manage as much as possible internally"): its port app's
+/// APP_PORT, and whether anyone may open it (APP_PUBLIC=1) or only who is
+/// signed in to this Cove. The projects are listed at most every 5 s.
+pub fn project_port(name: &str) -> Option<(u16, bool)> {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+    static SEEN: std::sync::Mutex<Option<(Instant, HashMap<String, (u16, bool)>)>> = std::sync::Mutex::new(None);
+    let mut seen = SEEN.lock().unwrap();
+    if seen.as_ref().is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(5)) {
+        let mut map = HashMap::new();
+        for d in list_domains() {
+            let env = std::fs::read_to_string(crate::dotcove::contract_dir(Path::new(&d.path)).join("app.env")).unwrap_or_default();
+            let kv = crate::apps::read_env(&env);
+            let get = |k: &str| kv.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str());
+            if get("APP_KIND") == Some("port") {
+                if let Some(port) = get("APP_PORT").and_then(|p| p.parse::<u16>().ok()) {
+                    map.insert(d.host.to_ascii_lowercase(), (port, get("APP_PUBLIC") == Some("1")));
+                }
+            }
+        }
+        *seen = Some((Instant::now(), map));
+    }
+    seen.as_ref().and_then(|(_, m)| m.get(&name.trim().trim_end_matches('.').to_ascii_lowercase()).copied())
+}
+
 fn app_dir(host: &str) -> Result<String, String> {
     let h = host.trim().to_ascii_lowercase();
     list_domains().into_iter().find(|d| d.host == h).map(|d| d.path).ok_or_else(|| format!("{h} is not one of your domains"))

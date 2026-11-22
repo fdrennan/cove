@@ -32,7 +32,11 @@ python3 - "$mirror" "$codename" "$deb_arch" "$cache" "$root" <<'PY'
 import hashlib, lzma, os, re, subprocess, sys, urllib.request
 
 mirror, codename, arch, cache, root = sys.argv[1:]
-want = ["libwebkit2gtk-4.1-dev", "libgtk-3-dev", "libsoup-3.0-dev", "libjavascriptcoregtk-4.1-dev", "libglib2.0-dev"]
+# shared-mime-info is no library and no -dev, but gdk-pixbuf-2.0.pc names it
+# in Requires.private, and the gdk-sys build stopped at "Package
+# 'shared-mime-info', required by 'gdk-pixbuf-2.0', not found" (aarch64 Cove
+# 0.1.28, 2026-11-22): its .pc is in usr/share/pkgconfig.
+want = ["libwebkit2gtk-4.1-dev", "libgtk-3-dev", "libsoup-3.0-dev", "libjavascriptcoregtk-4.1-dev", "libglib2.0-dev", "shared-mime-info"]
 # zig links against its own glibc 2.28; the host's compilers and tools are
 # not wanted in a sysroot.
 skip = re.compile(r"^(libc6|libc-dev|libc6-dev|linux-libc-dev|libgcc|libstdc\+\+|gcc|cpp|g\+\+|perl|python3|dpkg|debconf|pkgconf|pkg-config|bash|coreutils|dash|libcrypt-dev|libcrypt1)")
@@ -116,7 +120,11 @@ def owners():
     for line in open(cpath, encoding="utf-8", errors="replace"):
         path, _, where = line.rstrip("\n").rpartition(" ")
         path = path.strip()
-        if "pkgconfig/" in path or path.endswith((".so", ".pc")) or "/mit-krb5/" in path:
+        # A versioned library too (libz.so.1.3.1, which zlib1g-dev's libz.so
+        # points at): matched only as "*.so", the link stayed dangling and the
+        # aarch64 link failed "unable to find dynamic system library 'z'"
+        # (Cove 0.1.28, 2026-11-22).
+        if "pkgconfig/" in path or path.endswith((".so", ".pc")) or re.search(r"\.so(\.\d+)+$", path) or "/mit-krb5/" in path:
             owner[path] = where.split(",")[0].split("/")[-1]
     return owner
 

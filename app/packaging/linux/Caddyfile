@@ -1,0 +1,36 @@
+# Cove on a server of your own, at your domain, with every project at its own
+# name: report.example.org, lab.example.org, ... (operator, 2026-11-22: "what
+# does it take to get the subdomain to work generally").
+#
+# Caddy answers HTTPS for any name and hands every request to Cove, which
+# knows its projects: a project's name goes to that project's port, private to
+# whoever is signed in to this Cove unless the project is public; anything
+# else is Cove itself (server.rs handle). A certificate is issued the first
+# time a name is opened, and only after Cove says the name is one it serves
+# (/__tls/ask): no certificate for names it does not serve, and no DNS keys
+# on this server.
+#
+# Two things outside this server, once:
+#   your DNS:   example.org and *.example.org -> this server's address
+#   Cove:       running on 127.0.0.1:8788 (packaging/linux/cove@.service)
+#
+#   sudo cp Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+
+{
+	on_demand_tls {
+		ask http://127.0.0.1:8788/__tls/ask
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	reverse_proxy 127.0.0.1:8788 {
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+http:// {
+	redir https://{host}{uri} permanent
+}

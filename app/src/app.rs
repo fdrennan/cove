@@ -449,7 +449,10 @@ impl App {
         // important conversion"), asked by the Agents pane beside the site, so
         // no welcome or tour stands in front of it. Help still has the tour.
         let first_visit = !saved.setup_seen && cfg!(target_arch = "wasm32");
-        let first_start = !saved.setup_seen;
+        // In a browser, every visit looks at the server's stack: the question
+        // follows the server, not the browser that saw an earlier one (operator,
+        // 2026-11-22: a fresh server under the same name never asked).
+        let first_start = !saved.setup_seen || cfg!(target_arch = "wasm32");
         if !saved.setup_seen {
             if first_visit {
                 saved.setup_seen = true;
