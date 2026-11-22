@@ -1304,14 +1304,6 @@ impl AgentPane {
                     });
                 });
             });
-        // Anthropic's Commercial Terms D.3: tell people the agent's factual
-        // claims are not to be relied on unchecked. One line, in the body's
-        // ink - not hint grey, which the operator cannot read (2026-11 rule).
-        ui.add_space(-2.0);
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            ui.label(RichText::new("The agent is Claude, an AI - check its work before you rely on it.").size(11.0).color(theme::text()));
-        });
         let h = ui.cursor().top() - composer_top;
         if (h - self.composer_h).abs() > 0.5 {
             self.composer_h = h;
@@ -1415,11 +1407,23 @@ impl AgentPane {
                     .response
                     .on_hover_text("what this message is about");
             }
-            egui::ComboBox::from_id_salt(("agent-model", self.ns()))
+            let picked = egui::ComboBox::from_id_salt(("agent-model", self.ns()))
                 .width(if narrow { 84.0 } else { 200.0 })
                 .height(480.0)
                 .selected_text(RichText::new(model).size(11.5))
-                .show_ui(ui, |ui| model_menu(ui, &mut self.model));
+                .show_ui(ui, |ui| model_menu(ui, &mut self.model))
+                .response;
+            // Anthropic's Commercial Terms D.3 (tell people Claude's factual
+            // claims are not to be relied on unchecked), in the picker's help
+            // bubble and only while Claude is the agent - not a line under the
+            // composer on every turn (operator, 2026-11-22: "maybe in a help
+            // bubble and not when other agents are used").
+            let claude = !["gpt-", "ollama-", "opencode"].iter().any(|p| self.model.starts_with(p));
+            picked.on_hover_text(if claude {
+                "the model the agent runs on. It is Claude, an AI: check its work before you rely on it"
+            } else {
+                "the model the agent runs on"
+            });
             egui::ComboBox::from_id_salt(("agent-mode", self.ns()))
                 .width(if narrow { 56.0 } else { 70.0 })
                 .selected_text(RichText::new(mode).size(11.5))
