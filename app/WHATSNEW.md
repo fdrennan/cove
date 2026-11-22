@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-22T03:00Z · Recap, beside + at the top: one press asks Exec for a summary of all your domains over the last 3 hours - what changed and why, what is broken or waiting, and what is next - read from their history, runs, builds and releases
 - 2026-11-22T19:40Z · The line under the agent's message box is gone: "it is Claude, an AI - check its work" is now in the model picker's help bubble, and only while the agent runs on Claude
 - 2026-11-22T18:10Z · Cove credit: when your agent runs on ndexr's Claude, the chip beside the toolbar shows your credit and about how many hours of building on Sonnet it buys; a click goes to billing.ndexr.io to add $10, $25, $50, $100 or any amount, and Open my project brings you back. Each model call is charged what it costs, a failed one costs nothing, and the agent stops before your credit runs out rather than mid-answer. Under the composer: the agent is Claude, an AI - check its work
 - 2026-11-22T17:30Z · On a server of your own behind Caddy, Cove's own address gets its certificate on the first visit: set COVE_NAME=cove.example.org in /etc/cove/<user>.env. Before, a fresh server refused its own name, because nothing had reached it yet to say what it was called

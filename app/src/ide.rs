@@ -234,6 +234,11 @@ const STRIP_TABS_MIN: f32 = 240.0;
 /// every point left of the tools, and the tabs were drawn under it:
 /// "Agents" over "bash 5.1.16 · Prefix …" (operator's screenshots,
 /// 2026-11-15: "agents is still covering text or overlapping").
+/// What the Recap button asks Exec: the last 3 hours of every domain, from
+/// what the machines recorded, as an executive summary - prose, never a list
+/// of commits or request numbers.
+const RECAP_PROMPT: &str = "Recap the last 3 hours across all of my domains. Read what actually happened in that time - each domain's git history and uncommitted changes, agent runs and how they ended, builds, releases and deploys, failures and errors - not what anyone said they did. Write it as an executive summary: what changed and why, what it was for, what is broken or waiting on someone, and the next steps. Prose grouped by what matters, with the domain named where it helps; not a list of commits, files or request numbers. Say plainly if nothing happened.";
+
 fn strip_note(ui: &mut egui::Ui, label: egui::Label) {
     let room = ui.available_width() - STRIP_TABS_MIN;
     if room < 60.0 {
@@ -6215,6 +6220,7 @@ impl Ide {
     /// (a field, the editor, a console, the terminal, which all use the
     /// arrows) and no dialog is open.
     pub fn tab_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, keys: bool) -> bool {
+        let mut recap_asked = false;
         self.ask_domains(ctx);
         // A tab clicked, a tab closed, a share accepted: each leaves the
         // project to open in `pending_open`, and this opens it. Only the
@@ -6405,6 +6411,19 @@ impl Ide {
             if plus.on_hover_text("new tab - go to a project, or create one (Projects)").clicked() {
                 act = Some(TabAct::New);
             }
+            // A recap of every domain's last 3 hours, from Exec (operator,
+            // 2026-11-22: "a button ... you can push to get a recap of all of
+            // your domains over the last 3 hours", in the room beside + on a
+            // phone). Exec runs wherever this Cove runs, so it needs the tools
+            // Exec needs there.
+            let recap = if small {
+                ui.add(egui::Button::new(RichText::new("Recap").size(15.0).strong().color(theme::text_strong())).min_size(egui::vec2(0.0, 40.0)))
+            } else {
+                ui.add(egui::Button::new(RichText::new("Recap").size(12.5).color(theme::text_strong())).frame(false).min_size(egui::vec2(0.0, side)))
+            };
+            if recap.on_hover_text("Exec recaps all your domains: the last 3 hours, as a summary").clicked() {
+                recap_asked = true;
+            }
         });
         let free = keys && act.is_none() && self.naming.is_none() && self.choosing.is_none() && ctx.memory(|m| m.focused().is_none());
         if free && self.tabs.open.len() > 1 {
@@ -6419,7 +6438,10 @@ impl Ide {
         if let Some(a) = act {
             self.tab_act(a, active.as_deref(), ctx);
         }
-        forward
+        if recap_asked {
+            self.exec_ask(ctx, RECAP_PROMPT);
+        }
+        forward || recap_asked
     }
 
     /// One tab's menu, as a browser's: what it opens, its place, what closes.
