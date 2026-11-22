@@ -19,6 +19,7 @@ mod account;
 mod tabs;
 #[cfg(not(target_arch = "wasm32"))]
 mod boxcomplete;
+mod drafts;
 mod spoken;
 #[cfg(not(target_arch = "wasm32"))]
 mod localagent;

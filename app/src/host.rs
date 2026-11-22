@@ -118,6 +118,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
             }
             serde_json::to_value(crate::brief::brief(*minutes, *fresh))
         }
+        Query::ConvertDomain { host, starter } => serde_json::to_value(convert_domain(host, starter)?),
         Query::CreateDomain { host, parent, rust, starter } => {
             let starter = match starter.as_str() {
                 "" if *rust => crate::starters::RUST_APP,
@@ -2502,6 +2503,73 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
     // Each domain is its own repo; `ndexr push` / Push all gives it a remote.
     let _ = capture_within(&format!("cd {} && git init -q && git add -A", shell_quote(&dir.display().to_string())), Duration::from_secs(20));
     domain_at(&dir).ok_or_else(|| "created, but it does not read back as a domain".into())
+}
+
+/// The app in `dir` moved, whole, to `dir/<was_rel>`: every file but its
+/// history (.git), its supporting_docs and .cove, and from .cove all but the
+/// earlier conversions (was/) and run state (run/). Returns `was_rel`.
+fn move_aside(dir: &Path, was_rel: &str) -> Result<String, String> {
+    let was = dir.join(was_rel);
+    std::fs::create_dir_all(was.join(".cove")).map_err(|e| format!("{}: {e}", was.display()))?;
+    let keep = |n: &str| matches!(n, ".git" | "supporting_docs" | ".cove");
+    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if !keep(&n) {
+            std::fs::rename(e.path(), was.join(&n)).map_err(|err| format!("{n}: {err}"))?;
+        }
+    }
+    let dot = dir.join(".cove");
+    for e in std::fs::read_dir(&dot).map_err(|e| format!("{}: {e}", dot.display()))?.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if !matches!(n.as_str(), "was" | "run") {
+            std::fs::rename(e.path(), was.join(".cove").join(&n)).map_err(|err| format!(".cove/{n}: {err}"))?;
+        }
+    }
+    Ok(was_rel.to_owned())
+}
+
+/// Make `host` another framework (operator, 2026-11-22: "push a button to
+/// convert the framework ... transfer to any domain across any framework with
+/// agent assistance"; rust.riemann.ndexr.io began as Shiny and was meant to
+/// be a Rust explorer). The app it is - every file but its history, its
+/// supporting_docs and Cove's own run state - moves, whole, into
+/// .cove/was/<framework>-<unix time>/, its .cove contract with it, so nothing
+/// is lost and the agent can read it; `starter` is laid in its place, on the
+/// same port, so an address routed to it still reaches the app. Committed.
+fn convert_domain(host: &str, starter: &str) -> Result<crate::api::Converted, String> {
+    let dir = PathBuf::from(app_dir(host)?);
+    // Laid first, in memory: a starter that cannot be laid moves nothing.
+    let laid = starter_layout(host, starter)?;
+    if laid.is_empty() {
+        return Err(format!("{starter}: Cove cannot convert to this starter yet - pick one with its own folder"));
+    }
+    crate::storage::refuse_growth()?;
+    let cove = crate::dotcove::contract_dir(&dir);
+    if cove.join("down.sh").is_file() {
+        let _ = capture_within(&format!("cd {} && ./{}/down.sh", shell_quote(&dir.display().to_string()), cove.strip_prefix(&dir).map(|p| p.display().to_string()).unwrap_or_else(|_| ".cove".into())), Duration::from_secs(30));
+    }
+    let st = crate::apps::status(&dir);
+    let fw = crate::apps::framework(&dir, &st.language);
+    let from = if !fw.is_empty() { fw.to_owned() } else if !st.language.is_empty() { st.language.clone() } else { st.kind.clone() };
+    let from = if from.is_empty() { "app".to_owned() } else { from };
+    let was_rel = move_aside(&dir, &format!(".cove/was/{from}-{}", crate::software::now_secs()))?;
+    write_laid(&dir, laid)?;
+    // The same port as before, where it had one: its address is routed there.
+    if !st.port.is_empty() {
+        let env = crate::dotcove::contract_dir(&dir).join("app.env");
+        if let Ok(t) = std::fs::read_to_string(&env) {
+            let t: String = t.lines().map(|l| if l.trim_start().starts_with("APP_PORT=") { format!("APP_PORT={}", st.port) } else { l.to_owned() }).collect::<Vec<_>>().join("\n") + "\n";
+            let _ = std::fs::write(&env, t);
+        }
+    }
+    seed_into(&dir, starter);
+    let _ = capture_within(&format!("cd {} && git add -A && git commit -qm {}", shell_quote(&dir.display().to_string()), shell_quote(&format!("convert: {from} -> {starter} (the old app is in {was_rel})"))), Duration::from_secs(30));
+    let domain = domain_at(&dir).ok_or_else(|| "converted, but it does not read back as a domain".to_owned())?;
+    let app = crate::apps::status(&dir);
+    if app.kind == "port" && app.verbs.iter().any(|v| v == "build") {
+        let _ = crate::apps::action(host, &dir, "build");
+    }
+    Ok(crate::api::Converted { domain, was: was_rel, from })
 }
 
 /// A folder made in the last week that holds the page signup laid
@@ -5469,11 +5537,32 @@ mod tests {
         assert_eq!(super::crate_name("2fast.ndexr.io"), "site-2fast-ndexr-io");
     }
 
+    #[test]
+    fn converting_moves_the_old_app_aside_whole() {
+        let d = std::env::temp_dir().join(format!("cove-convert-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for p in ["module.r", "r/app.r", ".git/HEAD", "supporting_docs/a.png", ".cove/app.env", ".cove/r/run.sh", ".cove/run/app.log", ".cove/was/old-1/x"] {
+            std::fs::create_dir_all(d.join(p).parent().unwrap()).unwrap();
+            std::fs::write(d.join(p), p).unwrap();
+        }
+        let was = super::move_aside(&d, ".cove/was/shiny-2").unwrap();
+        let w = d.join(&was);
+        for moved in ["module.r", "r/app.r", ".cove/app.env", ".cove/r/run.sh"] {
+            assert!(w.join(moved).is_file(), "{moved} not kept in {was}");
+            assert!(!d.join(moved).exists(), "{moved} still at the root");
+        }
+        for stays in [".git/HEAD", "supporting_docs/a.png", ".cove/run/app.log", ".cove/was/old-1/x"] {
+            assert!(d.join(stays).is_file(), "{stays} moved");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// Every new project logs from its first run (operator, 2026-11-18: "each
     /// needs to, at a minimum, a console print or sorts at app start"): its
     /// language's helper is laid, and the starter either uses it or, where a
     /// third-party program is the app (code-server, rserver, quarto),
     /// run.sh prints the start line in the same format.
+    
     #[test]
     fn every_starter_logs_from_its_first_run() {
         for (shared, helper) in [("_r", "r/log.r"), ("_python", "log.py"), ("_node", "log.js"), ("_julia", "log.jl"), ("_rust", "src/log.rs")] {

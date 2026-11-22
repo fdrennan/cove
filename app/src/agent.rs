@@ -115,6 +115,21 @@ struct State {
     /// preparing, Ok(true) playing, Err why it could not be read. One at a
     /// time - a second Listen takes over.
     reading: Option<(String, Result<bool, String>)>,
+    /// A thread that could not load while Cove restarted: which, and when to
+    /// ask again - the thread on screen stays, no red line in its place.
+    retry_for: String,
+    retry_at: f64,
+    /// Messages sent while Cove restarted: (turn key, the run asked for, when
+    /// to send it again). Each goes once Cove answers (operator, 2026-11-22:
+    /// "a restart is no longer scary with red text").
+    resend: Vec<(String, Query, f64)>,
+}
+
+/// A failure that is Cove restarting (a release) or the network blinking, not
+/// an answer: the request is asked again, nothing is said in red.
+fn restarting(e: &str) -> bool {
+    let l = e.to_ascii_lowercase();
+    ["restarting", "session has ended", "failed to fetch", "networkerror", "error sending request", "connection refused", "connection reset", "timed out", "502", "503", "504"].iter().any(|k| l.contains(k))
 }
 
 /// The fenced blocks of a reply that a console can run: ```r and ```python go
@@ -255,11 +270,13 @@ pub fn scope_toggle(ui: &mut egui::Ui, sc: &Scope, big: bool) -> Option<bool> {
         None => ("Site".to_owned(), "open a project first".to_owned()),
     };
     let dot = if sc.exec_busy { " ●" } else { "" };
+    // Exec first, then the site (operator, 2026-11-22: "move exec to left of
+    // site name").
     let items = [
-        (word, tip, !sc.exec_on, sc.site.is_some()),
         (format!("Exec{dot}"), "the executive agent of all your sites - one thread across every domain".to_owned(), sc.exec_on, true),
+        (word, tip, !sc.exec_on, sc.site.is_some()),
     ];
-    segmented(ui, big, &items).map(|i| i == 1)
+    segmented(ui, big, &items).map(|i| i == 0)
 }
 
 pub struct AgentPane {
@@ -289,6 +306,9 @@ pub struct AgentPane {
     open_tools: HashSet<(String, usize)>,
     /// Speak instead of typing (voice.rs).
     mic: crate::voice::Mic,
+    /// Whose draft the box holds, and the text last kept for it (drafts.rs).
+    draft_for: String,
+    draft_saved: String,
     /// What the mic dictated into the box, as it came: shown in its own ink
     /// and sent tagged, so the agent knows what was said and what was typed
     /// (spoken.rs).
@@ -408,6 +428,8 @@ impl Default for AgentPane {
             reveal: HashMap::new(),
             open_tools: HashSet::new(),
             mic: Default::default(),
+            draft_for: String::new(),
+            draft_saved: String::new(),
             spoken: Vec::new(),
             big: false,
             listen: None,
@@ -491,9 +513,21 @@ impl AgentPane {
     }
 
     fn load(&self, backend: &Backend, ctx: &egui::Context, domain: &str) {
+        let now = ctx.input(|i| i.time);
         {
             let mut s = self.st.lock().unwrap();
+            // Asked again after a restart: not before its time, and what is on
+            // screen - the thread, messages waiting to go - stays.
+            let again = s.retry_for == domain;
+            if again && now < s.retry_at {
+                return;
+            }
+            let (turns, resend) = if again { (std::mem::take(&mut s.turns), std::mem::take(&mut s.resend)) } else { Default::default() };
             *s = State { loaded_for: domain.to_owned(), loading: true, ..Default::default() };
+            if again {
+                s.turns = turns;
+                s.resend = resend;
+            }
         }
         let st = self.st.clone();
         let d = domain.to_owned();
@@ -502,7 +536,17 @@ impl AgentPane {
             if s.loaded_for != d {
                 return;
             }
+            match r {
+                Err(e) if restarting(&e) => {
+                    s.loaded_for.clear();
+                    s.retry_for = d.clone();
+                    s.retry_at = now + 3.0;
+                    return;
+                }
+                _ => {}
+            }
             s.loading = false;
+            s.retry_for.clear();
             match r {
                 Ok(mut turns) => {
                     // Turns still running (here a moment ago, the in-app chat,
@@ -511,7 +555,11 @@ impl AgentPane {
                         s.live.insert(t.id.clone(), 0);
                         t.events.clear();
                     }
+                    // Sent here and not answered yet (a restart in between):
+                    // they stay, after the thread.
+                    let waiting: Vec<AgentTurn> = s.turns.iter().filter(|t| t.id.starts_with('+') && !t.done).cloned().collect();
                     s.turns = turns;
+                    s.turns.extend(waiting);
                 }
                 Err(e) => s.turns = vec![AgentTurn { events: vec![AgentEvent { kind: "error".into(), text: e }], done: true, ..Default::default() }],
             }
@@ -664,8 +712,23 @@ impl AgentPane {
             (2, _) if site && !self.focus_folder.is_empty() => (ask_prompt(domain, None, &self.focus_folder, 1, &prompt), Some(self.focus_folder.clone())),
             _ => (prompt, None),
         };
-        backend.query(Query::AgentRun { domain: domain.to_owned(), prompt, model, cwd, mode: Some(mode) }, ctx, move |r: Result<String, String>| {
+        dispatch(st, backend, ctx, key, Query::AgentRun { domain: domain.to_owned(), prompt, model, cwd, mode: Some(mode) });
+    }
+}
+
+/// Ask for a turn's run; asked again, quietly, if Cove is restarting.
+fn dispatch(st: Arc<Mutex<State>>, backend: &Backend, ctx: &egui::Context, key: String, q: Query) {
+    let now = ctx.input(|i| i.time);
+    let again = q.clone();
+    {
+        backend.query(q, ctx, move |r: Result<String, String>| {
             let mut s = st.lock().unwrap();
+            if let Err(e) = &r {
+                if restarting(e) {
+                    s.resend.push((key, again, now + 3.0));
+                    return;
+                }
+            }
             s.starting = s.starting.saturating_sub(1);
             let ok = r.as_ref().ok().cloned();
             if let Some(t) = s.turns.iter_mut().find(|t| t.id == key) {
@@ -687,6 +750,9 @@ impl AgentPane {
         });
     }
 
+}
+
+impl AgentPane {
     /// Keep the thread loaded and its runs followed without the Agents tab
     /// drawn: the Inputs page sends to the agent too (operator, 2026-10-15:
     /// "Agents comes first, then R, Py, and Shell, agents treated like the
@@ -694,6 +760,20 @@ impl AgentPane {
     /// polled is not asked twice.
     pub fn tick(&mut self, backend: &Backend, ctx: &egui::Context, domain: Option<&DomainInfo>) {
         let Some(d) = domain else { return };
+        // Messages sent while Cove restarted, once it may be back.
+        let now = ctx.input(|i| i.time);
+        let due: Vec<(String, Query)> = {
+            let mut s = self.st.lock().unwrap();
+            let (go, wait): (Vec<_>, Vec<_>) = std::mem::take(&mut s.resend).into_iter().partition(|(_, _, at)| *at <= now);
+            s.resend = wait;
+            go.into_iter().map(|(k, q, _)| (k, q)).collect()
+        };
+        for (key, q) in due {
+            dispatch(self.st.clone(), backend, ctx, key, q);
+        }
+        if !self.st.lock().unwrap().resend.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
         if self.st.lock().unwrap().loaded_for != d.host {
             self.load(backend, ctx, &d.host);
             load_know(&self.know, backend, ctx, d);
@@ -750,6 +830,19 @@ impl AgentPane {
             ui.vertical_centered(|ui| ui.label(RichText::new("Open a domain in App - its agent works here, in that domain's thread.").color(theme::hush())));
             return Vec::new();
         };
+        // The box as it is typed, kept (drafts.rs): a restart or reload brings
+        // it back; each site has its own.
+        if self.draft_for != d.host {
+            let kept = crate::drafts::load(&d.host);
+            if !self.draft_for.is_empty() || self.input.trim().is_empty() {
+                self.input = kept;
+            }
+            self.draft_for = d.host.clone();
+            self.draft_saved = self.input.clone();
+        } else if self.input != self.draft_saved {
+            crate::drafts::save(&d.host, &self.input);
+            self.draft_saved = self.input.clone();
+        }
         let mut run: Vec<(Lang, String)> = std::mem::take(&mut self.st.lock().unwrap().outbox);
         if self.st.lock().unwrap().loaded_for != d.host {
             self.load(backend, ctx, &d.host);

@@ -111,6 +111,11 @@ pub enum Query {
     /// `starter` names the template (starters.rs); empty is the older client's
     /// choice, read from `rust`.
     CreateDomain { host: String, parent: String, #[serde(default)] rust: bool, #[serde(default)] starter: String },
+    /// Make an existing project another framework (host.rs convert_domain):
+    /// its app moved, whole, into .cove/was/<framework>-<time>/, `starter`
+    /// laid in its place on the same port. The agent then rebuilds the old
+    /// app in the new one (ide.rs). Answers `Converted`.
+    ConvertDomain { host: String, starter: String },
     /// Name `modules` as the environment of the folder `dir` (its
     /// `.ndexr-env`), or "" to stop naming one; returns what it names now.
     PinEnv { dir: String, modules: String },
@@ -886,6 +891,15 @@ pub struct DirEntry {
 
 /// One domain: a folder named for its host (`blog.ndexr.io`), whose
 /// `module.r` the platform serves live at https://<host>/.
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Converted {
+    pub domain: DomainInfo,
+    /// Where the app it was now is, from the project's root: .cove/was/shiny-1763860000.
+    pub was: String,
+    /// What it was: its framework, or its language.
+    pub from: String,
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DomainInfo {
     pub host: String,

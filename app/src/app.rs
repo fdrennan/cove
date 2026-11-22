@@ -197,6 +197,8 @@ struct Saved {
     agents_frac: Option<f32>,
     /// The agent chosen beside the project: all sites (Exec) or this site.
     #[serde(default)]
+    /// No longer read or written (2026-11-22: a domain always opens on its own
+    /// agent); kept so saved settings from before still load.
     agent_all: bool,
     /// The projects stepped into, newest first (the ☰ menu's Recent projects).
     #[serde(default)]
@@ -508,8 +510,11 @@ impl App {
                 ide.restore = saved.domain.clone();
                 ide.agents_layout = saved.agents_layout;
                 ide.agents_frac = saved.agents_frac.unwrap_or(0.5);
-                // ?agent=all|site in the address wins over what was saved.
-                ide.exec_on = url_agent().unwrap_or(saved.agent_all);
+                // ?agent=all in the address opens on Exec; otherwise every
+                // domain opens on its own agent - a saved Exec choice no
+                // longer carries into the next domain (operator, 2026-11-22).
+                ide.exec_on = url_agent().unwrap_or(false);
+                ide.exec_pinned = url_agent() == Some(true);
                 ide.open_by_domain = saved.open_by_domain.clone();
                 ide.recent_hosts = saved.recent_domains.clone();
                 ide.tabs = saved.tabs.clone();
@@ -1299,6 +1304,12 @@ impl App {
                         }
                         if item(ui, "History (Git)…", "") {
                             self.ide.open_versions(ctx);
+                            ui.close();
+                        }
+                        // Another framework for this project, its app rebuilt
+                        // there by its agent (ide.rs convert_domain).
+                        if item(ui, "Convert to another framework…", "") {
+                            self.ide.start_convert();
                             ui.close();
                         }
                         if item(ui, "Save file", "Ctrl+S") {
@@ -2554,7 +2565,7 @@ impl App {
                 ui.set_width(w - 48.0);
                 ui.spacing_mut().item_spacing.y = 8.0;
                 ui.label(RichText::new("We just updated Cove").size(22.0).strong().color(theme::text_strong()));
-                ui.label(RichText::new("Cove is in beta and changes often. Updating restarts it, so your session ended with it - nothing you saved is lost.").size(13.5).color(theme::muted()));
+                ui.label(RichText::new("Cove is in beta and changes often. Updating restarts it, so your session ended with it. What you saved, a message you were typing and one you had just sent all come back.").size(13.5).color(theme::muted()));
                 // A spinner and one thing the atlas says, no countdown or button
                 // (operator, 2026-10-18: the timer was "consistently incorrect",
                 // and it is fast enough that coming back is assumed).
@@ -4741,7 +4752,6 @@ impl eframe::App for App {
         self.saved.open_by_domain = open;
         self.saved.agents_layout = self.ide.agents_layout;
         self.saved.agents_frac = Some(self.ide.agents_frac);
-        self.saved.agent_all = self.ide.exec_on;
         self.saved.recent_domains = self.ide.recent_hosts.clone();
         self.saved.tabs = self.ide.tabs.clone();
         self.saved.tour = self.walk.prefs.clone();

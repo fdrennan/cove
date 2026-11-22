@@ -162,7 +162,10 @@ fn project_tab(ui: &mut egui::Ui, host: &str, info: Option<&DomainInfo>, on: boo
     // Dragged to a new place with a mouse; on a phone a drag scrolls the
     // strip, and the tab menu's Move items reorder.
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), if small { egui::Sense::click() } else { egui::Sense::click_and_drag() });
-    let hovered = resp.hovered();
+    // Over the tab, × included: `hovered` goes to the × itself once the
+    // pointer is on it, so the × of a tab not in front vanished the moment it
+    // was reached and could never be clicked.
+    let hovered = ui.rect_contains_pointer(rect);
     // Chrome's shapes (operator, 2026-11-15: "for the curves to feel like
     // chrome"): the tab in front is one piece with the window under it -
     // rounded at the top, curving out into the bar at its foot; one at rest
@@ -340,6 +343,35 @@ struct Launch {
     /// What answers at https://<host>/ (Query::SiteGate), asked every few seconds.
     gate: Slot<String>,
     gate_asked: f64,
+}
+
+impl Launch {
+    /// The window for `host` at `now`; `published` when it is registered
+    /// already (or nobody's to register: away from ndexr's platform).
+    fn new(host: &str, quiet: bool, rust: bool, published: bool, now: f64) -> Launch {
+        Launch {
+            quiet,
+            host: host.to_owned(),
+            rust,
+            started: now,
+            publish: Arc::new(Mutex::new(published.then(|| Ok(host.to_owned())))),
+            deploy: Default::default(),
+            deploy_sent: false,
+            deploy_asked: f64::NEG_INFINITY,
+            app: Default::default(),
+            app_asked: false,
+            up: Default::default(),
+            up_sent: false,
+            up_asked: f64::NEG_INFINITY,
+            route: Default::default(),
+            route_sent: false,
+            route_asked: f64::NEG_INFINITY,
+            pkgs: Default::default(),
+            pkgs_asked: f64::NEG_INFINITY,
+            gate: Default::default(),
+            gate_asked: f64::NEG_INFINITY,
+        }
+    }
 }
 
 /// Archive or Delete of a project (operator, 2026-10-26: "need option to
@@ -1503,6 +1535,8 @@ pub struct Ide {
     push_log: bool,
     /// A domain CreateDomain just made, to step into on the next frame.
     created: Slot<DomainInfo>,
+    /// A conversion done (convert_domain): the project, and what its agent is asked.
+    converted: Slot<(crate::api::Converted, String)>,
     /// The Viewer shows the domain's live site (else the last render).
     /// Bumped by every save inside the domain: the site reloads.
     site_seq: u64,
@@ -1536,8 +1570,12 @@ pub struct Ide {
     exec: crate::agent::AgentPane,
     /// Who the person is talking to: the agent of all their sites (Exec)
     /// rather than this site's. Chosen beside the composer's mic (agent.rs
-    /// scope_toggle), saved across restarts, settable by ?agent=all|site.
+    /// scope_toggle). Opening a domain always lands on that site's own agent
+    /// (operator, 2026-11-22: "when opening a domain it should never default
+    /// to exec in agent, it should default to the site itself"); only
+    /// `exec_pinned` (?agent=all in the address) keeps Exec, for that once.
     pub exec_on: bool,
+    pub exec_pinned: bool,
     /// Site and Exec at once (operator, 2026-10-18: "split them in two up
     /// down or left right but within its agents tab ... so site and exec can
     /// be looked at and go between side by side"): one at a time, side by
@@ -1894,6 +1932,7 @@ impl Ide {
             push_asked: f64::NEG_INFINITY,
             push_log: false,
             created: Default::default(),
+            converted: Default::default(),
             site_seq: 0,
             removing: None,
             archive: Default::default(),
@@ -1912,6 +1951,7 @@ impl Ide {
             agent: Default::default(),
             exec: crate::agent::AgentPane::exec(),
             exec_on: false,
+            exec_pinned: false,
             agents_layout: AgentsLayout::One,
             agents_frac: 0.5,
             term: Default::default(),
@@ -2369,34 +2409,34 @@ impl Ide {
                 self.app_status_at = f64::NEG_INFINITY;
                 self.open(format!("{}/static/app.js", d.path), ctx);
             }
-            self.launch = Some(Launch {
-                quiet,
-                host: d.host.clone(),
-                rust,
-                started: ctx.input(|i| i.time),
-                // Signup registered it and chose who may open it; publishing
-                // again would set that back to login-only.
-                publish: Arc::new(Mutex::new((quiet || local).then(|| Ok(d.host.clone())))),
-                deploy: Default::default(),
-                deploy_sent: false,
-                deploy_asked: f64::NEG_INFINITY,
-                app: Default::default(),
-                app_asked: false,
-                up: Default::default(),
-                up_sent: false,
-                up_asked: f64::NEG_INFINITY,
-                route: Default::default(),
-                route_sent: false,
-                route_asked: f64::NEG_INFINITY,
-                pkgs: Default::default(),
-                pkgs_asked: f64::NEG_INFINITY,
-                gate: Default::default(),
-                gate_asked: f64::NEG_INFINITY,
-            });
+            // Signup registered it and chose who may open it; publishing
+            // again would set that back to login-only.
+            self.launch = Some(Launch::new(&d.host, quiet, rust, quiet || local, ctx.input(|i| i.time)));
             if !quiet && !local {
                 self.publish_domain(d.host.clone(), ctx);
             }
             self.open_domain(d, ctx);
+        }
+        // A project converted to another framework (convert_domain): it is
+        // registered already, so the window starts the new app and routes it,
+        // and its agent rebuilds the old app in the new framework.
+        let converted = self.converted.lock().unwrap().take();
+        if let Some((c, prompt)) = converted {
+            if let Some(Ok(v)) = self.domains.lock().unwrap().as_mut() {
+                if let Some(x) = v.iter_mut().find(|x| x.host == c.domain.host) {
+                    *x = c.domain.clone();
+                }
+            }
+            let host = c.domain.host.clone();
+            let rust = c.domain.framework == "rust" && !host.ends_with(crate::tabs::LOCAL);
+            self.launch = Some(Launch::new(&host, false, rust, true, ctx.input(|i| i.time)));
+            self.domain = Some(c.domain.clone());
+            self.app_status_at = f64::NEG_INFINITY;
+            self.site_seq += 1;
+            self.exec_on = false;
+            self.bring(Tab::Agents);
+            let Ide { agent, backend, .. } = self;
+            agent.ask(backend, ctx, &host, &prompt, "");
         }
         if self.first_site {
             if let Some(d) = self.domain.clone() {
@@ -6233,8 +6273,13 @@ impl Ide {
             _ => Vec::new(),
         };
         self.tabs.keep_listed(&listed.iter().map(|d| d.host.clone()).collect::<Vec<_>>());
+        // The open project keeps a tab - unless its tab was just closed: the
+        // next project is on its way (pending_open), and putting the closed
+        // one back undid every ✕ on the tab in front (operator, 2026-11-22:
+        // "i cant seem to get anything to close when clicking x on a domain
+        // tab"). Opening it again (tabs.opened) takes it off the closed list.
         if let Some(d) = &self.domain {
-            if !self.tabs.open.contains(&d.host) {
+            if !self.tabs.open.contains(&d.host) && !self.tabs.closed.contains(&d.host) {
                 let h = d.host.clone();
                 self.tabs.opened(&h, None);
             }
@@ -7732,13 +7777,19 @@ impl Ide {
                         let tw = w - 48.0;
                         ui.allocate_ui_with_layout(egui::vec2(tw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                             ui.set_max_width(tw);
-                            ui.add(egui::Label::new(RichText::new("Choose your next experiment").size(if phone { 21.0 } else { 26.0 }).strong().color(theme::text_strong())).wrap());
+                            let title = if c.convert { format!("Convert {} to…", c.host) } else { "Choose your next experiment".to_owned() };
+                            ui.add(egui::Label::new(RichText::new(title).size(if phone { 21.0 } else { 26.0 }).strong().color(theme::text_strong())).wrap());
                         });
                         if ui.add(egui::Button::new(RichText::new("✕").size(18.0)).min_size(egui::vec2(36.0, 36.0))).on_hover_text("close").clicked() {
                             cancel = true;
                         }
                     });
-                    ui.add(egui::Label::new(RichText::new(format!("Discover an idea, see what it does, make it yours - {} starts as a working application, open in the IDE.", c.host)).size(14.5).color(theme::text())).wrap());
+                    let lead = if c.convert {
+                        format!("Pick the framework {} becomes. The app it is now is kept, whole, in .cove/was/, and its agent rebuilds it in the new one.", c.host)
+                    } else {
+                        format!("Discover an idea, see what it does, make it yours - {} starts as a working application, open in the IDE.", c.host)
+                    };
+                    ui.add(egui::Label::new(RichText::new(lead).size(14.5).color(theme::text())).wrap());
                     ui.add_space(10.0);
                     ui.add(egui::TextEdit::singleline(&mut c.find).hint_text("search every experiment: genomics, React, optimizer, Julia…").desired_width(f32::INFINITY).min_size(egui::vec2(0.0, 34.0)));
                     ui.add_space(6.0);
@@ -7865,13 +7916,25 @@ impl Ide {
                     });
                     ui.add_space(6.0);
                     let picked = c.way.and_then(|j| cat.ways.get(j)).filter(|w| w.starter.is_some());
+                    // What the agent makes of the old app in the new framework.
+                    if c.convert && picked.is_some() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.radio_value(&mut c.equivalent, true, RichText::new("Equivalent - the same app, rebuilt in it").size(14.0));
+                            ui.radio_value(&mut c.equivalent, false, RichText::new("Modification - with changes").size(14.0));
+                        });
+                        if !c.equivalent {
+                            ui.add(egui::TextEdit::multiline(&mut c.brief).hint_text("what should change - e.g. an explorer of the Riemann zeta function's zeros, built in Rust").desired_rows(2).desired_width(w - 8.0));
+                        }
+                        ui.add_space(6.0);
+                    }
                     ui.horizontal_wrapped(|ui| {
+                        let verb = if c.convert { "Convert" } else { "Create" };
                         let label = match picked {
-                            Some(way) => format!("Create {} · {} in {}", c.host, way.app.split(':').next().unwrap_or(way.app), way.lang),
+                            Some(way) => format!("{verb} {} · {} in {}", c.host, way.app.split(':').next().unwrap_or(way.app), way.lang),
                             None if ready_count(cat) == 0 => "Nothing here can be created yet".to_owned(),
                             None => "Pick one".to_owned(),
                         };
-                        let label = if c.creating { format!("Creating {}…", c.host) } else { label };
+                        let label = if c.creating { format!("{} {}…", if c.convert { "Converting" } else { "Creating" }, c.host) } else { label };
                         // Wraps rather than widening the window past a phone's
                         // edge: the label carries the whole host name.
                         if ui.add_enabled(picked.is_some() && !c.creating, theme::primary_button(&label).wrap().min_size(egui::vec2(0.0, 40.0))).clicked() {
@@ -7886,7 +7949,7 @@ impl Ide {
                     });
                     if let Some(Err(e)) = c.outcome.lock().unwrap().as_ref() {
                         ui.add_space(6.0);
-                        ui.add(egui::Label::new(RichText::new(format!("Not created: {e}")).size(14.0).color(theme::warn())).wrap());
+                        ui.add(egui::Label::new(RichText::new(format!("{}: {e}", if c.convert { "Not converted" } else { "Not created" })).size(14.0).color(theme::warn())).wrap());
                     }
                 }
             }
@@ -7912,13 +7975,48 @@ impl Ide {
             c.creating = true;
             *c.outcome.lock().unwrap() = None;
             let outcome = c.outcome.clone();
-            self.create_domain(c.host.clone(), starter, Some(outcome), ctx);
+            if c.convert {
+                let way = c.cat.and_then(|i| crate::starters::CATEGORIES.get(i)).and_then(|cat| c.way.and_then(|j| cat.ways.get(j))).map(|w| format!("{} in {}", w.app.split(':').next().unwrap_or(w.app), w.lang)).unwrap_or_else(|| starter.to_owned());
+                let change = if c.equivalent || c.brief.trim().is_empty() { None } else { Some(c.brief.trim().to_owned()) };
+                self.convert_domain(c.host.clone(), starter, way, change, outcome, ctx);
+            } else {
+                self.create_domain(c.host.clone(), starter, Some(outcome), ctx);
+            }
             ctx.request_repaint_after(std::time::Duration::from_millis(300));
         }
         if c.creating {
             ctx.request_repaint_after(std::time::Duration::from_millis(300));
         }
         self.choosing = Some(c);
+    }
+
+    /// Project › Convert…: the explorer, to pick what the open project becomes.
+    pub fn start_convert(&mut self) {
+        if let Some(d) = &self.domain {
+            self.choosing = Some(Choosing::convert(&d.host));
+        }
+    }
+
+    /// Make `host` the `starter` framework (host.rs convert_domain), then ask
+    /// its agent to rebuild the old app in it - the same app, or `change`d.
+    fn convert_domain(&mut self, host: String, starter: &'static str, way: String, change: Option<String>, outcome: Arc<Mutex<Option<Result<(), String>>>>, ctx: &egui::Context) {
+        let slot = self.converted.clone();
+        self.backend.query(Query::ConvertDomain { host, starter: starter.to_owned() }, ctx, move |r: Result<crate::api::Converted, String>| match r {
+            Ok(c) => {
+                let goal = match &change {
+                    None => "Rebuild the same app in the new framework: the same pages, features, data, text and look - an equivalent, not a redesign.".to_owned(),
+                    Some(t) => format!("Rebuild it in the new framework, with these changes: {t}"),
+                };
+                let prompt = format!(
+                    "This project was {from} and is now {way}: Cove laid that starter in its place. The app it was is kept, unchanged, in {was}/ - its files and its .cove contract. {goal} Read the old app first. Keep the new starter's .cove scripts, logging helper and health route; build it, start it, and check it answers.",
+                    from = c.from,
+                    was = c.was
+                );
+                *slot.lock().unwrap() = Some((c, prompt));
+                *outcome.lock().unwrap() = Some(Ok(()));
+            }
+            Err(e) => *outcome.lock().unwrap() = Some(Err(e)),
+        });
     }
 
     fn create_domain(&mut self, host: String, starter: &'static str, outcome: Option<Arc<Mutex<Option<Result<(), String>>>>>, ctx: &egui::Context) {
@@ -8523,6 +8621,14 @@ impl Ide {
             self.site_seqs.insert(prev.host.clone(), self.site_seq);
         }
         self.site_seq = self.site_seqs.get(&d.host).copied().unwrap_or(0);
+        // Opening a domain opens its own agent, never Exec carried over -
+        // whichever way it was opened (a tab, Projects, a link, Messages):
+        // otherwise the site's name changed while Agents stayed on Exec
+        // (operator, 2026-11-22). Only ?agent=all (exec_pinned) or the ndexr
+        // folder itself, Exec's home, keep Exec.
+        if !self.ndexr_open {
+            self.exec_on = std::mem::take(&mut self.exec_pinned);
+        }
         self.domain = Some(d);
     }
 
@@ -10125,11 +10231,21 @@ struct Choosing {
     /// (operator, 2026-10-25: testy.ndexr.io closed the chooser on an error
     /// nobody saw).
     outcome: Arc<Mutex<Option<Result<(), String>>>>,
+    /// Converting an existing project (Project › Convert…) rather than
+    /// creating one: the same explorer, then the old app rebuilt in the new
+    /// framework - the same app (`equivalent`) or with `brief`'s changes.
+    convert: bool,
+    equivalent: bool,
+    brief: String,
 }
 
 impl Choosing {
     fn new(host: &str) -> Choosing {
-        Choosing { host: host.to_owned(), cat: None, way: None, find: String::new(), world: None, creating: false, outcome: Default::default() }
+        Choosing { host: host.to_owned(), cat: None, way: None, find: String::new(), world: None, creating: false, outcome: Default::default(), convert: false, equivalent: true, brief: String::new() }
+    }
+
+    fn convert(host: &str) -> Choosing {
+        Choosing { convert: true, ..Choosing::new(host) }
     }
 }
 
