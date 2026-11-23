@@ -479,6 +479,14 @@ pub fn act(owner: &str, act: &InboxAct) -> Result<Value, String> {
                    when :'g' = '0' and :'other' = :'email' then json_build_object('error', 'that is you') \
                    when :'g' <> '0' and not exists (select 1 from people_group_members where group_id = :'g'::bigint and email = :'email' and status = 'member') \
                      then json_build_object('error', 'you are not in that group') \
+                   when :'role' in ('edit', 'manage') and exists (select 1 from site_entitlements e where e.domain = :'d' and e.enforced \
+                       and e.collaborators is not null \
+                       and (select count(*) from share_editors x where x.domain = :'d' and x.email <> :'other') \
+                         + case when :'g' = '0' then 1 else (select count(*) from people_group_members m where m.group_id = :'g'::bigint \
+                             and m.status = 'member' and not exists (select 1 from share_editors x where x.domain = :'d' and x.email = lower(m.email))) end \
+                         > e.collaborators) \
+                     then (select json_build_object('error', 'The ' || e.label || ' plan for ' || :'d' || ' lets ' || e.collaborators \
+                       || case when e.collaborators = 1 then ' other person' else ' other people' end || ' edit it. A bigger plan: https://billing.ndexr.io/?site=' || :'d') from site_entitlements e where e.domain = :'d' limit 1) \
                    else json_build_object('ok', true, 'mine', (select yes from mine)) end",
                 &[("d", &d), ("email", &email), ("other", &other), ("g", &group.to_string()), ("admin", if admin { "1" } else { "0" }), ("role", role)],
             )?;
