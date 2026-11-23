@@ -52,41 +52,82 @@ fn project_ring(opened: &[String], all: &[DomainInfo]) -> Vec<DomainInfo> {
 /// the host, then its title in the quieter colour, cut to the menu's width
 /// (the full name is the hover). Every row the same height and width, so the
 /// list reads as a column rather than a ragged run of buttons.
-fn project_row(ui: &mut egui::Ui, d: &DomainInfo, on: bool, fav: bool) -> (egui::Response, bool) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
+/// What a project row says beside its name, in the Projects dialog: open in a
+/// tab, its agent at work. Read once per frame (Ide::row_facts).
+#[derive(Clone, Copy, Default)]
+struct RowFacts {
+    tab: bool,
+    going: u32,
+}
+
+/// One project in the Projects dialog, as much as is known of it at a glance
+/// (operator, 2026-11-22: "this could be way more understandable, fulfilling,
+/// and filling with substance in the moment than how small this space is"):
+/// its mark, its name and what it is, then its address, what it is built
+/// with, when it last changed, whether its agent is at work and whether it is
+/// open in a tab - and the star.
+fn project_row(ui: &mut egui::Ui, d: &DomainInfo, on: bool, fav: bool, f: RowFacts) -> (egui::Response, bool) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 52.0), egui::Sense::click());
     let p = ui.painter().clone();
     if on {
-        p.rect_filled(rect, 6.0, theme::primary().gamma_multiply(0.16));
+        p.rect_filled(rect, 8.0, theme::primary().gamma_multiply(0.16));
     } else if resp.hovered() {
-        p.rect_filled(rect, 6.0, theme::surface_hi());
+        p.rect_filled(rect, 8.0, theme::surface_hi());
     }
-    let mark = egui::Rect::from_center_size(egui::pos2(rect.left() + 16.0, rect.center().y), egui::vec2(20.0, 20.0));
+    let mark = egui::Rect::from_center_size(egui::pos2(rect.left() + 22.0, rect.center().y), egui::vec2(28.0, 28.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(mark), |ui| {
-        if crate::frameworks::icon(ui, &d.framework, 20.0).is_none() {
-            ui.label(RichText::new("⌂").size(14.0));
+        if crate::frameworks::icon(ui, &d.framework, 28.0).is_none() {
+            ui.label(RichText::new("⌂").size(18.0));
         }
     });
+    // An agent at work: a pulsing dot on its mark.
+    if f.going > 0 {
+        let t = ui.input(|i| i.time);
+        let a = 0.55 + 0.45 * ((t * 3.0).sin() as f32 * 0.5 + 0.5);
+        p.circle_filled(mark.right_top() + egui::vec2(-2.0, 3.0), 5.0, theme::surface());
+        p.circle_filled(mark.right_top() + egui::vec2(-2.0, 3.0), 4.0, theme::ok().gamma_multiply(a));
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+    }
     // The star at the right: a click on it adds or removes the favorite,
     // never opens the project.
-    let star_rect = egui::Rect::from_center_size(egui::pos2(rect.right() - 16.0, rect.center().y), egui::vec2(28.0, 28.0));
+    let star_rect = egui::Rect::from_center_size(egui::pos2(rect.right() - 18.0, rect.center().y), egui::vec2(30.0, 30.0));
     let sr = ui.interact(star_rect, egui::Id::new(("project-star", d.host.as_str())), egui::Sense::click());
     if fav || sr.hovered() || resp.hovered() {
-        star(&p, star_rect.center(), 7.0, fav, if fav { theme::amber() } else if sr.hovered() { theme::text_strong() } else { theme::hush() });
+        star(&p, star_rect.center(), 8.0, fav, if fav { theme::amber() } else if sr.hovered() { theme::text_strong() } else { theme::hush() });
     }
     let starred = sr.on_hover_text(if fav { "remove from favorites" } else { "add to favorites" }).clicked();
-    let x = rect.left() + 34.0;
-    let mut job = egui::text::LayoutJob::default();
-    job.append(crate::tabs::Tabs::short(&d.host), 0.0, egui::TextFormat { font_id: egui::FontId::monospace(12.5), color: theme::text_strong(), ..Default::default() });
-    // Where it lives: this computer only, or its domain on the web.
-    if crate::tabs::is_local(&d.host) {
-        job.append("  this computer", 0.0, egui::TextFormat { font_id: egui::FontId::proportional(11.5), color: theme::hush(), ..Default::default() });
-    }
+    let x = rect.left() + 46.0;
+    let room = (star_rect.left() - x - 8.0).max(60.0);
+    // First line: the name, and what it is.
+    let mut top = egui::text::LayoutJob::default();
+    top.append(crate::tabs::Tabs::short(&d.host), 0.0, egui::TextFormat { font_id: egui::FontId::proportional(15.0), color: theme::text_strong(), ..Default::default() });
     if !d.title.is_empty() {
-        job.append(&format!("  {}", d.title), 0.0, egui::TextFormat { font_id: egui::FontId::proportional(12.5), color: theme::text(), ..Default::default() });
+        top.append(&format!("   {}", d.title), 0.0, egui::TextFormat { font_id: egui::FontId::proportional(13.5), color: theme::text(), ..Default::default() });
     }
-    job.wrap = egui::text::TextWrapping::truncate_at_width((star_rect.left() - x - 6.0).max(40.0));
-    let galley = p.layout_job(job);
-    p.galley(egui::pos2(x, rect.center().y - galley.size().y / 2.0), galley, theme::text());
+    top.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let g = p.layout_job(top);
+    p.galley(egui::pos2(x, rect.top() + 7.0), g, theme::text());
+    // Second line: where, with what, how lately, and what is going on.
+    let mut facts: Vec<String> = Vec::new();
+    facts.push(if crate::tabs::is_local(&d.host) { format!("{} · this computer", d.host) } else { d.host.clone() });
+    let built = crate::frameworks::mark(&d.framework).map(|m| m.name.to_owned()).or_else(|| (!d.language.is_empty()).then(|| d.language.clone()));
+    if let Some(b) = built {
+        facts.push(b);
+    }
+    if d.modified > 0 {
+        let age = crate::software::now_secs() - d.modified as i64;
+        facts.push(format!("changed {} ago", crate::app::age_words(age)));
+    }
+    if f.going > 0 {
+        facts.push(if f.going == 1 { "agent working".to_owned() } else { format!("{} agents working", f.going) });
+    }
+    if f.tab {
+        facts.push("open in a tab".to_owned());
+    }
+    let mut low = egui::text::LayoutJob::single_section(facts.join("  ·  "), egui::TextFormat { font_id: egui::FontId::proportional(12.0), color: theme::text(), ..Default::default() });
+    low.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    let g = p.layout_job(low);
+    p.galley(egui::pos2(x, rect.bottom() - 7.0 - g.size().y), g, theme::text());
     let full = if d.title.is_empty() { d.host.clone() } else { format!("{} · {}", d.host, d.title) };
     (resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if on { format!("{full} - open now") } else { full }), starred)
 }
@@ -240,7 +281,14 @@ const STRIP_TABS_MIN: f32 = 240.0;
 /// What the Recap button asks Exec: the last 3 hours of every domain, from
 /// what the machines recorded, as an executive summary - prose, never a list
 /// of commits or request numbers.
-const RECAP_PROMPT: &str = "Recap the last 3 hours across all of my domains. Read what actually happened in that time - each domain's git history and uncommitted changes, agent runs and how they ended, builds, releases and deploys, failures and errors - not what anyone said they did. Write it as an executive summary: what changed and why, what it was for, what is broken or waiting on someone, and the next steps. Prose grouped by what matters, with the domain named where it helps; not a list of commits, files or request numbers. Say plainly if nothing happened.";
+/// How far back Recap can look (operator, 2026-11-23: "1 hr, 3 hr, 6 hr,
+/// 12 hr, 24 hr").
+const RECAP_HOURS: [u32; 5] = [1, 3, 6, 12, 24];
+
+fn recap_prompt(hours: u32) -> String {
+    let span = if hours == 1 { "hour".to_owned() } else { format!("{hours} hours") };
+    format!("Recap the last {span} across all of my domains. Read what actually happened in that time - each domain's git history and uncommitted changes, agent runs and how they ended, builds, releases and deploys, failures and errors - not what anyone said they did. Write it as an executive summary: what changed and why, what it was for, what is broken or waiting on someone, and the next steps. Prose grouped by what matters, with the domain named where it helps; not a list of commits, files or request numbers. Say plainly if nothing happened.")
+}
 
 fn strip_note(ui: &mut egui::Ui, label: egui::Label) {
     let room = ui.available_width() - STRIP_TABS_MIN;
@@ -6260,7 +6308,7 @@ impl Ide {
     /// (a field, the editor, a console, the terminal, which all use the
     /// arrows) and no dialog is open.
     pub fn tab_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, keys: bool) -> bool {
-        let mut recap_asked = false;
+        let mut recap_asked: Option<u32> = None;
         self.ask_domains(ctx);
         // A tab clicked, a tab closed, a share accepted: each leaves the
         // project to open in `pending_open`, and this opens it. Only the
@@ -6369,7 +6417,10 @@ impl Ide {
                 }
             });
             // + after the last tab, as in Chrome: its room is kept.
-            let tail = side + 6.0;
+            // Room after the tabs for + and Recap (it was + alone, and Recap
+            // ran over Workspace beside it: "RecWorkspace", 2026-11-22).
+            let recap_w = ui.fonts_mut(|f| f.layout_no_wrap("Recap".into(), egui::FontId::proportional(if small { 15.0 } else { 12.5 }), Color32::WHITE).size().x) + ui.spacing().button_padding.x * 2.0 + 8.0;
+            let tail = side + 6.0 + recap_w;
             let room = (ui.available_width() - tail).max(80.0);
             // No tabs on a phone (operator, 2026-11-22: "we don't need to see
             // the tabs on mobile ... the scrolling on the mobile is just too
@@ -6456,19 +6507,28 @@ impl Ide {
             if plus.on_hover_text("new tab - go to a project, or create one (Projects)").clicked() {
                 act = Some(TabAct::New);
             }
-            // A recap of every domain's last 3 hours, from Exec (operator,
-            // 2026-11-22: "a button ... you can push to get a recap of all of
-            // your domains over the last 3 hours", in the room beside + on a
-            // phone). Exec runs wherever this Cove runs, so it needs the tools
-            // Exec needs there.
-            let recap = if small {
-                ui.add(egui::Button::new(RichText::new("Recap").size(15.0).strong().color(theme::text_strong())).min_size(egui::vec2(0.0, 40.0)))
+            // A recap of every domain over the span picked, from Exec
+            // (operator, 2026-11-22: "a button ... you can push to get a recap
+            // of all of your domains", in the room beside + on a phone; 11-23:
+            // "1 hr, 3 hr, 6 hr, 12 hr, 24 hr"). Exec runs wherever this Cove
+            // runs, so it needs the tools Exec needs there.
+            let btn = if small {
+                egui::Button::new(RichText::new("Recap").size(15.0).strong().color(theme::text_strong())).min_size(egui::vec2(0.0, 40.0))
             } else {
-                ui.add(egui::Button::new(RichText::new("Recap").size(12.5).color(theme::text_strong())).frame(false).min_size(egui::vec2(0.0, side)))
+                egui::Button::new(RichText::new("Recap").size(12.5).color(theme::text_strong())).frame(false).min_size(egui::vec2(0.0, side))
             };
-            if recap.on_hover_text("Exec recaps all your domains: the last 3 hours, as a summary").clicked() {
-                recap_asked = true;
-            }
+            let (r, _) = egui::containers::menu::MenuButton::from_button(btn).ui(ui, |ui| {
+                theme::chrome_menu(ui, 200.0);
+                ui.label(RichText::new("Recap all your domains, the last").size(12.5).color(theme::text()));
+                for h in RECAP_HOURS {
+                    let word = if h == 1 { "1 hour".to_owned() } else { format!("{h} hours") };
+                    if ui.add(egui::Button::new(RichText::new(word).size(if small { 15.0 } else { 13.0 })).min_size(egui::vec2(0.0, if small { 40.0 } else { 30.0 }))).clicked() {
+                        recap_asked = Some(h);
+                        ui.close();
+                    }
+                }
+            });
+            r.on_hover_text("Exec recaps all your domains, as a summary - pick how far back");
         });
         let free = keys && act.is_none() && self.naming.is_none() && self.choosing.is_none() && ctx.memory(|m| m.focused().is_none());
         if free && self.tabs.open.len() > 1 {
@@ -6483,10 +6543,10 @@ impl Ide {
         if let Some(a) = act {
             self.tab_act(a, active.as_deref(), ctx);
         }
-        if recap_asked {
-            self.exec_ask(ctx, RECAP_PROMPT);
+        if let Some(h) = recap_asked {
+            self.exec_ask(ctx, &recap_prompt(h));
         }
-        forward || recap_asked
+        forward || recap_asked.is_some()
     }
 
     /// One tab's menu, as a browser's: what it opens, its place, what closes.
@@ -7510,7 +7570,12 @@ impl Ide {
             self.project_pick = 0;
         }
         let screen = ctx.content_rect();
-        let w = (screen.width() - 32.0).clamp(260.0, 520.0);
+        // Most of the screen: a project list with room to say what each one
+        // is (it was a 520 pt box of one-line rows).
+        let w = (screen.width() - 32.0).clamp(260.0, 980.0);
+        let busy = self.tab_busy.lock().unwrap().clone().unwrap_or_default();
+        let open_tabs = self.tabs.open.clone();
+        let facts = |h: &str| RowFacts { tab: open_tabs.iter().any(|t| t == h), going: busy.get(h).copied().unwrap_or(0) };
         let (mut open, mut create, mut restore, mut accept, mut close, mut step) = (None, None, None, None, false, None::<isize>);
         let mut star_toggle: Option<String> = None;
         let mut fav_only = self.fav_only;
@@ -7559,7 +7624,7 @@ impl Ide {
             }
             ui.add_space(4.0);
             let row = |ui: &mut egui::Ui, t: RichText| ui.add(egui::Button::new(t).min_size(egui::vec2(ui.available_width(), 34.0)).truncate());
-            egui::ScrollArea::vertical().max_height((screen.height() * 0.6).max(220.0)).auto_shrink([false, true]).show(ui, |ui| {
+            egui::ScrollArea::vertical().max_height((screen.height() - 230.0).max(220.0)).auto_shrink([false, true]).show(ui, |ui| {
                 let share = |ui: &mut egui::Ui, o: &api::OfferedShare, accept: &mut Option<api::OfferedShare>| {
                     let what = crate::access::role_words(&o.role);
                     let r = row(ui, RichText::new(format!("↘ Accept and open {} · from {} · {what}", o.domain, o.owner)).size(13.0).color(theme::ok()));
@@ -7589,7 +7654,7 @@ impl Ide {
                         if !favs.is_empty() {
                             ui.label(RichText::new(format!("Favorites · {}", favs.len())).size(12.5).strong().color(theme::text()));
                             for d in &favs {
-                                let (r, s) = project_row(ui, d, current.as_deref() == Some(d.host.as_str()), true);
+                                let (r, s) = project_row(ui, d, current.as_deref() == Some(d.host.as_str()), true, facts(&d.host));
                                 if s {
                                     star_toggle = Some(d.host.clone());
                                 } else if r.clicked() {
@@ -7600,7 +7665,7 @@ impl Ide {
                         }
                         ui.label(RichText::new("Recent").size(12.5).strong().color(theme::text()));
                         for d in recent.iter().filter(|d| !self.tabs.is_favorite(&d.host)) {
-                            let (r, s) = project_row(ui, d, current.as_deref() == Some(d.host.as_str()), false);
+                            let (r, s) = project_row(ui, d, current.as_deref() == Some(d.host.as_str()), false, facts(&d.host));
                             if s {
                                 star_toggle = Some(d.host.clone());
                             } else if r.clicked() {
@@ -7614,7 +7679,7 @@ impl Ide {
                             ui.add_space(4.0);
                             ui.label(RichText::new(format!("All projects · {}", all.len())).size(12.5).strong().color(theme::text()));
                             for d in rest {
-                                let (r, s) = project_row(ui, d, current.as_deref() == Some(d.host.as_str()), false);
+                                let (r, s) = project_row(ui, d, current.as_deref() == Some(d.host.as_str()), false, facts(&d.host));
                                 if s {
                                     star_toggle = Some(d.host.clone());
                                 } else if r.clicked() {
@@ -7632,7 +7697,7 @@ impl Ide {
                     }
                 } else {
                     for (i, d) in hits.iter().enumerate() {
-                        let (r, s) = project_row(ui, d, i == self.project_pick, self.tabs.is_favorite(&d.host));
+                        let (r, s) = project_row(ui, d, i == self.project_pick, self.tabs.is_favorite(&d.host), facts(&d.host));
                         if s {
                             star_toggle = Some(d.host.clone());
                         } else if r.clicked() {

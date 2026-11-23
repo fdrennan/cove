@@ -4,6 +4,8 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-23T00:40Z · Recap asks how far back: the last hour, 3, 6, 12 or 24 hours
+- 2026-11-23T00:20Z · Projects (+) has room to tell you about each project: it fills most of the screen, and every project shows its name and what it is, then its address, what it is built with, when it last changed, whether its agent is working and whether it is open in a tab. Recap no longer runs over Workspace at the top
 - 2026-11-22T23:40Z · A restart is no longer a red error: a message you send while Cove restarts waits in the thread and goes as soon as it is back, the thread stays on screen while it reconnects, and what you type in the agent's box is kept as you type, so a reload brings it back
 - 2026-11-22T23:00Z · Convert a project to another framework: Cove menu › Project › Convert to another framework… picks any starter - Shiny to a Rust explorer, React to Julia - keeps the app it is now, whole, in .cove/was/, lays the new one on the same address, and has the site's agent rebuild the old app in it: the same app, or with the changes you write
 - 2026-11-22T22:30Z · × closes a domain tab again: the tab in front came straight back while the next project opened, and the × of any other tab vanished as the pointer reached it
