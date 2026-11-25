@@ -1236,7 +1236,7 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
         }
         // Versions: read and restored as the platform account, which owns the
         // repositories the autosave service keeps; only the person's own.
-        Query::Versions { host } | Query::VersionRestore { host, .. } | Query::GitChanges { host, .. } | Query::GitDiff { host, .. } => {
+        Query::Versions { host } | Query::VersionRestore { host, .. } | Query::GitChanges { host, .. } | Query::GitDiff { host, .. } | Query::GitStatus { host } | Query::GitPatch { host, .. } => {
             let h = host.trim().to_ascii_lowercase();
             match person_domains(owner, &account).into_iter().find(|(x, _)| *x == h) {
                 None => Err(format!("{h} is not one of your domains")),
@@ -1248,8 +1248,15 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                         audit(ctx, owner, "version-restore", &format!("{h} {sha} {}", if r.is_ok() { "done" } else { "refused" }));
                         r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
                     }
-                    (Query::GitChanges { sha, .. }, path) => crate::host::git_changes_at(Path::new(&path), sha).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
-                    (Query::GitDiff { sha, path: file, old, .. }, path) => crate::host::git_diff_at(Path::new(&path), sha, file, old).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+                    (Query::GitChanges { sha, .. }, path) => crate::host::git::changes_at(Path::new(&path), sha).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+                    (Query::GitDiff { sha, path: file, old, area, full, .. }, path) => crate::host::git::diff_at(Path::new(&path), sha, file, old, area, *full).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+                    (Query::GitStatus { .. }, path) => crate::host::git::status_at(Path::new(&path)).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+                    // Changes the person's files or index: on the record.
+                    (Query::GitPatch { action, patch, .. }, path) => {
+                        let r = crate::host::git::patch_at(Path::new(&path), action, patch);
+                        audit(ctx, owner, "git-patch", &format!("{h} {action} {} bytes {}", patch.len(), if r.is_ok() { "done" } else { "refused" }));
+                        r.and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string()))
+                    }
                     (_, path) => crate::host::versions_at(Path::new(&path)).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                 },
             }

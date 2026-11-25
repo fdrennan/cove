@@ -146,7 +146,7 @@ impl GitView {
     fn pick_file(&mut self, f: GitFile, backend: &Backend, ctx: &egui::Context) {
         let slot = self.diff.clone();
         *slot.lock().unwrap() = None;
-        let q = Query::GitDiff { host: self.host.clone(), sha: self.sha.clone().unwrap_or_default(), path: f.path.clone(), old: f.old.clone() };
+        let q = Query::GitDiff { host: self.host.clone(), sha: self.sha.clone().unwrap_or_default(), path: f.path.clone(), old: f.old.clone(), area: String::new(), full: false };
         self.file = Some(f);
         backend.query(q, ctx, move |r: Result<String, String>| {
             *slot.lock().unwrap() = Some(r.map(|t| parse(&t)));

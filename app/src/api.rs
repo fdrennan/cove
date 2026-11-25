@@ -330,7 +330,20 @@ pub enum Query {
         path: String,
         #[serde(default)]
         old: String,
+        /// For `sha` "": "staged" (the last version against the index),
+        /// "unstaged" (the index against the files), or "" both at once.
+        #[serde(default)]
+        area: String,
+        /// The whole file as context, for a viewer that folds it itself.
+        #[serde(default)]
+        full: bool,
     },
+    /// The changes not saved yet in their parts (host/git.rs status_at):
+    /// each file with `area` "staged", "unstaged" or "untracked".
+    GitStatus { host: String },
+    /// A patch put to work (host/git.rs patch_at): `action` "stage",
+    /// "unstage", "revert", "apply" or "check".
+    GitPatch { host: String, action: String, patch: String },
     /// Route a published domain to its app's APP_PORT (app/assets/route-app.sh,
     /// run as root by `cove multiuser`): the one step of Up a person's session
     /// cannot take itself.
@@ -1665,6 +1678,9 @@ pub struct GitFile {
     pub status: String,
     pub added: i64,
     pub removed: i64,
+    /// Of the changes not saved yet (Query::GitStatus): "staged",
+    /// "unstaged" or "untracked"; "" for a version's files.
+    pub area: String,
 }
 
 /// A project by the app contract (apps.rs): its app.env's language, kind
