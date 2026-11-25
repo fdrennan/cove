@@ -457,7 +457,7 @@ fn text_at(ui: &mut egui::Ui, s: &str, size: f32, color: Color32, bold: bool, wr
             }
             None => {
                 if resp.clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(&url));
+                    crate::links::new_tab(ui.ctx(), &url);
                 }
                 resp.on_hover_text(url);
             }

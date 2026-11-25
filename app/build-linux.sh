@@ -78,19 +78,70 @@ if [[ "${WEBVIEW:-1}" != 0 && ! -e "$multi/libwebkit2gtk-4.1.so" && "$arch" != "
   export PKG_CONFIG_LIBDIR="$multi/pkgconfig:$sysroot/usr/share/pkgconfig"
   echo "▸ $arch GTK/WebKit from the sysroot $sysroot"
 fi
-features="--features webview"
-if [[ "${WEBVIEW:-1}" == 0 ]]; then
-  features=""
-  echo "▸ WEBVIEW=0 - building without the embedded webview"
-elif [[ ! -e "$multi/libwebkit2gtk-4.1.so" ]]; then
-  features=""
-  echo "▸ no $multi/libwebkit2gtk-4.1.so here - building without the embedded webview"
-fi
+# Three binaries (operator, 2026-11-24: Cove must not need WebKitGTK
+# installed - "build it into the stack so when cvmfs is used its there"):
+#   bin/cove                     no webview: links no WebKit or GTK, starts on
+#                                any machine. It is the cell's build, so it
+#                                shares target-cell/ and compiles once a release.
+#   lib/cove/bin/cove-desk       the webview against this host's (or the
+#                                sysroot's) libwebkit2gtk-4.1: a desktop with
+#                                WebKitGTK of its own, as every release before.
+#   lib/cove/bin/cove-desk-stack the webview against the ndexr stack's
+#                                WebKitGTK, built with the stack's Rust and gcc:
+#                                the Prefix's loader, every RUNPATH under
+#                                /opt/ndexr/stack. Runs wherever the stack is
+#                                mounted - nothing installed.
+# bin/cove becomes the first of the two that starts here (src/desk.rs).
 RUSTFLAGS="${RUSTFLAGS:-} -L native=$multi -C link-arg=-Wl,--allow-shlib-undefined" \
-CARGO_TARGET_DIR="$tdir" cargo zigbuild --release --target "$target.2.28" --manifest-path "$here/Cargo.toml" $features
-
+CARGO_TARGET_DIR="$here/target-cell" cargo zigbuild --release --target "$target.2.28" --manifest-path "$here/Cargo.toml"
 mkdir -p "$stage/bin"
-cp "$tdir/$target/release/cove" "$stage/bin/"
+cp "$here/target-cell/$target/release/cove" "$stage/bin/"
+
+if [[ "${WEBVIEW:-1}" == 0 ]]; then
+  echo "▸ WEBVIEW=0 - no App panel builds"
+else
+  if [[ -e "$multi/libwebkit2gtk-4.1.so" ]]; then
+    RUSTFLAGS="${RUSTFLAGS:-} -L native=$multi -C link-arg=-Wl,--allow-shlib-undefined" \
+    CARGO_TARGET_DIR="$tdir" cargo zigbuild --release --target "$target.2.28" --manifest-path "$here/Cargo.toml" --features webview
+    install -Dm755 "$tdir/$target/release/cove" "$stage/lib/cove/bin/cove-desk"
+  else
+    echo "▸ no $multi/libwebkit2gtk-4.1.so here - no cove-desk (system WebKitGTK)"
+  fi
+  # The stack's build needs this arch's stack, so it is made where the
+  # architecture is the host's; another arch's box can make its own.
+  stack_triple="$([[ "$arch" == x86_64 ]] && echo x86_64-pc-linux-gnu || echo "$arch-unknown-linux-gnu")"
+  if [[ "$arch" == "$(uname -m)" ]] && compgen -G "/opt/ndexr/stack/$stack_triple/eb/modules/all/WebKitGTK/*.lua" >/dev/null; then
+    echo "▸ cove-desk-stack: the stack's Rust and WebKitGTK"
+    env -i HOME="$HOME" USER="${USER:-}" TMPDIR="${TMPDIR:-/tmp}" PATH=/usr/bin:/bin \
+      CARGO_TARGET_DIR="$here/target-stack" CARGO_HOME="$here/target-stack/cargo-home" \
+      CARGO_PROFILE_RELEASE_LTO="${CARGO_PROFILE_RELEASE_LTO:-thin}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-16}" \
+      CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" \
+      /bin/bash --noprofile --norc -c '
+        set -e; set +u
+        . /opt/ndexr/stack/use.sh >/dev/null 2>&1
+        ml Rust/1.96.0-GCCcore-13.3.0 WebKitGTK pkgconf >/dev/null 2>&1
+        [ -n "${EBROOTWEBKITGTK:-}" ] || { echo "ml WebKitGTK failed" >&2; exit 1; }
+        export CARGO_TARGET_'"${arch^^}"'_UNKNOWN_LINUX_GNU_LINKER=gcc
+        # The RUNPATH: ld takes LD_RUN_PATH when the link names none, and
+        # rustc names none. Without it the binary had the Prefix loader and no
+        # way to find libwebkit2gtk-4.1 (first build, 2026-11-24).
+        export LD_RUN_PATH="$LIBRARY_PATH"
+        cargo build --release --manifest-path "'"$here"'/Cargo.toml" --features webview'
+    desk="$here/target-stack/release/cove"
+    interp="$(readelf -l "$desk" | sed -n 's/.*interpreter: \([^]]*\)].*/\1/p')"
+    paths="$(readelf -d "$desk" | sed -n 's/.*R\(UN\)\{0,1\}PATH.*\[\(.*\)\]/\2/p' | tr ':' '\n')"
+    if [[ "$interp" != /opt/ndexr/stack/* || -z "$paths" ]] || grep -qv '^/opt/ndexr/stack/' <<<"$paths" ||
+       ldd "$desk" | grep -q "not found"; then
+      echo "cove-desk-stack: loader $interp, a runpath outside /opt/ndexr/stack, none, or a library not found - refusing to ship it" >&2
+      ldd "$desk" | grep "not found" >&2 || true
+      exit 1
+    fi
+    install -Dm755 "$desk" "$stage/lib/cove/bin/cove-desk-stack"
+  else
+    echo "▸ no WebKitGTK module in /opt/ndexr/stack/$stack_triple - no cove-desk-stack"
+  fi
+fi
 # Cove's licence and the notices of every crate in it travel with the binary.
 install -Dm644 "$here/../LICENSE" "$stage/share/doc/cove/LICENSE"
 install -Dm644 "$here/THIRD-PARTY-NOTICES.txt" "$stage/share/doc/cove/THIRD-PARTY-NOTICES.txt"

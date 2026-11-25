@@ -755,7 +755,7 @@ impl Inbox {
                 for s in have {
                     ui.horizontal(|ui| {
                         if ui.small_button("Open ↗").on_hover_text(format!("https://{}/", s.domain)).clicked() {
-                            ctx.open_url(egui::OpenUrl::new_tab(format!("https://{}/", s.domain)));
+                            crate::links::new_tab(ctx, format!("https://{}/", s.domain));
                         }
                         let from = if s.group > 0 { format!("{} · {}", s.owner, s.to) } else { s.owner.clone() };
                         ui.add(egui::Label::new(RichText::new(format!("{} · from {from}", s.domain)).size(11.0).color(theme::text())).truncate());
@@ -912,7 +912,7 @@ impl Inbox {
                                 ui.label(RichText::new(format!("⇗ {}", m.body)).strong().color(theme::text_strong()));
                                 ui.label(RichText::new("a site, shared").size(10.5).color(theme::muted()));
                                 if ui.button("Open ↗").on_hover_text(format!("https://{}/ in a new tab - its own sign-in decides who sees it", m.body)).clicked() {
-                                    ctx.open_url(egui::OpenUrl::new_tab(format!("https://{}/", m.body)));
+                                    crate::links::new_tab(ctx, format!("https://{}/", m.body));
                                 }
                             }),
                             _ => bubble(ui, name, &at, &m.body, m.mine, false),
@@ -997,7 +997,7 @@ impl Inbox {
                                     }
                                 } else if s.mine || s.status == "accepted" {
                                     if ui.button("Open ↗").on_hover_text(format!("https://{}/ in a new tab", s.domain)).clicked() {
-                                        ctx.open_url(egui::OpenUrl::new_tab(format!("https://{}/", s.domain)));
+                                        crate::links::new_tab(ctx, format!("https://{}/", s.domain));
                                     }
                                 }
                                 if s.mine && ui.small_button("Take back").on_hover_text("they can no longer open it").clicked() {

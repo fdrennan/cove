@@ -334,7 +334,7 @@ fn pick_row(ui: &mut egui::Ui, name: &str, under: &str, live: bool) -> egui::Res
     p.circle_filled(dot, 4.0, if live { theme::ok() } else { theme::moss() });
     p.text(egui::pos2(rect.left() + 28.0, rect.top() + 6.0), egui::Align2::LEFT_TOP, name, theme::display(14.0), theme::text_strong());
     p.text(egui::pos2(rect.left() + 28.0, rect.top() + 25.0), egui::Align2::LEFT_TOP, under, egui::FontId::proportional(12.0), theme::text());
-    if resp.hovered() {
+    if resp.hovered() || crate::device::coarse() {
         p.text(egui::pos2(rect.right() - 12.0, rect.center().y), egui::Align2::RIGHT_CENTER, "Share", egui::FontId::proportional(13.5), theme::primary());
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)

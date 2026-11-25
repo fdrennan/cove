@@ -7,8 +7,9 @@
 # disk), so the page and the installer cannot drift apart.
 #
 #   Linux                      the build for this machine's architecture
-#                              (x86_64 or aarch64) into ~/.local, no sudo; the
-#                              one command for WebKitGTK is printed if missing
+#                              (x86_64 or aarch64) into ~/.local, no sudo;
+#                              nothing else to install - the App panel's
+#                              WebKitGTK comes from the ndexr stack
 #   macOS                      Cove.app in /Applications
 #
 # On Linux it then asks whether to mount the ndexr software stack at
@@ -21,6 +22,19 @@
 #
 #   … | sh -s -- --stack       also mount the ndexr stack (CernVM-FS), no question
 #   … | sh -s -- --no-stack    never ask
+#   … | sh -s -- --stack --front   a server: the stack, then HTTPS in front of
+#                              Cove from the stack's Caddy (cove setup-front)
+#   … | sh -s -- --server [--front] [--name cove.example.org] [--single]
+#                              a server with NOTHING installed: mount the
+#                              stack and run Cove from it (`ml cove`). The
+#                              organisation's by default - people sign in with
+#                              their own accounts, each gets their own sessions
+#                              (cove setup-server); --single: one person's.
+#                              A stack update is a Cove update. People connect
+#                              to it from the desktop app (Connect to a server)
+#                              or a browser (operator, 2026-11-24: "no install
+#                              path ... server uses the stack ... people will be
+#                              able to use the app to connect to their stack")
 #
 # Every download is checked against its published SHA-256 before it is used.
 # Operator, 2026-11-14: "cove.ndexr.io installs should look and feel cleaner"
@@ -35,7 +49,16 @@ base="${COVE_FEED:-https://repo.ndexr.io/ndexr/cove}"
 # that path instead, so `sh -s -- --stack` never mounted anything
 # (ndexrtesting.com, 2026-11-21; COVE_MOUNT_STACK=yes was the workaround).
 flag_stack=""
-for a in "$@"; do case "$a" in --stack|--yes|-y) flag_stack=yes ;; --no-stack) flag_stack=no ;; esac; done
+flag_front=""
+flag_server=""
+flag_single=""
+flag_name=""
+prev=""
+for a in "$@"; do
+  [ "$prev" = --name ] && flag_name="$a"
+  case "$a" in --stack|--yes|-y) flag_stack=yes ;; --no-stack) flag_stack=no ;; --front) flag_front=yes ;; --server) flag_server=yes ;; --single) flag_single=yes ;; esac
+  prev="$a"
+done
 
 if [ -t 1 ]; then b="$(printf '\033[1m')"; d="$(printf '\033[2m')"; g="$(printf '\033[32m')"; r="$(printf '\033[31m')"; n="$(printf '\033[0m')"
 else b=""; d=""; g=""; r=""; n=""; fi
@@ -64,6 +87,43 @@ printf '\n  %sCove%s installer\n\n' "$b" "$n"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# ── --server: Cove from the stack, nothing installed ─────────────────────────
+# The stack is mounted with the ndexr CLI fetched into $tmp (checksum-checked,
+# gone when this exits), then a cove-stack@<user> service runs the stack's own
+# Cove: `ml cove` is the app, its App panel build, its browser UI and the
+# ndexr CLI, all from /opt/ndexr/stack. Root once (sudo) for the mount and the
+# unit; Cove itself runs as the user.
+if [ "$flag_server" = yes ]; then
+  [ "$platform" = darwin ] && fail "--server is for a Linux server; on a Mac install the app and connect to the server"
+  user="${SUDO_USER:-$(id -un)}"
+  as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo "$@"; fi; }
+  if [ ! -r /opt/ndexr/stack/use.sh ]; then
+    step "mounting the ndexr stack at /opt/ndexr/stack (CernVM-FS, root once)"
+    checked "https://repo.ndexr.io/ndexr/$(uname -m)/latest/ndexr" "$tmp/ndexr"
+    chmod +x "$tmp/ndexr"
+    as_root "$tmp/ndexr" install cvmfs --yes || fail "the stack was not mounted (above)"
+  fi
+  [ -r /opt/ndexr/stack/use.sh ] || fail "/opt/ndexr/stack has no use.sh after the mount"
+  cove_path="$(bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove >/dev/null 2>&1 && command -v cove')" ||
+    fail "the stack mounted here has no Cove module yet"
+  step "Cove from the stack: $cove_path"
+  # The server itself is `cove setup-server` (stack.rs), the one place its
+  # units, PAM file and settings are written: the organisation's by default
+  # (cove-multiuser - people sign in with their accounts, each gets their own
+  # sessions), one person's with --single.
+  stack_cove() { as_root bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove >/dev/null 2>&1 && exec cove "$@"' cove "$@"; }
+  if [ "$flag_single" = yes ]; then set -- --user "$user"; else set --; fi
+  [ -n "$flag_name" ] && set -- "$@" --name "$flag_name"
+  stack_cove setup-server --yes "$@" || fail "the server was not set up (above)"
+  if [ "$flag_front" = yes ]; then
+    stack_cove setup-front --yes ||
+      printf '    %sHTTPS was not set up%s - run: sudo bash -c ". /opt/ndexr/stack/use.sh && ml cove && cove setup-front --yes"\n' "$r" "$n"
+  fi
+  printf '\n  %s✓ Cove runs from the stack%s  %snothing installed; a stack update is a Cove update%s\n\n' "$g$b" "$n" "$d" "$n"
+  printf '    %sFrom a desktop%s the Cove app: account menu, Connect to a server\n\n' "$b" "$n"
+  exit 0
+fi
+
 if [ "$platform" = darwin ]; then
   step "downloading Cove for macOS"
   checked "$base/darwin/latest/cove.tar.gz" "$tmp/cove.tar.gz"
@@ -87,15 +147,8 @@ else
   # them at length, and this installer says what matters below.
   COVE_QUIET=1 "$1" > "$tmp/install.log" 2>&1 || { tail -n 15 "$tmp/install.log" >&2; fail "the tarball's installer failed (above)"; }
   where="${PREFIX:-$HOME/.local}/bin/cove"; start="or open Cove from your applications"
-  # The App panel's webview is WebKitGTK 4.1: without it cove does not start.
-  if ldd "$where" 2>/dev/null | grep -q "not found"; then
-    if command -v dnf >/dev/null 2>&1; then lacks="sudo dnf install webkit2gtk4.1"
-    elif command -v pacman >/dev/null 2>&1; then lacks="sudo pacman -S webkit2gtk-4.1"
-    elif command -v zypper >/dev/null 2>&1; then lacks="sudo zypper install libwebkit2gtk-4_1-0"
-    elif command -v apt-get >/dev/null 2>&1; then lacks="sudo apt install libwebkit2gtk-4.1-0"
-    elif command -v emerge >/dev/null 2>&1; then lacks="sudo emerge --ask net-libs/webkit-gtk:4.1"
-    else lacks="install WebKitGTK 4.1 (webkit2gtk-4.1) from your distribution"; fi
-  fi
+  # No WebKitGTK to install (operator, 2026-11-24): bin/cove links none, and
+  # the App panel's embedded browser is the stack's (src/desk.rs).
 fi
 
 # The ndexr software stack: asked once, here, not only by the desktop app at
@@ -171,8 +224,15 @@ if [ "$platform" != darwin ] && [ ! -r /opt/ndexr/stack/use.sh ]; then
     echo
   fi
 fi
-if [ -n "${lacks:-}" ]; then
-  printf '    %sOne more step%s  Cove needs WebKitGTK 4.1:  %s\n\n' "$b" "$n" "$lacks"
+# HTTPS in front of this Cove, from the stack's Caddy: asked for with --front,
+# on a server whose stack is mounted (cove setup-front, root once).
+if [ "$flag_front" = yes ] && [ "$platform" != darwin ]; then
+  if [ -r /opt/ndexr/stack/use.sh ]; then
+    "$where" setup-front --yes || printf '    %sHTTPS was not set up%s - run: sudo cove setup-front --yes\n' "$r" "$n"
+  else
+    printf '    %sHTTPS was not set up%s - the ndexr stack is not mounted (add --stack)\n' "$r" "$n"
+  fi
+  echo
 fi
 printf '    %sStart it%s       cove   %s(%s)%s\n' "$b" "$n" "$d" "$start" "$n"
 [ -n "$stack_said" ] && printf '    %sThe stack%s      %s\n' "$b" "$n" "$stack_said"

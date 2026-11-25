@@ -1347,8 +1347,27 @@ impl AgentPane {
                 // An empty thread is a question waiting: the cursor is in the
                 // answer. Not on a phone, where it would throw up the keyboard
                 // over the question.
+                // Nor on a headset, where a focus taken without a click
+                // brings up no keyboard and the box only looks ready.
                 let empty = { let s = self.st.lock().unwrap(); !s.loading && s.loaded_for == d.host && s.turns.is_empty() };
-                if empty && !narrow && self.scope_label.is_none() && self.focused_for != d.host {
+                // On a headset a real button lies over the box until it has
+                // the cursor: its click is what lets the Quest's keyboard up
+                // (paste.rs, web/index.html "keys:").
+                if crate::device::headset() {
+                    let keys = format!("keys:agent-{}", self.ns());
+                    if crate::paste::take(&keys).is_some() {
+                        box_r.request_focus();
+                    } else {
+                        // Only the part on screen, and never over a window
+                        // drawn above the box: the button would take its click.
+                        let r = box_r.rect.intersect(ui.clip_rect());
+                        let on_top = ctx.layer_id_at(r.center()) == Some(ui.layer_id());
+                        if !box_r.has_focus() && !ctx.any_popup_open() && on_top && r.is_positive() {
+                            crate::paste::place(ctx, &keys, r);
+                        }
+                    }
+                }
+                if empty && !narrow && !crate::device::coarse() && self.scope_label.is_none() && self.focused_for != d.host {
                     self.focused_for = d.host.clone();
                     box_r.request_focus();
                 }

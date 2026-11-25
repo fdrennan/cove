@@ -245,6 +245,8 @@ pub struct App {
     /// A first visit may open the person's own ndexr, once their own site has
     /// had its turn.
     ndexr_due: bool,
+    /// The device's sizes applied (device.rs), on the first frame.
+    device_set: bool,
     /// The machine: None until it answers.
     probe: Slot<api::Probe>,
     settings: Slot<SettingsView>,
@@ -586,6 +588,7 @@ impl App {
             notes: Default::default(),
             toast: None,
             ndexr_due: false,
+            device_set: false,
             source_ready: Default::default(),
             claim_ready: Default::default(),
             storage: Slot::default(),
@@ -850,7 +853,7 @@ impl App {
                     (None, _) => {
                         if ui.button("Sign in to reach your ndexr projects").clicked() {
                             match crate::account::sign_in(self.account.clone(), ctx.clone()) {
-                                Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                                Ok(url) => crate::links::new_tab(ctx, url),
                                 Err(e) => self.toast(e, ctx),
                             }
                             ui.close();
@@ -1268,7 +1271,7 @@ impl App {
                 if self.backend.is_local() {
                     if item(ui, "Open in a browser", "") {
                         match crate::localserve::open() {
-                            Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                            Ok(url) => crate::links::new_tab(ctx, url),
                             Err(e) => self.toast(e, ctx),
                         }
                         ui.close();
@@ -1468,7 +1471,7 @@ impl App {
                 // The install instructions for every environment set the
                 // Builds view shows the status of (repo.ndexr.io, 2026-10-28).
                 if item(ui, "How to use the environments ↗") {
-                    ctx.open_url(egui::OpenUrl::new_tab("https://repo.ndexr.io"));
+                    crate::links::new_tab(ctx, "https://repo.ndexr.io");
                 }
                 if item(ui, "About Cove") {
                     self.about = true;
@@ -1697,7 +1700,7 @@ impl App {
                 .clicked();
             look = ui.small_button("What's using it").clicked();
             if ui.add(theme::primary_button("Upgrade")).on_hover_text("subscribe on your account - no storage cap").clicked() {
-                ctx.open_url(egui::OpenUrl::new_tab(api::SUBSCRIBE_URL));
+                crate::links::new_tab(ctx, api::SUBSCRIBE_URL);
             }
         });
         if look {
@@ -1784,7 +1787,7 @@ impl App {
                 }
                 ask = ui.add(theme::primary_button("Ask the agent to help")).clicked();
                 if ui.button("Upgrade").clicked() {
-                    ctx.open_url(egui::OpenUrl::new_tab(api::SUBSCRIBE_URL));
+                    crate::links::new_tab(ctx, api::SUBSCRIBE_URL);
                 }
                 again = ui.button("Measure again").on_hover_text("after removing something - takes about 10 s").clicked();
                 close = ui.button("Close").clicked();
@@ -1847,7 +1850,7 @@ impl App {
         }
         if let Some(url) = &a.waiting {
             if theme::tool(ui, "Signing in…", "finish in your browser - click to open the page again").clicked() {
-                ctx.open_url(egui::OpenUrl::new_tab(url));
+                crate::links::new_tab(ctx, url);
             }
             return;
         }
@@ -1900,13 +1903,13 @@ impl App {
                     let asleep = why.contains("did not start") || why.contains("answered 5") || why.contains("could not be reached");
                     if asleep {
                         if let Some(c) = &a.cell {
-                            ctx.open_url(egui::OpenUrl::new_tab(c));
+                            crate::links::new_tab(ctx, c);
                         }
                     }
                     self.try_cell(ctx);
                 } else if !signed_in {
                     match crate::account::sign_in(self.account.clone(), ctx.clone()) {
-                        Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                        Ok(url) => crate::links::new_tab(ctx, url),
                         Err(e) => self.toast(e, ctx),
                     }
                 } else {
@@ -1945,7 +1948,7 @@ impl App {
                     }
                     ui.separator();
                     if ui.button("Manage keys at api.ndexr.io").clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(format!("{}/", crate::account::api_base())));
+                        crate::links::new_tab(ctx, format!("{}/", crate::account::api_base()));
                     }
                     if ui.button("Sign out on this computer").clicked() {
                         crate::account::sign_out(&self.account);
@@ -1961,7 +1964,7 @@ impl App {
             None => {
                 if theme::tool(ui, "Sign in", "sign in to ndexr - your cell's environments, from this computer").clicked() {
                     match crate::account::sign_in(self.account.clone(), ctx.clone()) {
-                        Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                        Ok(url) => crate::links::new_tab(ctx, url),
                         Err(e) => self.toast(e, ctx),
                     }
                 }
@@ -2142,7 +2145,7 @@ impl App {
                 // bad on mobile").
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     z = theme::zoom_button(ui, zoomed);
-                    if solo_url(front).is_some() && theme::tool(ui, "↗", &format!("open {} in a new page of its own", front.name())).clicked() {
+                    if solo_url(front).is_some() && theme::out_button(ui, true, &format!("open {} in a new page of its own", front.name())).clicked() {
                         out = Some(front);
                     }
                     self.ide.tab_tools(ui, ctx, front);
@@ -2194,7 +2197,7 @@ impl App {
                 front = t;
             }
             if let Some(url) = out.and_then(solo_url) {
-                ctx.open_url(egui::OpenUrl::new_tab(url));
+                crate::links::new_tab(ctx, url);
             }
             let body = ui.available_rect_before_wrap();
             z |= self.ide.tab_body(ui, ctx, front, zoomed);
@@ -3545,7 +3548,7 @@ impl App {
             }
         }
         if ui.add(egui::Button::new(RichText::new("Cove's source code ↗").size(13.0))).on_hover_text(SOURCE_URL).clicked() {
-            ui.ctx().open_url(egui::OpenUrl::new_tab(SOURCE_URL));
+            crate::links::new_tab(ui.ctx(), SOURCE_URL);
             ui.close();
         }
         if let Some(id) = start {
@@ -4339,7 +4342,7 @@ impl App {
                     fix = Some((*h).clone());
                 }
                 if ui.button("Open ↗").clicked() {
-                    ctx.open_url(egui::OpenUrl::new_tab(format!("https://{h}/")));
+                    crate::links::new_tab(ctx, format!("https://{h}/"));
                 }
             });
         }
@@ -4433,7 +4436,7 @@ impl App {
             None => {}
         }
         match act {
-            Some(crate::atlas::Act::Enter(d)) if d.path.is_empty() => ctx.open_url(egui::OpenUrl::new_tab(format!("https://{}/", d.host))),
+            Some(crate::atlas::Act::Enter(d)) if d.path.is_empty() => crate::links::new_tab(ctx, format!("https://{}/", d.host)),
             Some(crate::atlas::Act::Enter(d)) => {
                 self.mode = Mode::Ide;
                 self.saved.zoom_tab = None;
@@ -4462,6 +4465,23 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = &root.ctx().clone();
+        // A headset or a touch screen, once (device.rs): larger, read at arm's
+        // length and pointed at with a ray (operator, 2026-11-24: "meta quest
+        // is also a very real device used often for cove").
+        if !self.device_set {
+            self.device_set = true;
+            if crate::device::headset() && (ctx.zoom_factor() - 1.0).abs() < 0.01 {
+                ctx.set_zoom_factor(1.3);
+            }
+            if crate::device::coarse() {
+                ctx.all_styles_mut(|s| {
+                    s.spacing.interact_size.y = s.spacing.interact_size.y.max(36.0);
+                    s.spacing.button_padding = egui::vec2(s.spacing.button_padding.x.max(10.0), s.spacing.button_padding.y.max(7.0));
+                    s.spacing.scroll.bar_width = s.spacing.scroll.bar_width.max(14.0);
+                    s.spacing.icon_width = s.spacing.icon_width.max(20.0);
+                });
+            }
+        }
         // Where this Cove names and places new projects (ide.rs on_platform).
         if let Some(v) = self.settings.lock().unwrap().as_ref() {
             self.ide.platform = Some(v.platform);
@@ -4607,7 +4627,7 @@ impl eframe::App for App {
                 if ui.add(egui::Button::new(RichText::new("Open in its own tab ↗").size(12.5))).on_hover_text("this Cove is showing inside another Cove's App pane - its menus are there").clicked() {
                     #[cfg(target_arch = "wasm32")]
                     if let Some(href) = web_sys::window().and_then(|w| w.location().href().ok()) {
-                        ctx.open_url(egui::OpenUrl::new_tab(href));
+                        crate::links::new_tab(ctx, href);
                     }
                 }
             });
@@ -4926,7 +4946,7 @@ fn connect_row(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str, w: f3
         ui.add_space(18.0);
         let title = ui.add(egui::Label::new(RichText::new(connect_name(d)).size(18.0).color(theme::text_strong())).truncate().sense(egui::Sense::click()));
         if title.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("https://{}/", d.host)).clicked() {
-            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://{}/", d.host)));
+            crate::links::new_tab(ui.ctx(), format!("https://{}/", d.host));
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -4971,7 +4991,7 @@ fn connect_row(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str, w: f3
             edit = Some(d.clone());
         }
         if ui.add(egui::Button::new(RichText::new("Open ↗").size(14.0)).min_size(egui::vec2(0.0, 34.0))).on_hover_text(format!("https://{}/ in a new tab", d.host)).clicked() {
-            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://{}/", d.host)));
+            crate::links::new_tab(ui.ctx(), format!("https://{}/", d.host));
         }
     });
     edit
@@ -5026,7 +5046,7 @@ fn connect_row_narrow(ui: &mut egui::Ui, d: &crate::api::DomainInfo, level: &str
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if ui.add(egui::Button::new(RichText::new("↗").size(18.0)).min_size(button)).on_hover_text(format!("open https://{}/ in a new tab", d.host)).clicked() {
-            ui.ctx().open_url(egui::OpenUrl::new_tab(format!("https://{}/", d.host)));
+            crate::links::new_tab(ui.ctx(), format!("https://{}/", d.host));
         }
         if mine && ui.add(egui::Button::new(RichText::new("✎").size(18.0)).min_size(button)).on_hover_text("edit in the IDE").clicked() {
             edit = Some(d.clone());

@@ -2436,6 +2436,24 @@ fn handle(ctx: &Ctx, mut req: Request) {
     let path = url.split('?').next().unwrap_or("/").to_owned();
     let method = req.method().clone();
     let pam = matches!(ctx.conf.auth, Auth::Pam);
+    // A certificate for a name, asked by the server's front (Caddy's on-demand
+    // TLS, `cove setup-front`) before it issues one: yes only for this
+    // server's own name, COVE_NAME in /etc/cove/multiuser.env - an
+    // organisation's Cove at its own address (2026-11-24).
+    if path == "/__tls/ask" {
+        let asked = url
+            .split_once('?')
+            .map(|(_, q)| q)
+            .unwrap_or("")
+            .split('&')
+            .find_map(|kv| kv.strip_prefix("domain="))
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let ours = std::env::var("COVE_NAME").is_ok_and(|n| !asked.is_empty() && n.trim().eq_ignore_ascii_case(&asked));
+        let _ = req.respond(Response::from_string(if ours { "yes" } else { "not a name this Cove serves" }).with_status_code(if ours { 200 } else { 404 }));
+        return;
+    }
     if path == "/__rstudio_gate" {
         let resp = rstudio_gate(ctx, &req);
         let _ = req.respond(resp);

@@ -337,7 +337,7 @@ impl Manage {
                 act = Some(Act::OpenIde(d.clone()));
             }
             if ui.add(big("Open ↗")).on_hover_text(format!("https://{host}/")).clicked() {
-                ctx.open_url(egui::OpenUrl::new_tab(format!("https://{host}/")));
+                crate::links::new_tab(ctx, format!("https://{host}/"));
             }
             let port = matches!(&st, Some(Ok(s)) if s.kind == "port");
             let up = matches!(&st, Some(Ok(s)) if s.running);

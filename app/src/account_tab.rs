@@ -187,7 +187,7 @@ impl AccountPane {
                             let url = format!("https://{}", d.domain);
                             let r = ui.add(egui::Label::new(RichText::new(&d.domain).monospace().color(theme::primary())).truncate().sense(egui::Sense::click()));
                             if r.on_hover_text(format!("{url} - {}", if d.published { "published" } else { "not published" })).clicked() {
-                                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                                crate::links::new_tab(ui.ctx(), url);
                             }
                         });
                     });

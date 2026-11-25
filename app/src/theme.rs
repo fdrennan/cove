@@ -628,6 +628,15 @@ pub fn tool(ui: &mut egui::Ui, text: &str, tip: &str) -> Response {
     ui.add(egui::Button::new(egui::RichText::new(text).size(12.0)).frame(false)).on_hover_text(tip)
 }
 
+/// The ↗ that opens something in a new tab: larger than a toolbar glyph, with
+/// a target sized for a finger or a headset's ray (operator, 2026-11-24: "it
+/// also needs to be easier to push").
+pub fn out_button(ui: &mut egui::Ui, on: bool, tip: &str) -> Response {
+    let size = if crate::device::coarse() { egui::vec2(36.0, 30.0) } else { egui::vec2(26.0, 22.0) };
+    let b = egui::Button::new(egui::RichText::new("↗").size(16.0).color(primary())).frame(false).min_size(size);
+    ui.add_enabled(on, b).on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// Same, greyed out unless `on`.
 pub fn tool_if(ui: &mut egui::Ui, on: bool, text: &str, tip: &str) -> Response {
     ui.add_enabled(on, egui::Button::new(egui::RichText::new(text).size(12.0)).frame(false)).on_hover_text(tip)

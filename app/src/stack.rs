@@ -579,6 +579,250 @@ pub fn setup_cli(args: &[String]) -> i32 {
     }
 }
 
+/// The Caddyfile every Cove server of a person's own uses (packaging/linux/Caddyfile).
+const CADDYFILE: &str = include_str!("../packaging/linux/Caddyfile");
+
+/// The unit that runs the stack's Caddy. `ml Caddy` at every start, so a stack
+/// update brings a new Caddy without touching this file. DynamicUser with the
+/// one capability Caddy needs for :80/:443; its certificates in /var/lib/caddy.
+const CADDY_UNIT: &str = "[Unit]
+Description=Caddy from the ndexr stack: HTTPS in front of Cove (cove setup-front)
+After=network-online.target remote-fs.target
+Wants=network-online.target
+RequiresMountsFor=/opt/ndexr/stack
+
+[Service]
+DynamicUser=yes
+StateDirectory=caddy
+Environment=HOME=/var/lib/caddy XDG_DATA_HOME=/var/lib/caddy XDG_CONFIG_HOME=/var/lib/caddy
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ExecStart=/bin/bash -c 'set +u; . /opt/ndexr/stack/use.sh && ml Caddy && exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile'
+ExecReload=/bin/bash -c 'set +u; . /opt/ndexr/stack/use.sh && ml Caddy && exec caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+";
+
+/// `cove setup-front [--yes]`: HTTPS in front of this server's Cove, from the
+/// stack's Caddy (operator, 2026-11-24: "build it into the stack so when cvmfs
+/// is used its there, that's how we need to do everything, caddy too"). Writes
+/// the Caddyfile Cove ships to /etc/caddy (a different one is kept as
+/// Caddyfile.bak), a `cove-caddy` unit that runs `ml Caddy`, and starts it. A
+/// hand-installed caddy.service is stopped and disabled - two Caddys cannot
+/// both have :443. Needs the stack mounted (setup-stack first) and root once.
+pub fn setup_front_cli(args: &[String]) -> i32 {
+    let v = view();
+    if !v.ok {
+        eprintln!("The ndexr stack is not mounted here: run `cove setup-stack --yes` first.");
+        return 1;
+    }
+    let Some(caddy) = capture_within("set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml Caddy >/dev/null 2>&1 && command -v caddy", Duration::from_secs(30)) else {
+        eprintln!("The stack mounted here has no Caddy module yet (`ml Caddy` found nothing). It comes with the next stack publish.");
+        return 1;
+    };
+    println!("HTTPS for this Cove: Caddy from the ndexr stack ({caddy}), on ports 80 and 443,");
+    println!("a certificate for each name the first time it is opened, and only for names Cove says it");
+    println!("serves (/__tls/ask). It writes /etc/caddy/Caddyfile and the cove-caddy service; root once.");
+    let how = root_by();
+    if !matches!(how.as_str(), "sudo" | "root" | "pkexec") {
+        eprintln!("This needs root once: run `sudo cove setup-front --yes`.");
+        return 1;
+    }
+    if !args.iter().any(|a| a == "--yes" || a == "-y") {
+        use std::io::{BufRead, IsTerminal, Write};
+        if !std::io::stdin().is_terminal() {
+            eprintln!("Not asked: no terminal. Run `cove setup-front --yes` to agree and start it.");
+            return 2;
+        }
+        print!("Set it up now? [y/N] ");
+        let _ = std::io::stdout().flush();
+        let mut a = String::new();
+        let _ = std::io::stdin().lock().read_line(&mut a);
+        if !matches!(a.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("Not set up.");
+            return 0;
+        }
+    }
+    // The organisation's server (cove-multiuser, :8787) when it runs here,
+    // else one person's (cove serve, :8788): the Caddyfile names 8788.
+    let org = Command::new("systemctl").args(["is-enabled", "cove-multiuser"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+    let caddyfile = if org { CADDYFILE.replace("127.0.0.1:8788", "127.0.0.1:8787") } else { CADDYFILE.to_owned() };
+    let script = format!(
+        "set -e\n\
+         mkdir -p /etc/caddy\n\
+         if [ -f /etc/caddy/Caddyfile ] && ! printf '%s' {file} | cmp -s - /etc/caddy/Caddyfile; then cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak; echo 'kept the old Caddyfile as /etc/caddy/Caddyfile.bak'; fi\n\
+         printf '%s' {file} > /etc/caddy/Caddyfile\n\
+         printf '%s' {unit} > /etc/systemd/system/cove-caddy.service\n\
+         if systemctl is-enabled caddy >/dev/null 2>&1 || systemctl is-active caddy >/dev/null 2>&1; then systemctl disable --now caddy; echo 'stopped the hand-installed caddy.service: cove-caddy has :443 now'; fi\n\
+         systemctl daemon-reload\n\
+         systemctl enable cove-caddy >/dev/null 2>&1\n\
+         systemctl restart cove-caddy\n\
+         sleep 3\n\
+         systemctl is-active cove-caddy >/dev/null || {{ journalctl -u cove-caddy -n 20 --no-pager; exit 1; }}\n\
+         echo 'cove-caddy is running'",
+        file = shell_quote(&caddyfile),
+        unit = shell_quote(CADDY_UNIT),
+    );
+    let st = Command::new("sh").args(["-c", &as_root(&how, &script)]).status();
+    match st {
+        Ok(s) if s.success() => {
+            println!("HTTPS is in front of Cove. Point your DNS (the name and *.name) at this server, and set");
+            println!("COVE_NAME=<your domain> in Cove's environment so the first certificate is allowed.");
+            0
+        }
+        _ => {
+            eprintln!("Setting up the front failed - the reason is above.");
+            1
+        }
+    }
+}
+
+/// The organisation's server, run from the stack: `cove multiuser` as root,
+/// a `cove serve` per signed-in person, as them.
+const MULTIUSER_UNIT: &str = "[Unit]
+Description=Cove for this organisation's people, from the ndexr stack (cove setup-server)
+After=network-online.target remote-fs.target
+Wants=network-online.target
+RequiresMountsFor=/opt/ndexr/stack
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/cove/multiuser.env
+ExecStart=/bin/bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove && exec cove multiuser'
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target
+";
+
+/// One person's server, run from the stack as them.
+const SINGLE_UNIT: &str = "[Unit]
+Description=Cove for %i, from the ndexr stack (cove setup-server --user)
+After=network-online.target remote-fs.target
+Wants=network-online.target
+RequiresMountsFor=/opt/ndexr/stack
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=~
+EnvironmentFile=-/etc/cove/%i.env
+ExecStart=/bin/bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove && exec cove serve'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+";
+
+const MULTIUSER_CONF: &str = include_str!("../packaging/linux/multiuser.conf");
+const PAM_COVE: &str = include_str!("../packaging/linux/pam.d-cove");
+
+/// `cove setup-server [--user NAME] [--name example.org] [--yes]`: Cove on this
+/// server, run from the ndexr stack, nothing installed (operator, 2026-11-24:
+/// "always many people will be using cove on a server, it is the future of hpc
+/// management for scientific software").
+///   default        the organisation's: cove-multiuser - people sign in with
+///                  their own accounts (PAM, /etc/pam.d/cove), each gets their
+///                  own sessions as themselves; /admin for admin-groups.
+///                  /etc/cove/multiuser.conf is written once, then the
+///                  organisation's own.
+///   --user NAME    one person's: cove-stack@NAME (cove serve, a token).
+///   --name N       the server's address (COVE_NAME), so its front can ask
+///                  for a certificate before anyone has reached it.
+/// The unit runs `ml cove` at every start, so a stack update is a Cove update.
+pub fn setup_server_cli(args: &[String]) -> i32 {
+    let v = view();
+    if !v.ok {
+        eprintln!("The ndexr stack is not mounted here: run `cove setup-stack --yes` first.");
+        return 1;
+    }
+    let arg = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let user = arg("--user");
+    let name = arg("--name").unwrap_or_default();
+    if user.as_deref().is_some_and(|u| u.is_empty() || !u.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))) {
+        eprintln!("--user needs an account name");
+        return 2;
+    }
+    if !name.is_empty() && !name.chars().all(|c| c.is_ascii_alphanumeric() || ".-".contains(c)) {
+        eprintln!("--name needs a host name, such as cove.example.org");
+        return 2;
+    }
+    let how = root_by();
+    if !matches!(how.as_str(), "sudo" | "root" | "pkexec") {
+        eprintln!("This needs root once: run it with sudo.");
+        return 1;
+    }
+    match &user {
+        Some(u) => println!("Cove for {u} on this server, from the ndexr stack: cove-stack@{u} runs `ml cove` and `cove serve` as {u}."),
+        None => println!("Cove for this organisation, from the ndexr stack: cove-multiuser - people sign in with their own accounts (PAM)\nand each gets their own sessions, run as them. Who may sign in: /etc/cove/multiuser.conf."),
+    }
+    if !args.iter().any(|a| a == "--yes" || a == "-y") {
+        use std::io::{BufRead, IsTerminal, Write};
+        if !std::io::stdin().is_terminal() {
+            eprintln!("Not asked: no terminal. Add --yes to agree.");
+            return 2;
+        }
+        print!("Set it up now? [y/N] ");
+        let _ = std::io::stdout().flush();
+        let mut a = String::new();
+        let _ = std::io::stdin().lock().read_line(&mut a);
+        if !matches!(a.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            println!("Not set up.");
+            return 0;
+        }
+    }
+    let name_line = if name.is_empty() { String::new() } else { format!("COVE_NAME={name}\n") };
+    let script = match &user {
+        Some(u) => format!(
+            "set -e\n\
+             mkdir -p /etc/cove\n\
+             printf '%s' {unit} > /etc/systemd/system/cove-stack@.service\n\
+             {env}\
+             systemctl daemon-reload\n\
+             systemctl enable cove-stack@{u} >/dev/null 2>&1\n\
+             systemctl restart cove-stack@{u}\n\
+             sleep 2; systemctl is-active cove-stack@{u} >/dev/null || {{ journalctl -u cove-stack@{u} -n 20 --no-pager; exit 1; }}\n\
+             echo 'cove-stack@{u} is running'",
+            unit = shell_quote(SINGLE_UNIT),
+            env = if name.is_empty() { String::new() } else { format!("grep -q '^COVE_NAME=' /etc/cove/{u}.env 2>/dev/null || printf '%s' {} >> /etc/cove/{u}.env\n", shell_quote(&name_line)) },
+        ),
+        None => format!(
+            "set -e\n\
+             mkdir -p /etc/cove\n\
+             [ -f /etc/cove/multiuser.conf ] || printf '%s' {conf} > /etc/cove/multiuser.conf\n\
+             [ -f /etc/pam.d/cove ] || printf '%s' {pam} > /etc/pam.d/cove\n\
+             {env}\
+             printf '%s' {unit} > /etc/systemd/system/cove-multiuser.service\n\
+             systemctl daemon-reload\n\
+             systemctl enable cove-multiuser >/dev/null 2>&1\n\
+             systemctl restart cove-multiuser\n\
+             sleep 2; systemctl is-active cove-multiuser >/dev/null || {{ journalctl -u cove-multiuser -n 20 --no-pager; exit 1; }}\n\
+             echo 'cove-multiuser is running on 127.0.0.1:8787'",
+            conf = shell_quote(MULTIUSER_CONF),
+            pam = shell_quote(PAM_COVE),
+            unit = shell_quote(MULTIUSER_UNIT),
+            env = if name.is_empty() { String::new() } else { format!("grep -q '^COVE_NAME=' /etc/cove/multiuser.env 2>/dev/null || printf '%s' {} >> /etc/cove/multiuser.env\n", shell_quote(&name_line)) },
+        ),
+    };
+    let ok = Command::new("sh").args(["-c", &as_root(&how, &script)]).status().is_ok_and(|s| s.success());
+    if !ok {
+        eprintln!("Setting up the server failed - the reason is above.");
+        return 1;
+    }
+    match &user {
+        Some(u) => println!("Sign in with the token in ~{u}/.config/ndexr/cove-token (written at its first start); the desktop app connects with it (Connect to a server)."),
+        None => println!("People sign in at http://127.0.0.1:8787/login with their accounts on this server; /admin for admin-groups."),
+    }
+    println!("HTTPS in front, from the stack's Caddy: `cove setup-front --yes`.");
+    0
+}
+
 /// Set the stack up on this machine, in the background.
 pub fn setup(c: &CvmfsSettings) -> Result<JobView, String> {
     if crate::host::saved_settings().airgap {

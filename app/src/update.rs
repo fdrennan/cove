@@ -396,6 +396,20 @@ fn stage_into(stage: &Path, install: &Install, rel: &Release) -> Result<(), Stri
                     replace_file(&new_cli, cli)?;
                 }
             }
+            // The App panel's builds (desk.rs), into lib/cove/bin beside this
+            // install's bin/: each one the new package carries. They are
+            // optional - bin/cove starts without them - so only bin/cove is
+            // held to the ldd check above.
+            #[cfg(target_os = "linux")]
+            if let Some(dir) = exe.canonicalize().ok().as_deref().and_then(Path::parent).and_then(Path::parent).map(|p| p.join("lib/cove/bin")) {
+                for name in ["cove-desk", "cove-desk-stack"] {
+                    let new = root.join("lib/cove/bin").join(name);
+                    if new.is_file() {
+                        std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+                        replace_file(&new, &dir.join(name))?;
+                    }
+                }
+            }
             replace_file(&root.join("bin").join(EXE), exe)
         }
     }

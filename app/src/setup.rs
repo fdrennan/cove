@@ -416,7 +416,7 @@ impl Setup {
         if WANT_SIGN_IN.swap(false, Ordering::Relaxed) {
             #[cfg(not(target_arch = "wasm32"))]
             match crate::account::sign_in(env.account.clone(), ctx.clone()) {
-                Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Ok(url) => crate::links::new_tab(ctx, url),
                 Err(e) => *self.airgap_note.lock().unwrap() = Some(Err(e)),
             }
         }
@@ -816,7 +816,7 @@ impl Setup {
             crate::account::set_stack_mode(m);
             if m == StackMode::Remote && !signed_in {
                 match crate::account::sign_in(env.account.clone(), ctx.clone()) {
-                    Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                    Ok(url) => crate::links::new_tab(ctx, url),
                     Err(e) => *self.airgap_note.lock().unwrap() = Some(Err(e)),
                 }
             }
@@ -933,7 +933,7 @@ impl Setup {
             (None, Some(url)) => {
                 status_card(ui, theme::primary(), "…", "Finish signing in in your browser", "Approve Cove on the page that opened. This window follows as soon as you do.");
                 if ui.link("Open the sign-in page again").clicked() {
-                    ctx.open_url(egui::OpenUrl::new_tab(url));
+                    crate::links::new_tab(ctx, url);
                 }
                 ctx.request_repaint_after(std::time::Duration::from_millis(500));
             }
@@ -942,7 +942,7 @@ impl Setup {
                 ui.add_space(4.0);
                 if ui.add(theme::primary_button("Sign in to ndexr").min_size(egui::vec2(180.0, 34.0))).clicked() {
                     match crate::account::sign_in(env.account.clone(), ctx.clone()) {
-                        Ok(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+                        Ok(url) => crate::links::new_tab(ctx, url),
                         Err(e) => *self.note.lock().unwrap() = Some(Err(e)),
                     }
                 }
@@ -981,7 +981,7 @@ impl Setup {
                 } else {
                     status_card(ui, theme::warn(), "!", "Couldn't check your Claude here", e);
                     if ui.link("Connect it at console.ndexr.io instead").clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab("https://console.ndexr.io/#claude"));
+                        crate::links::new_tab(ctx, "https://console.ndexr.io/#claude");
                     }
                 }
             }
@@ -1058,7 +1058,7 @@ impl Setup {
                 }
             });
             if ui.link("Get an API key at console.anthropic.com").clicked() {
-                ctx.open_url(egui::OpenUrl::new_tab("https://console.anthropic.com/settings/keys"));
+                crate::links::new_tab(ctx, "https://console.anthropic.com/settings/keys");
             }
         });
         if busy {
@@ -1159,7 +1159,7 @@ impl Setup {
                 step(ui, "1", got || self.helper.link.is_some(), "In the Terminal, claude shows a sign-in link. Open it in your browser.");
                 if let (Some(link), false) = (&self.helper.link, got) {
                     if ui.add(theme::primary_button("Open the sign-in page")).on_hover_text(link.as_str()).clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(link));
+                        crate::links::new_tab(ctx, link);
                     }
                 }
                 step(ui, "2", got, "Approve in the browser. If it gives you a code, paste it back into the Terminal and press Enter.");
@@ -1240,13 +1240,13 @@ pub fn chip(ui: &mut egui::Ui, status: Option<Result<ClaudeView, String>>) -> bo
             let c = if usd < 1.0 { theme::warn() } else { theme::ok() };
             let r = credit_chip(ui, c, &format!("Cove credit · ${usd:.2}"), &format!("{hours} of building on Sonnet - click to add credit"));
             if r {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(crate::api::CREDIT_URL));
+                crate::links::new_tab(ui.ctx(), crate::api::CREDIT_URL);
             }
             return false;
         }
         Some(Ok(v)) if v.kind == "none" && !v.seat_allowed.unwrap_or(false) => {
             if credit_chip(ui, theme::alt(), "Add Cove credit", "pay ahead and build at once on Sonnet - or connect your own Claude in setup") {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(crate::api::CREDIT_URL));
+                crate::links::new_tab(ui.ctx(), crate::api::CREDIT_URL);
             }
             return false;
         }

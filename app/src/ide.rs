@@ -92,7 +92,8 @@ fn project_row(ui: &mut egui::Ui, d: &DomainInfo, on: bool, fav: bool, f: RowFac
     // never opens the project.
     let star_rect = egui::Rect::from_center_size(egui::pos2(rect.right() - 18.0, rect.center().y), egui::vec2(30.0, 30.0));
     let sr = ui.interact(star_rect, egui::Id::new(("project-star", d.host.as_str())), egui::Sense::click());
-    if fav || sr.hovered() || resp.hovered() {
+    // A headset or touch screen has no hover to find it by: always drawn.
+    if fav || sr.hovered() || resp.hovered() || crate::device::coarse() {
         star(&p, star_rect.center(), 8.0, fav, if fav { theme::amber() } else if sr.hovered() { theme::text_strong() } else { theme::hush() });
     }
     let starred = sr.on_hover_text(if fav { "remove from favorites" } else { "add to favorites" }).clicked();
@@ -248,7 +249,9 @@ fn project_tab(ui: &mut egui::Ui, host: &str, info: Option<&DomainInfo>, on: boo
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
     }
     x += 22.0;
-    let show_x = !pinned && (on || hovered);
+    // A ray or a finger has no hover to show it with (device.rs): there it
+    // is always shown.
+    let show_x = !pinned && (on || hovered || crate::device::coarse());
     let x_rect = egui::Rect::from_center_size(egui::pos2(rect.right() - 13.0, rect.center().y), egui::vec2(18.0, 18.0));
     if !pinned {
         // The ×'s room is the name's whether or not × shows (tab_width).
@@ -3659,8 +3662,8 @@ impl Ide {
                         self.download(path.clone(), f, ctx);
                     }
                 });
-                if theme::tool(ui, "↗", "open it in a tab of its own").clicked() {
-                    ctx.open_url(egui::OpenUrl::new_tab(&url));
+                if theme::out_button(ui, true, "open it in a tab of its own").clicked() {
+                    crate::links::new_tab(ctx, &url);
                 }
             });
         });
@@ -3685,7 +3688,7 @@ impl Ide {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new(format!("{kind} - shown in place in the browser build (cove.ndexr.io).")).color(theme::muted()));
                     if ui.add(theme::primary_button("Open it")).clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                        crate::links::new_tab(ctx, url);
                     }
                 });
             });
@@ -6598,7 +6601,7 @@ impl Ide {
             TabAct::New => self.new_tab(),
             TabAct::Reopen => self.reopen_tab(ctx),
             TabAct::Reload => self.site_seq += 1,
-            TabAct::Outside(h) => ctx.open_url(egui::OpenUrl::new_tab(format!("https://{h}/"))),
+            TabAct::Outside(h) => crate::links::new_tab(ctx, format!("https://{h}/")),
             TabAct::Copy(h) => ctx.copy_text(format!("https://{h}/")),
             TabAct::Pin(h) => self.tabs.toggle_pin(&h),
             TabAct::Favorite(h) => self.tabs.toggle_favorite(&h),
@@ -7420,7 +7423,7 @@ impl Ide {
                                 close = true;
                             }
                             if ui.button("Open site ↗").clicked() {
-                                ctx.open_url(egui::OpenUrl::new_tab(addr.clone()));
+                                crate::links::new_tab(ctx, addr.clone());
                             }
                         } else if taken {
                             if ui.add(theme::primary_button("Choose another name")).on_hover_text("close this; type a new name in the domain menu (⌂ at the top) and create it").clicked() {
@@ -8369,17 +8372,21 @@ impl Ide {
                 // The live site in its own tab, outside Cove (operator, 2026-10-18).
                 if let (Some(h), Some(site)) = (&host, &site) {
                     if theme::tool_if(ui, true, "Open ↗", &format!("open {site} in a new browser tab")).clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(site.clone()));
+                        crate::links::new_tab(ctx, site.clone());
                     }
-                    // Live refresh, per site: lit, the site reloads when its
-                    // files change; hollow, it waits for ⟳ or a click on its name.
+                    // Live refresh, per site, on by default: on, the site
+                    // reloads when its files change; off, it waits for a click
+                    // on its name. A named switch (operator, 2026-11-25: "turn
+                    // off reload when file change, toggle button, default to
+                    // reload"); it was a bare ●/○ explained only on hover.
                     let live = !self.live_off.contains(h);
                     let (mark, color, tip) = if live {
-                        ("●", theme::ok(), "live refresh on - reloads when its files change; click to stop")
+                        ("●", theme::ok(), "reloads when its files change; click to stop")
                     } else {
-                        ("○", theme::hush(), "live refresh off - reloads only when you ask; click to turn on")
+                        ("○", theme::text(), "reloads only when you click its name; click to reload on change again")
                     };
-                    if ui.add(egui::Button::new(RichText::new(mark).size(12.0).color(color)).frame(false)).on_hover_text(tip).clicked() {
+                    let word = RichText::new(format!("{mark} Reload on change")).size(11.5).color(color);
+                    if ui.add(egui::Button::selectable(live, word)).on_hover_text(tip).clicked() {
                         if live {
                             self.live_off.insert(h.clone());
                         } else {
@@ -8897,7 +8904,7 @@ impl Ide {
                 });
             });
             if unlock {
-                ctx.open_url(egui::OpenUrl::new_tab(&url));
+                crate::links::new_tab(ctx, &url);
             }
             if again {
                 self.site_seq += 1;
@@ -8915,7 +8922,7 @@ impl Ide {
                 ui.label(RichText::new("Its app is the page you are in, so it is not shown inside itself.").size(13.0).color(theme::text()));
                 ui.add_space(8.0);
                 if ui.add(theme::primary_button("Open in a new tab ↗")).clicked() {
-                    ctx.open_url(egui::OpenUrl::new_tab(url.clone()));
+                    crate::links::new_tab(ctx, url.clone());
                 }
             });
             return;
@@ -8938,7 +8945,7 @@ impl Ide {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new(crate::webview::why_not()).color(theme::text()));
                     if ui.add(theme::primary_button("Open the site")).clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(&url));
+                        crate::links::new_tab(ctx, &url);
                     }
                 });
             });
@@ -9023,7 +9030,7 @@ impl Ide {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
                 clear = theme::tool_if(ui, !self.view.cur.is_empty(), "✕", "clear the Viewer").clicked();
-                open = theme::tool_if(ui, !self.view.cur.is_empty(), "↗", "open in a browser tab").clicked();
+                open = theme::out_button(ui, !self.view.cur.is_empty(), "open in a browser tab").clicked();
                 again = theme::tool_if(ui, can_render, "Render", "render the open file again · Ctrl+Shift+K").clicked();
                 if !self.view.servers.is_empty() {
                     ui.menu_button(RichText::new("Servers ▾").size(12.0), |ui| {
@@ -9063,7 +9070,7 @@ impl Ide {
             self.show_view(a);
         }
         if open {
-            ctx.open_url(egui::OpenUrl::new_tab(self.backend.viewer_url(&self.view.cur)));
+            crate::links::new_tab(ctx, self.backend.viewer_url(&self.view.cur));
         }
         if clear {
             self.view.cur.clear();
@@ -9124,7 +9131,7 @@ impl Ide {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new(crate::webview::why_not()).color(theme::text()));
                     if ui.add(theme::primary_button("Open the page")).clicked() {
-                        ctx.open_url(egui::OpenUrl::new_tab(&url));
+                        crate::links::new_tab(ctx, &url);
                     }
                 });
             });

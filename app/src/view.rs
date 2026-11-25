@@ -337,7 +337,7 @@ impl eframe::App for ViewApp {
                         self.software.reveal(i);
                     }
                     // A domain is someone's site: go and look at it.
-                    Some(crate::atlas::Act::Enter(d)) => ctx.open_url(egui::OpenUrl::new_tab(format!("https://{}/", d.host))),
+                    Some(crate::atlas::Act::Enter(d)) => crate::links::new_tab(ctx, format!("https://{}/", d.host)),
                     // Requests are signed: sign in, and ask from the atlas there.
                     Some(crate::atlas::Act::AddSoftware) => ctx.open_url(egui::OpenUrl::same_tab(SIGN_IN)),
                     Some(_) => self.toast = Some(("Opening source and building need an account - Sign in to build, top right.".into(), now + 5.0)),

@@ -16,9 +16,11 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod account;
+mod links;
 mod tabs;
 #[cfg(not(target_arch = "wasm32"))]
 mod boxcomplete;
+mod device;
 mod drafts;
 mod spoken;
 #[cfg(not(target_arch = "wasm32"))]
@@ -26,6 +28,8 @@ mod localagent;
 mod manage;
 #[cfg(unix)]
 mod localserve;
+#[cfg(all(target_os = "linux", not(feature = "webview")))]
+mod desk;
 mod localstack;
 mod account_tab;
 mod settings_tab;
@@ -201,6 +205,15 @@ fn main() -> eframe::Result<()> {
         // (stack.rs setup_cli) - a server's, or the installer's --stack.
         #[cfg(unix)]
         Some("setup-stack") => std::process::exit(stack::setup_cli(&args[2..])),
+        // `cove setup-front [--yes]`: HTTPS in front of this Cove from the
+        // stack's Caddy (stack.rs setup_front_cli) - the installer's --front.
+        #[cfg(unix)]
+        Some("setup-front") => std::process::exit(stack::setup_front_cli(&args[2..])),
+        // `cove setup-server [--user NAME] [--name HOST] [--yes]`: Cove on this
+        // server from the stack - the organisation's (multiuser) or one
+        // person's (stack.rs setup_server_cli); the installer's --server.
+        #[cfg(unix)]
+        Some("setup-server") => std::process::exit(stack::setup_server_cli(&args[2..])),
         Some("--connect") => match args.get(2) {
             Some(url) => {
                 // The server's token (~/.config/ndexr/cove-token there):
@@ -218,6 +231,12 @@ fn main() -> eframe::Result<()> {
         },
         _ => {}
     }
+    // The App panel's embedded browser lives in a sibling build (desk.rs):
+    // the stack's WebKitGTK first, then the system's. This binary links no
+    // WebKit or GTK, so it always starts; when neither loads, it runs on and
+    // the panel opens sites in the browser.
+    #[cfg(all(target_os = "linux", not(feature = "webview")))]
+    desk::hand_over(&args);
     // Where this window runs (account.rs `choose`): signed in, the person's
     // cell - on every machine, unless "this computer" was picked. A cell that
     // cannot be woken falls back here, and the app says why.

@@ -7,6 +7,8 @@
 #
 # Layout:  $PREFIX/bin/cove
 #          $PREFIX/lib/cove/bin/ndexr          (bundled CLI, if shipped)
+#          $PREFIX/lib/cove/bin/cove-desk-stack  (App panel, the stack's WebKitGTK)
+#          $PREFIX/lib/cove/bin/cove-desk      (App panel, the system's WebKitGTK)
 #          $PREFIX/share/applications/io.ndexr.cove.desktop
 #          $PREFIX/share/icons/hicolor/scalable/apps/io.ndexr.cove.svg
 set -euo pipefail
@@ -35,9 +37,11 @@ if [[ "${1:-}" == --uninstall ]]; then
 fi
 
 install -Dm755 "$here/bin/cove" "$bin"
-if [[ -f "$here/lib/cove/bin/ndexr" ]]; then
-  install -Dm755 "$here/lib/cove/bin/ndexr" "$lib/bin/ndexr"
-fi
+for f in ndexr cove-desk cove-desk-stack; do
+  if [[ -f "$here/lib/cove/bin/$f" ]]; then
+    install -Dm755 "$here/lib/cove/bin/$f" "$lib/bin/$f"
+  fi
+done
 # The browser UI `cove serve` hands out (<prefix>/share/cove/web, as the .deb
 # puts it at /usr/share/cove/web): Cove in a browser, here or on a server.
 if [[ -f "$here/share/cove/web/index.html" ]]; then
@@ -52,19 +56,17 @@ sed "s|^Exec=.*|Exec=$bin|" "$here/share/applications/io.ndexr.cove.desktop" |
 install -Dm644 "$here/share/icons/hicolor/scalable/apps/io.ndexr.cove.svg" "$icon"
 refresh
 
-# The App panel's webview links WebKitGTK 4.1, so cove does not start without
-# it - and a stock desktop install often lacks it (Pop!_OS 22.04 laptop,
-# 2026-10-15: "error while loading shared libraries: libwebkit2gtk-4.1.so.0").
-# One command to fix it, not a list of sonames (operator, 2026-11-14: installs
-# "should look and feel cleaner").
-if ldd "$bin" 2>/dev/null | grep -q "not found"; then
-  if command -v apt-get >/dev/null; then fix="sudo apt install libwebkit2gtk-4.1-0"
-  elif command -v dnf >/dev/null; then fix="sudo dnf install webkit2gtk4.1"
-  elif command -v pacman >/dev/null; then fix="sudo pacman -S webkit2gtk-4.1"
-  elif command -v zypper >/dev/null; then fix="sudo zypper install libwebkit2gtk-4_1-0"
-  else fix="install WebKitGTK 4.1 (webkit2gtk-4.1) from your distribution"
-  fi
-  printf '\n  ! Cove needs WebKitGTK 4.1, which this machine does not have yet:\n\n      %s\n\n' "$fix"
+# bin/cove links no WebKit or GTK, so it starts on any desktop. The App
+# panel's embedded browser comes from a sibling build (src/desk.rs): the
+# ndexr stack's WebKitGTK when the stack is mounted, else the system's when it
+# has one. Nothing is installed for it (operator, 2026-11-24: "build it into
+# the stack so when cvmfs is used its there"); without either, the panel
+# opens sites in the browser.
+# (ldd exits 0 even when a library is missing: its "not found" is the test.)
+desk_ok=0
+[[ -f "$lib/bin/cove-desk" ]] && ! ldd "$lib/bin/cove-desk" 2>/dev/null | grep -q "not found" && desk_ok=1
+if [[ -z "${COVE_QUIET:-}" && ! -r /opt/ndexr/stack/use.sh && "$desk_ok" == 0 ]]; then
+  printf '\n  The App panel shows your site inside Cove once the ndexr stack is mounted\n  (cove setup-stack); until then it opens sites in your browser.\n\n'
 fi
 
 # Run by the one-line installer (packaging/install.sh), which says the rest.

@@ -27,6 +27,7 @@ Thumbs.db
 # ── Rust app build output (copied from dmg.ndexr.io) ──
 app/target/
 app/target-cell/
+app/target-stack/
 app/dist-cell/
 app/dist/
 images/dist/

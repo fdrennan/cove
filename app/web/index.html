@@ -491,6 +491,16 @@
       b.style.cssText = "position:absolute;z-index:5;opacity:0;border:0;padding:0;margin:0;background:transparent;display:none;touch-action:manipulation;cursor:pointer";
       b.addEventListener("click", function (e) {
         e.preventDefault();
+        // "keys:" buttons lie over a message box on a headset: the click
+        // focuses eframe's hidden text input inside the gesture, which is
+        // when the Quest Browser lets its keyboard come up (device.rs).
+        if (id.indexOf("keys:") === 0) {
+          var t = document.querySelector("#ndexr ~ input");
+          if (t) t.focus({ preventScroll: true });
+          b.style.display = "none";
+          got.push([id, "KEYS"]);
+          return;
+        }
         if (!navigator.clipboard || !navigator.clipboard.readText) { got.push([id, "ERROR:this browser does not let a page read the clipboard"]); return; }
         navigator.clipboard.readText()
           .then(function (t) { got.push([id, t]); })
