@@ -2503,7 +2503,18 @@ impl Ide {
         if self.first_site {
             if let Some(d) = self.domain.clone() {
                 self.first_site = false;
-                if own_domain(std::slice::from_ref(&d)).is_some() && d.framework == "shiny" {
+                // Asked once per site, ever: the server refuses any page but
+                // an untouched signup one, and asking at every start put that
+                // refusal in the browser's console as an error each time.
+                let key = egui::Id::new("cove-first-site-asked");
+                let asked: Vec<String> = ctx.data_mut(|m| m.get_persisted::<Vec<String>>(key)).unwrap_or_default();
+                let fresh = !asked.contains(&d.host);
+                if fresh {
+                    let mut asked = asked;
+                    asked.push(d.host.clone());
+                    ctx.data_mut(|m| m.insert_persisted(key, asked));
+                }
+                if fresh && own_domain(std::slice::from_ref(&d)).is_some() && d.framework == "shiny" {
                     // The server decides: anything but a new, untouched signup
                     // page is refused, and the site stays as it is.
                     self.first_site_for = Some(d.host.clone());
@@ -5450,6 +5461,25 @@ impl Ide {
         self.backend.query(Query::ReadFile { path }, ctx, move |r: Result<FileText, String>| match r {
             Ok(f) => opened.lock().unwrap().push(f),
             Err(e) => Ide::fail(&errors, e),
+        });
+    }
+
+    /// The first of `names` that `dir` has, opened; none, nothing - a
+    /// project without a CONTEXT.md is not an error.
+    fn open_first(&self, dir: &str, names: &[&str], ctx: &egui::Context) {
+        if dir.is_empty() {
+            return;
+        }
+        let (opened, backend, c) = (self.opened.clone(), self.backend.clone(), ctx.clone());
+        let (dir, names): (String, Vec<String>) = (dir.to_owned(), names.iter().map(|n| (*n).to_owned()).collect());
+        self.backend.query(Query::ListDir { path: dir.clone() }, ctx, move |r: Result<Listing, String>| {
+            let Ok(l) = r else { return };
+            let Some(name) = names.iter().find(|n| l.entries.iter().any(|e| !e.dir && e.name == **n)) else { return };
+            backend.query(Query::ReadFile { path: format!("{dir}/{name}") }, &c, move |r: Result<FileText, String>| {
+                if let Ok(f) = r {
+                    opened.lock().unwrap().push(f);
+                }
+            });
         });
     }
 
@@ -8731,8 +8761,8 @@ impl Ide {
         } else {
             let again: Vec<String> = self.open_by_domain.get(&d.host).cloned().unwrap_or_default();
             if again.is_empty() {
-                let first = if d.module { "module.r" } else { "CONTEXT.md" };
-                self.open(format!("{}/{first}", d.path), ctx);
+                let first: &[&str] = if d.module { &["module.r", "CONTEXT.md"] } else { &["CONTEXT.md", "README.md", "APP-CONTRACT.md"] };
+                self.open_first(&d.path, first, ctx);
             } else {
                 for p in again {
                     self.open(p, ctx);
@@ -9657,7 +9687,9 @@ fn own_domain(v: &[DomainInfo]) -> Option<DomainInfo> {
         .find(|d| {
             let owner = std::path::Path::new(&d.path).parent().and_then(|p| p.file_name()).and_then(|f| f.to_str()).unwrap_or("");
             let user = d.path.strip_prefix("/home/").and_then(|r| r.split('/').next()).unwrap_or("");
-            [owner, user].iter().any(|u| !u.is_empty() && *u != "ubuntu" && d.host == format!("{u}.ndexr.io"))
+            // src/domains/<host> is the platform's flat layout, not an owner
+            // called "domains": domains.ndexr.io read as someone's own site.
+            [owner, user].iter().any(|u| !u.is_empty() && !matches!(*u, "ubuntu" | "domains") && d.host == format!("{u}.ndexr.io"))
         })
         .cloned()
 }

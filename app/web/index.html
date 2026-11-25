@@ -7,7 +7,9 @@
      go full screen if web or local"): iPhone Safari cannot put a page full
      screen, so Cove is a web app - Share > Add to Home Screen opens it with no
      browser bars. -->
-<link rel="manifest" href="manifest.webmanifest">
+<!-- With the sign-in cookie: fetched without it, the gate sent the manifest to
+     console.ndexr.io's login and the browser blocked that as a CORS error. -->
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">

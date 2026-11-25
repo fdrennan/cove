@@ -1711,6 +1711,12 @@ fn is_doc(name: &str) -> bool {
 }
 
 fn load_know(know: &Arc<Mutex<Know>>, backend: &Backend, ctx: &egui::Context, d: &DomainInfo) {
+    // A project not on this machine yet has no folder: listing "" read the
+    // server's own working folder and asked for /CLAUDE.md, /README.md …
+    if d.path.is_empty() {
+        *know.lock().unwrap() = Know { loaded_for: d.host.clone(), ..Default::default() };
+        return;
+    }
     *know.lock().unwrap() = Know { loaded_for: d.host.clone(), loading: true, ..Default::default() };
     let (k, host, root, b, c) = (know.clone(), d.host.clone(), d.path.clone(), backend.clone(), ctx.clone());
     backend.query(Query::ListDir { path: root.clone() }, ctx, move |r: Result<Listing, String>| {

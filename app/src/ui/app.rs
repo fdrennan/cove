@@ -3881,6 +3881,11 @@ impl App {
     /// admins in cove"). Asked every 10 s; anyone else is refused once and
     /// nothing shows.
     fn vitals_chip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // Only an admin's: asked of anyone else, the refusal was an error in
+        // the browser's console at every start. Messages says who is one.
+        if !self.inbox.view().is_some_and(|v| v.admin) {
+            return;
+        }
         let now = ctx.input(|i| i.time);
         let refused = matches!(*self.vitals.lock().unwrap(), Some(Err(_)));
         if !refused && now - self.vitals_at > 10.0 {
