@@ -1974,8 +1974,17 @@ impl App {
 
     // ── the windows ────────────────────────────────────────────────────────
     fn quadrants(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let phone = compact(ctx);
         for (t, soft) in self.ide.take_focus() {
             self.saved.grid.bring(t, soft);
+            // A phone shows one window: a tab asked forward (the Console's
+            // "runs in the Terminal" line, ⋯ › Logs) is gone to, not only
+            // put in front of a window that is not on screen.
+            if phone && !soft {
+                if let Some(at) = self.saved.grid.find(t) {
+                    self.compact_cell = self.saved.grid.windows().iter().position(|w| *w == at).unwrap_or(self.compact_cell);
+                }
+            }
         }
         // A page opened for one tab: that tab, the whole page.
         if let Some(t) = self.solo {

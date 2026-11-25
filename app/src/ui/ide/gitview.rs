@@ -1,12 +1,20 @@
 //! The Git window (operator, 2026-10-30: "just create a basic git viewer in
-//! cove instead for now, think pycharm"): the project's versions down the
-//! left, the changes not saved yet on top; the files the picked one changed,
-//! under its message, in the middle; and the picked file's diff on the right,
-//! each line numbered on both sides and coloured by what happened to it. On
-//! a phone the three come one at a time, each with its way back.
+//! cove instead for now, think pycharm"; 2026-11-25: "a refined, compact Git
+//! diff and patch viewer that feels like a natural extension of the
+//! editor"): the project's versions down the left; the files the picked one
+//! changed as a folder tree; and the picked file's diff - side by side,
+//! unified or inline - with its changes to step through, unchanged code
+//! folded, an overview ruler, and stage, unstage, revert, copy and export
+//! at the file or the hunk. On a phone the three come one at a time.
 //!
-//! Every project is a git repository: the autosave service and Save commit
-//! to it (host.rs versions_at), so this reads the same history Versions did.
+//! This file is the interaction: what is picked, what is asked of git, what
+//! a click does. Parsing and laying out a diff are project/diff; drawing it
+//! is gitview/render, gitview/ruler and gitview/tree; git itself runs in
+//! host/git.rs.
+
+mod render;
+mod ruler;
+mod tree;
 
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +22,12 @@ use eframe::egui::{self, Color32, FontId, RichText, Sense};
 
 use crate::api::{GitFile, Query, Version};
 use crate::backend::Backend;
+use crate::project::diff::model::{self, Folds, Model};
+use crate::project::diff::patch::{self, FilePatch};
+use crate::ui::kit::bar::{self, Weight};
+use crate::ui::kit::icons::ctl;
 use crate::ui::kit::theme;
+use render::{FoldAct, HunkAct, Intent, Mode};
 
 type Slot<T> = Arc<Mutex<Option<Result<T, String>>>>;
 
@@ -25,6 +38,27 @@ pub enum GitAct {
     Refresh,
 }
 
+/// A file's diff, read once: the patch and its model.
+pub struct Loaded {
+    file: FilePatch,
+    model: Model,
+}
+
+/// What a revert waits on: the person saying yes.
+#[derive(Clone, Copy, PartialEq)]
+enum Target {
+    File,
+    Hunk(usize),
+}
+
+/// The Apply a patch dialog.
+#[derive(Default)]
+struct Apply {
+    text: String,
+    said: Slot<String>,
+    opened: Arc<Mutex<Option<String>>>,
+}
+
 #[derive(Default)]
 pub struct GitView {
     host: String,
@@ -32,39 +66,29 @@ pub struct GitView {
     sha: Option<String>,
     files: Slot<Vec<GitFile>>,
     file: Option<GitFile>,
-    diff: Slot<Diff>,
+    diff: Slot<Loaded>,
     /// On a phone, which pane shows: 0 the history, 1 the files, 2 the diff.
     step: u8,
     confirm: Option<String>,
-}
-
-/// A diff as drawn: its lines, and the widest one, for the horizontal scroll.
-#[derive(Default)]
-pub struct Diff {
-    lines: Vec<Line>,
-    widest: usize,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Kind {
-    Hunk,
-    Add,
-    Del,
-    Same,
-    Note,
-}
-
-#[derive(Debug)]
-struct Line {
-    kind: Kind,
-    old: Option<u32>,
-    new: Option<u32>,
-    text: String,
+    tree: tree::Tree,
+    mode: Option<Mode>,
+    folds: Folds,
+    /// The change the navigation is at.
+    current: Option<usize>,
+    /// A scroll the page takes next frame, and where it was last.
+    jump: Option<f32>,
+    view: (f32, f32, f32),
+    /// The last stage, unstage, revert or apply, as git said it.
+    said: Slot<String>,
+    revert: Option<Target>,
+    apply: Option<Apply>,
+    /// After an action: find the file again when the list comes back, in
+    /// whichever part it is now.
+    follow: bool,
 }
 
 const LOG_ROW: f32 = 46.0;
-const FILE_ROW: f32 = 30.0;
-const MONO: f32 = 12.5;
+const MODE_KEY: &str = "git-diff-mode";
 
 impl GitView {
     /// The window's body. `versions` is the project's history, newest
@@ -74,10 +98,15 @@ impl GitView {
         if self.host != host {
             *self = GitView { host: host.to_owned(), ..Default::default() };
         }
+        if self.mode.is_none() {
+            self.mode = Some(ctx.data_mut(|d| d.get_persisted::<Mode>(egui::Id::new(MODE_KEY))).unwrap_or_default());
+        }
         // The unsaved changes are where a person starts, as in PyCharm.
         if self.sha.is_none() {
             self.pick(Some(String::new()), backend, &ctx);
         }
+        self.follow_file(backend, &ctx);
+        self.apply_window(&ctx, backend);
         let mut act = GitAct::None;
         match said {
             Some(Ok(m)) => {
@@ -116,29 +145,35 @@ impl GitView {
                     if back(ui, "← files") {
                         self.step = 1;
                     }
-                    self.diff_pane(ui);
+                    self.diff_pane(ui, backend, &ctx, true);
                 }
             }
             return act;
         }
         let w = ui.available_width();
-        egui::Panel::left("git-log").resizable(true).default_size((w * 0.3).clamp(260.0, 420.0)).show(ui, |ui| self.log_pane(ui, list, backend, &ctx, &mut act));
-        egui::Panel::left("git-files").resizable(true).default_size((w * 0.24).clamp(220.0, 360.0)).show(ui, |ui| self.files_pane(ui, list, backend, &ctx, &mut act));
-        egui::CentralPanel::default().show(ui, |ui| self.diff_pane(ui));
+        egui::Panel::left("git-log").resizable(true).default_size((w * 0.22).clamp(220.0, 340.0)).show(ui, |ui| self.log_pane(ui, list, backend, &ctx, &mut act));
+        egui::Panel::left("git-files").resizable(true).default_size((w * 0.2).clamp(210.0, 320.0)).show(ui, |ui| self.files_pane(ui, list, backend, &ctx, &mut act));
+        egui::CentralPanel::no_frame().show(ui, |ui| self.diff_pane(ui, backend, &ctx, false));
         act
     }
 
-    /// Pick a version ("" the unsaved changes): its files are asked for, and
-    /// the diff waits for a file.
+    /// Pick a version ("" the unsaved changes): its files are asked for -
+    /// for "", in their parts, staged and not - and the diff waits for a file.
     fn pick(&mut self, sha: Option<String>, backend: &Backend, ctx: &egui::Context) {
         self.sha = sha.clone();
         self.file = None;
         self.confirm = None;
+        self.revert = None;
         *self.diff.lock().unwrap() = None;
-        let Some(sha) = sha else { return };
+        self.ask_files(backend, ctx);
+    }
+
+    fn ask_files(&self, backend: &Backend, ctx: &egui::Context) {
+        let Some(sha) = self.sha.clone() else { return };
         let slot = self.files.clone();
         *slot.lock().unwrap() = None;
-        backend.query(Query::GitChanges { host: self.host.clone(), sha }, ctx, move |r: Result<Vec<GitFile>, String>| {
+        let q = if sha.is_empty() { Query::GitStatus { host: self.host.clone() } } else { Query::GitChanges { host: self.host.clone(), sha } };
+        backend.query(q, ctx, move |r: Result<Vec<GitFile>, String>| {
             *slot.lock().unwrap() = Some(r);
         });
     }
@@ -146,11 +181,69 @@ impl GitView {
     fn pick_file(&mut self, f: GitFile, backend: &Backend, ctx: &egui::Context) {
         let slot = self.diff.clone();
         *slot.lock().unwrap() = None;
-        let q = Query::GitDiff { host: self.host.clone(), sha: self.sha.clone().unwrap_or_default(), path: f.path.clone(), old: f.old.clone(), area: String::new(), full: false };
+        let q = Query::GitDiff { host: self.host.clone(), sha: self.sha.clone().unwrap_or_default(), path: f.path.clone(), old: f.old.clone(), area: f.area.clone(), full: true };
+        if self.file.as_ref().is_none_or(|x| x.path != f.path || x.area != f.area) {
+            self.folds = Folds::default();
+            self.current = None;
+            self.jump = Some(0.0);
+        }
+        self.revert = None;
         self.file = Some(f);
         backend.query(q, ctx, move |r: Result<String, String>| {
-            *slot.lock().unwrap() = Some(r.map(|t| parse(&t)));
+            *slot.lock().unwrap() = Some(r.map(|t| {
+                let file = patch::parse(&t).into_iter().next().unwrap_or_default();
+                let model = model::build(&file);
+                Loaded { file, model }
+            }));
         });
+    }
+
+    /// After an action the list comes back new: the file shown stays shown,
+    /// in the part it is in now (all of it staged, it is under Staged).
+    fn follow_file(&mut self, backend: &Backend, ctx: &egui::Context) {
+        if !self.follow {
+            return;
+        }
+        let Some(Ok(files)) = self.files.lock().unwrap().clone() else { return };
+        self.follow = false;
+        let Some(cur) = self.file.clone() else { return };
+        let same = files.iter().find(|f| f.path == cur.path && f.area == cur.area).or_else(|| files.iter().find(|f| f.path == cur.path)).cloned();
+        match same {
+            Some(f) => self.pick_file(f, backend, ctx),
+            None => {
+                self.file = None;
+                *self.diff.lock().unwrap() = None;
+            }
+        }
+    }
+
+    /// A patch put to work, then the list and the diff read again.
+    fn run(&mut self, action: &str, patch: String, backend: &Backend, ctx: &egui::Context) {
+        let said = self.said.clone();
+        *said.lock().unwrap() = None;
+        self.revert = None;
+        self.follow = true;
+        let (files, host, sha) = (self.files.clone(), self.host.clone(), self.sha.clone().unwrap_or_default());
+        let (b2, c2) = (backend.clone(), ctx.clone());
+        backend.query(Query::GitPatch { host: self.host.clone(), action: action.to_owned(), patch }, ctx, move |r: Result<String, String>| {
+            *said.lock().unwrap() = Some(r);
+            *files.lock().unwrap() = None;
+            let q = if sha.is_empty() { Query::GitStatus { host } } else { Query::GitChanges { host, sha } };
+            b2.query(q, &c2, move |r: Result<Vec<GitFile>, String>| {
+                *files.lock().unwrap() = Some(r);
+            });
+        });
+    }
+
+    /// What can be done to this diff's hunks, by where it came from.
+    fn acts(&self) -> Vec<HunkAct> {
+        let area = self.file.as_ref().map_or("", |f| f.area.as_str());
+        match (self.sha.as_deref().unwrap_or(""), area) {
+            ("", "staged") => vec![HunkAct::Unstage, HunkAct::Copy],
+            ("", _) => vec![HunkAct::Stage, HunkAct::Revert, HunkAct::Copy],
+            // A version's change, taken back out of the files as they are.
+            _ => vec![HunkAct::Revert, HunkAct::Copy],
+        }
     }
 
     /// The history: the unsaved changes, then every version, a line of dots
@@ -219,8 +312,8 @@ impl GitView {
         }
     }
 
-    /// The picked version: its message, whose and when, Restore, and the
-    /// files it changed with their lines added and removed.
+    /// The picked version: its message, whose and when, Restore; then the
+    /// files it changed as a tree.
     fn files_pane(&mut self, ui: &mut egui::Ui, list: &[Version], backend: &Backend, ctx: &egui::Context, act: &mut GitAct) {
         let sha = self.sha.clone().unwrap_or_default();
         let v = list.iter().position(|v| v.sha == sha).map(|k| (k, &list[k]));
@@ -251,7 +344,14 @@ impl GitView {
                 });
             }
             None => {
-                ui.label(RichText::new("Changes not saved yet").size(13.5).strong().color(theme::amber()));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Changes not saved yet").size(13.5).strong().color(theme::amber()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if bar::button(ui, &ctl::APPLY_PATCH, Weight::Icon).clicked() {
+                            self.apply = Some(Apply::default());
+                        }
+                    });
+                });
             }
         }
         ui.separator();
@@ -271,116 +371,310 @@ impl GitView {
             ui.label(RichText::new(if sha.is_empty() { "Nothing changed since the last version." } else { "This version changed no files." }).size(12.5).color(theme::text()));
             return;
         }
-        let (add, del) = files.iter().fold((0, 0), |(a, d), f| (a + f.added.max(0), d + f.removed.max(0)));
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} files", files.len())).size(12.5).color(theme::text_strong()));
-            ui.label(RichText::new(format!("+{add}")).size(12.5).color(theme::ok()));
-            ui.label(RichText::new(format!("−{del}")).size(12.5).color(theme::alt()));
-        });
-        let mut picked = None;
-        egui::ScrollArea::vertical().id_salt("git-files").auto_shrink([false, false]).show_rows(ui, FILE_ROW, files.len(), |ui, range| {
-            for i in range {
-                let f = &files[i];
-                let on = self.file.as_ref().is_some_and(|x| x.path == f.path);
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), FILE_ROW), Sense::click());
-                if on {
-                    ui.painter().rect_filled(rect, 5.0, theme::primary().gamma_multiply(0.16));
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(rect, 5.0, theme::surface());
-                }
-                let (letter, c) = status_mark(&f.status);
-                let p = ui.painter().with_clip_rect(rect);
-                p.text(rect.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, letter, FontId::monospace(12.5), c);
-                let counts = if f.added < 0 { "bin".to_owned() } else { format!("+{} −{}", f.added, f.removed) };
-                let cg = p.layout_no_wrap(counts, FontId::proportional(11.5), theme::muted());
-                let cw = cg.size().x;
-                p.galley(egui::pos2(rect.right() - cw - 6.0, rect.center().y - cg.size().y / 2.0), cg, Color32::WHITE);
-                // The name strong, its folder after it, quieter.
-                let (dir, name) = f.path.rsplit_once('/').map_or(("", f.path.as_str()), |(d, n)| (d, n));
-                let mut job = egui::text::LayoutJob::default();
-                job.append(name, 0.0, egui::TextFormat::simple(FontId::proportional(13.0), if f.status == "D" { theme::muted() } else { theme::text_strong() }));
-                if !dir.is_empty() {
-                    job.append(&format!("  {dir}"), 0.0, egui::TextFormat::simple(FontId::proportional(11.5), theme::muted()));
-                }
-                let tx = rect.left() + 28.0;
-                let clip = egui::Rect::from_min_max(egui::pos2(tx, rect.top()), egui::pos2(rect.right() - cw - 12.0, rect.bottom()));
-                let g = ui.painter().layout_job(job);
-                ui.painter().with_clip_rect(clip).galley(egui::pos2(tx, rect.center().y - g.size().y / 2.0), g, Color32::WHITE);
-                let tip = if f.old.is_empty() { f.path.clone() } else { format!("{} ← {}", f.path, f.old) };
-                if resp.on_hover_text(tip).clicked() {
-                    picked = Some(f.clone());
-                }
-            }
-        });
-        if let Some(f) = picked {
-            self.pick_file(f, backend, ctx);
+        let picked = self.file.as_ref().map(|f| (f.area.clone(), f.path.clone()));
+        if let Some(i) = self.tree.show(ui, &files, picked.as_ref().map(|(a, p)| (a.as_str(), p.as_str()))) {
+            self.pick_file(files[i].clone(), backend, ctx);
             self.step = 2;
         }
     }
 
-    /// The picked file's diff: old and new line numbers, then the line,
-    /// added on green and removed on red, each hunk headed by where it is.
-    fn diff_pane(&mut self, ui: &mut egui::Ui) {
+    /// The picked file's diff: one bar over it, the page, the ruler beside.
+    fn diff_pane(&mut self, ui: &mut egui::Ui, backend: &Backend, ctx: &egui::Context, narrow: bool) {
         let Some(f) = self.file.clone() else {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("Pick a file to see what changed in it.").size(13.0).color(theme::text()));
             });
             return;
         };
-        ui.horizontal(|ui| {
-            let (letter, c) = status_mark(&f.status);
-            ui.label(RichText::new(letter).monospace().size(13.0).color(c));
-            ui.add(egui::Label::new(RichText::new(&f.path).monospace().size(13.0).color(theme::text_strong())).truncate());
-            if !f.old.is_empty() {
-                ui.label(RichText::new(format!("← {}", f.old)).monospace().size(12.0).color(theme::muted()));
-            }
-        });
-        ui.separator();
-        let diff = self.diff.lock().unwrap();
-        let d = match diff.as_ref() {
+        let loaded = self.diff.clone();
+        let guard = loaded.lock().unwrap();
+        let d = match guard.as_ref() {
             None => {
+                drop(guard);
                 ui.spinner();
                 return;
             }
             Some(Err(e)) => {
+                let e = e.clone();
+                drop(guard);
                 ui.label(RichText::new(e).size(12.5).color(theme::alt()));
                 return;
             }
             Some(Ok(d)) => d,
         };
-        if d.lines.is_empty() {
-            ui.label(RichText::new("No lines to show: the file only changed its mode, or is empty.").size(12.5).color(theme::text()));
+        // A side-by-side diff does not fit a phone.
+        let mode = match self.mode.unwrap_or_default() {
+            Mode::Split if narrow => Mode::Unified,
+            m => m,
+        };
+        let acts = self.acts();
+        let file_patch = patch::write(&d.file, &d.file.hunks);
+        let mut ask: Option<(&'static str, String)> = None;
+
+        // ── the bar ──
+        let mut tb = bar::Toolbar::new(ui, theme::bg());
+        {
+            let ui = tb.right();
+            bar::more(ui, "more for this file", |ui| {
+                if bar::menu_item(ui, &ctl::COPY_PATCH, !d.file.hunks.is_empty()) {
+                    ui.ctx().copy_text(file_patch.clone());
+                }
+                if bar::menu_item(ui, &ctl::EXPORT_PATCH, !d.file.hunks.is_empty()) {
+                    let name = format!("{}.patch", f.path.rsplit('/').next().unwrap_or("change"));
+                    crate::ui::kit::pick::save_text(&name, file_patch.clone());
+                }
+                if acts.contains(&HunkAct::Revert) && bar::menu_item(ui, &ctl::REVERT.tip("take every change in this file out of it"), !d.file.hunks.is_empty()) {
+                    self.revert = Some(Target::File);
+                }
+            });
+            if acts.contains(&HunkAct::Stage) && bar::button_tip(ui, !d.file.hunks.is_empty(), &ctl::STAGE, Weight::Secondary, "stage the whole file").clicked() {
+                ask = Some(("stage", file_patch.clone()));
+            }
+            if acts.contains(&HunkAct::Unstage) && bar::button_tip(ui, !d.file.hunks.is_empty(), &ctl::UNSTAGE, Weight::Secondary, "unstage the whole file").clicked() {
+                ask = Some(("unstage", file_patch.clone()));
+            }
+            theme::tool_sep(ui);
+            if bar::toggle(ui, &ctl::UNFOLD, self.folds.all, Weight::Icon).clicked() {
+                self.folds.all = !self.folds.all;
+            }
+            let n = d.model.changes.len();
+            if bar::button_if(ui, n > 0, &ctl::NEXT_CHANGE, Weight::Icon).clicked() {
+                self.step_change(true, &d.model);
+            }
+            if bar::button_if(ui, n > 0, &ctl::PREV_CHANGE, Weight::Icon).clicked() {
+                self.step_change(false, &d.model);
+            }
+            if n > 0 {
+                let word = match self.current {
+                    Some(c) => format!("{} of {n}", c + 1),
+                    None if n == 1 => "1 change".to_owned(),
+                    None => format!("{n} changes"),
+                };
+                ui.label(RichText::new(word).size(11.5).color(theme::hush()));
+            }
+            theme::tool_sep(ui);
+            for (c, m) in [(&ctl::DIFF_INLINE, Mode::Inline), (&ctl::DIFF_UNIFIED, Mode::Unified), (&ctl::DIFF_SPLIT, Mode::Split)] {
+                if m == Mode::Split && narrow {
+                    continue;
+                }
+                if bar::toggle(ui, c, mode == m, Weight::Icon).clicked() && mode != m {
+                    self.mode = Some(m);
+                    ctx.data_mut(|dd| dd.insert_persisted(egui::Id::new(MODE_KEY), m));
+                    self.jump = Some(0.0);
+                }
+            }
+        }
+        {
+            let mut left = tb.left();
+            let (letter, c) = tree::status_mark(&f.status);
+            left.label(RichText::new(letter).monospace().size(12.0).color(c));
+            let (dir, name) = f.path.rsplit_once('/').map_or(("", f.path.as_str()), |(d, n)| (d, n));
+            let mut job = egui::text::LayoutJob::default();
+            if !dir.is_empty() {
+                job.append(&format!("{dir}/"), 0.0, egui::TextFormat::simple(FontId::monospace(12.0), theme::muted()));
+            }
+            job.append(name, 0.0, egui::TextFormat::simple(FontId::monospace(12.0), theme::text_strong()));
+            left.add(egui::Label::new(job).truncate()).on_hover_text(if f.old.is_empty() { f.path.clone() } else { format!("{} ← {}", f.path, f.old) });
+            if !f.old.is_empty() {
+                left.label(RichText::new(format!("← {}", f.old)).monospace().size(11.0).color(theme::hush()));
+            }
+            left.label(RichText::new(format!("+{}", d.model.added)).monospace().size(11.0).color(theme::ok().gamma_multiply(0.85)));
+            left.label(RichText::new(format!("−{}", d.model.removed)).monospace().size(11.0).color(theme::alt().gamma_multiply(0.85)));
+        }
+
+        // ── what git said, and a revert waiting for yes ──
+        let said = self.said.lock().unwrap().clone();
+        if let Some(r) = &said {
+            let (t, c) = match r {
+                Ok(m) => (format!("✓ {m}"), theme::ok()),
+                Err(e) => (e.clone(), theme::alt()),
+            };
+            ui.add(egui::Label::new(RichText::new(t).size(12.0).color(c)).truncate());
+        }
+        if let Some(t) = self.revert {
+            let what = match t {
+                Target::File => format!("every change in {}", f.path),
+                Target::Hunk(h) => format!("the change at line {}", d.model.hunks.get(h).map_or(0, |h| h.new_start)),
+            };
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("Take {what} out of the file? Its last saved version keeps it.")).size(12.5).color(theme::warn()));
+                if ui.add(theme::primary_button("Revert")).clicked() {
+                    let p = match t {
+                        Target::File => file_patch.clone(),
+                        Target::Hunk(h) => patch::write(&d.file, &d.model.hunks[h..=h]),
+                    };
+                    ask = Some(("revert", p));
+                }
+                if ui.button("Cancel").clicked() {
+                    self.revert = None;
+                }
+            });
+        }
+
+        // ── the page and its ruler ──
+        if d.model.rows.is_empty() {
+            ui.add_space(8.0);
+            for n in d.file.notes.iter().chain(d.file.binary.then_some(&String::new())) {
+                if !n.is_empty() {
+                    ui.label(RichText::new(n).monospace().size(12.0).color(theme::text()));
+                }
+            }
+            if d.file.notes.is_empty() {
+                ui.label(RichText::new("Nothing to show here now.").size(12.5).color(theme::text()));
+            }
+            drop(guard);
+            if let Some((a, p)) = ask {
+                self.run(a, p, backend, ctx);
+            }
             return;
         }
-        let font = FontId::monospace(MONO);
-        let (row_h, cw) = ui.fonts_mut(|g| (g.row_height(&font) + 3.0, g.glyph_width(&font, '0')));
-        let digits = d.lines.iter().filter_map(|l| l.old.max(l.new)).max().unwrap_or(1).to_string().len().max(3) as f32;
-        let gutter = cw * (digits * 2.0 + 3.0) + 16.0;
-        let width = (gutter + cw * (d.widest as f32 + 2.0)).max(ui.available_width());
-        egui::ScrollArea::both().id_salt("git-diff").auto_shrink([false, false]).show_rows(ui, row_h, d.lines.len(), |ui, range| {
-            for l in &d.lines[range] {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(width, row_h), Sense::hover());
-                let p = ui.painter();
-                let (bg, fg, mark) = match l.kind {
-                    Kind::Add => (theme::ok().gamma_multiply(0.16), theme::text_strong(), "+"),
-                    Kind::Del => (theme::alt().gamma_multiply(0.16), theme::text_strong(), "−"),
-                    Kind::Hunk => (theme::primary().gamma_multiply(0.10), theme::primary(), ""),
-                    Kind::Note => (Color32::TRANSPARENT, theme::muted(), ""),
-                    Kind::Same => (Color32::TRANSPARENT, theme::text(), ""),
-                };
-                if bg != Color32::TRANSPARENT {
-                    p.rect_filled(rect, 0.0, bg);
-                }
-                let y = rect.center().y;
-                let num = |n: Option<u32>| n.map(|n| n.to_string()).unwrap_or_default();
-                let nc = theme::muted();
-                p.text(egui::pos2(rect.left() + cw * digits + 4.0, y), egui::Align2::RIGHT_CENTER, num(l.old), font.clone(), nc);
-                p.text(egui::pos2(rect.left() + cw * (digits * 2.0 + 1.0) + 8.0, y), egui::Align2::RIGHT_CENTER, num(l.new), font.clone(), nc);
-                let mark_c = if l.kind == Kind::Add { theme::ok() } else { theme::alt() };
-                p.text(egui::pos2(rect.left() + gutter - cw * 1.5, y), egui::Align2::LEFT_CENTER, mark, font.clone(), mark_c);
-                p.text(egui::pos2(rect.left() + gutter, y), egui::Align2::LEFT_CENTER, &l.text, font.clone(), fg);
+        let lines = render::lines(&d.model, &self.folds, mode);
+        let look = render::Look::of(&f.path);
+        let row_h = render::Metrics::of(ui, &d.model).row_h;
+        // Keys: F7 and Alt+↓ the next change, Shift+F7 and Alt+↑ the one before.
+        if ctx.memory(|m| m.focused().is_none()) {
+            let (next, prev) = ctx.input_mut(|i| {
+                (
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::F7) || i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown),
+                    i.consume_key(egui::Modifiers::SHIFT, egui::Key::F7) || i.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp),
+                )
+            });
+            if next || prev {
+                self.step_change(next, &d.model);
             }
-        });
+        }
+        // A change stepped to: its line a quarter down the view.
+        if let Some(c) = self.current.filter(|_| self.jump.is_some_and(|j| j < 0.0)) {
+            let li = d.model.changes.get(c).and_then(|ch| render::line_of_row(&lines, ch.rows.start)).unwrap_or(0);
+            self.jump = Some((li as f32 * row_h - self.view.1 * 0.25).max(0.0));
+        }
+        let full = ui.available_rect_before_wrap();
+        let page_rect = full.with_max_x(full.right() - ruler::WIDTH);
+        let ruler_rect = full.with_min_x(full.right() - ruler::WIDTH);
+        let jump = self.jump.take();
+        let mut page_ui = ui.new_child(egui::UiBuilder::new().max_rect(page_rect).layout(egui::Layout::top_down(egui::Align::Min)));
+        let (intent, view) = render::page(&mut page_ui, &d.model, &lines, mode, &look, &acts, jump, self.current);
+        self.view = view;
+        if let Some(y) = ruler::show(ui, ruler_rect, &d.model, &lines, row_h, view) {
+            self.jump = Some(y);
+        }
+        ui.allocate_rect(full, Sense::hover());
+        match intent {
+            Some(Intent::Hunk(h, a)) => {
+                let p = patch::write(&d.file, &d.model.hunks[h..=h]);
+                match a {
+                    HunkAct::Stage => ask = Some(("stage", p)),
+                    HunkAct::Unstage => ask = Some(("unstage", p)),
+                    HunkAct::Revert => self.revert = Some(Target::Hunk(h)),
+                    HunkAct::Copy => ctx.copy_text(p),
+                }
+            }
+            Some(Intent::Fold(run, a)) => {
+                let e = self.folds.open.entry(run).or_insert((0, 0));
+                match a {
+                    FoldAct::Up => e.0 += render::FOLD_STEP,
+                    FoldAct::Down => e.1 += render::FOLD_STEP,
+                    FoldAct::All => *e = (usize::MAX / 4, usize::MAX / 4),
+                }
+            }
+            None => {}
+        }
+        drop(guard);
+        if let Some((a, p)) = ask {
+            self.run(a, p, backend, ctx);
+        }
+    }
+
+    /// To the next change (or the one before), round the file; the page
+    /// scrolls to it next frame.
+    fn step_change(&mut self, forward: bool, m: &Model) {
+        let from = self.current.and_then(|c| m.changes.get(c)).map_or(if forward { 0 } else { usize::MAX }, |c| c.rows.start);
+        let from = if self.current.is_none() && forward { 0 } else { from };
+        let next = if self.current.is_none() && forward { (!m.changes.is_empty()).then_some(0) } else { model::next_change(m, from, forward) };
+        if let Some(c) = next {
+            self.current = Some(c);
+            // Marked to be placed once the lines are laid out (diff_pane).
+            self.jump = Some(-1.0);
+        }
+    }
+
+    /// Apply a patch: pasted, or opened from a file; checked, then applied
+    /// to the project's files.
+    fn apply_window(&mut self, ctx: &egui::Context, backend: &Backend) {
+        let Some(a) = self.apply.as_mut() else { return };
+        if let Some(t) = a.opened.lock().unwrap().take() {
+            a.text = t;
+        }
+        let mut open = true;
+        let mut go: Option<&'static str> = None;
+        egui::Window::new("Apply a patch")
+            .id(egui::Id::new("git-apply"))
+            .order(egui::Order::Foreground)
+            .open(&mut open)
+            .collapsible(false)
+            .default_size(egui::vec2(640.0, 420.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if bar::button(ui, &ctl::APPLY_PATCH.tip("open a .patch or .diff file"), Weight::Secondary).clicked() {
+                        let slot = a.opened.clone();
+                        let pick = async move {
+                            let Some(f) = crate::ui::kit::pick::files("Open a patch", false).await.and_then(|v| v.into_iter().next()) else { return };
+                            *slot.lock().unwrap() = Some(String::from_utf8_lossy(&f.read().await).into_owned());
+                        };
+                        #[cfg(not(target_arch = "wasm32"))]
+                        std::thread::spawn(move || pollster::block_on(pick));
+                        #[cfg(target_arch = "wasm32")]
+                        wasm_bindgen_futures::spawn_local(pick);
+                    }
+                    let files = patch::parse(&a.text);
+                    if !files.is_empty() {
+                        let names: Vec<&str> = files.iter().map(|f| f.name()).collect();
+                        ui.add(egui::Label::new(RichText::new(names.join(" · ")).monospace().size(11.5).color(theme::muted())).truncate());
+                    }
+                });
+                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                    ui.add(egui::TextEdit::multiline(&mut a.text).font(FontId::monospace(12.0)).desired_width(f32::INFINITY).desired_rows(14).hint_text("Paste a patch - git diff's output, or a .patch file's"));
+                });
+                if let Some(r) = a.said.lock().unwrap().clone() {
+                    let (t, c) = match r {
+                        Ok(m) => (format!("✓ {m}"), theme::ok()),
+                        Err(e) => (e, theme::alt()),
+                    };
+                    ui.label(RichText::new(t).size(12.5).color(c));
+                }
+                ui.horizontal(|ui| {
+                    let some = !a.text.trim().is_empty();
+                    if ui.add_enabled(some, egui::Button::new("Check")).on_hover_text("would it apply to the files as they are?").clicked() {
+                        go = Some("check");
+                    }
+                    if ui.add_enabled(some, theme::primary_button("Apply")).on_hover_text("apply it to the project's files; stage it after, as any change").clicked() {
+                        go = Some("apply");
+                    }
+                });
+            });
+        if let Some(action) = go {
+            let slot = a.said.clone();
+            *slot.lock().unwrap() = None;
+            let text = a.text.clone();
+            if action == "apply" {
+                self.follow = true;
+            }
+            let (files, host) = (self.files.clone(), self.host.clone());
+            let (b2, c2) = (backend.clone(), ctx.clone());
+            backend.query(Query::GitPatch { host: self.host.clone(), action: action.into(), patch: text }, ctx, move |r: Result<String, String>| {
+                let ok = r.is_ok();
+                *slot.lock().unwrap() = Some(r);
+                if ok && action == "apply" {
+                    *files.lock().unwrap() = None;
+                    b2.query(Query::GitStatus { host }, &c2, move |r: Result<Vec<GitFile>, String>| {
+                        *files.lock().unwrap() = Some(r);
+                    });
+                }
+            });
+        }
+        if !open {
+            self.apply = None;
+        }
     }
 }
 
@@ -395,96 +689,3 @@ fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or("")
 }
 
-/// git's letter for what happened to a file, and its colour.
-fn status_mark(s: &str) -> (&'static str, Color32) {
-    match s {
-        "A" => ("A", theme::ok()),
-        "D" => ("D", theme::alt()),
-        "R" => ("R", theme::amber()),
-        "C" => ("C", theme::amber()),
-        "?" => ("?", theme::warn()),
-        "T" => ("T", theme::muted()),
-        _ => ("M", theme::primary()),
-    }
-}
-
-/// A unified diff into lines to draw. Headers before the first hunk are
-/// dropped but for what a person needs (binary, new or deleted, renamed);
-/// each hunk restarts the numbers at its "@@ -old +new @@".
-fn parse(diff: &str) -> Diff {
-    let mut lines = Vec::new();
-    let (mut o, mut n, mut in_hunk) = (0u32, 0u32, false);
-    for raw in diff.lines() {
-        let l = raw.replace('\t', "    ");
-        if l.starts_with("@@") {
-            let mut t = l.split_whitespace().skip(1);
-            let start = |w: Option<&str>| w.and_then(|w| w[1..].split(',').next()?.parse::<u32>().ok()).unwrap_or(1);
-            o = start(t.next());
-            n = start(t.next());
-            in_hunk = true;
-            lines.push(Line { kind: Kind::Hunk, old: None, new: None, text: l });
-            continue;
-        }
-        if l.starts_with("diff --git") {
-            in_hunk = false;
-            continue;
-        }
-        if !in_hunk {
-            let said = ["Binary files", "new file mode", "deleted file mode", "rename from", "rename to", "old mode", "new mode"];
-            if said.iter().any(|s| l.starts_with(s)) {
-                lines.push(Line { kind: Kind::Note, old: None, new: None, text: l });
-            }
-            continue;
-        }
-        let (kind, old, new, text) = match l.chars().next() {
-            Some('+') => {
-                n += 1;
-                (Kind::Add, None, Some(n - 1), l[1..].to_owned())
-            }
-            Some('-') => {
-                o += 1;
-                (Kind::Del, Some(o - 1), None, l[1..].to_owned())
-            }
-            Some('\\') => (Kind::Note, None, None, l),
-            _ => {
-                o += 1;
-                n += 1;
-                (Kind::Same, Some(o - 1), Some(n - 1), l.get(1..).unwrap_or("").to_owned())
-            }
-        };
-        lines.push(Line { kind, old, new, text });
-    }
-    let widest = lines.iter().map(|l| l.text.chars().count()).max().unwrap_or(0);
-    Diff { lines, widest }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_diff_is_numbered_on_both_sides() {
-        let d = parse("diff --git a/x b/x\nindex 1..2 100644\n--- a/x\n+++ b/x\n@@ -3,3 +3,4 @@ fn f\n a\n-b\n+B\n+C\n c\n\\ No newline at end of file\n");
-        let k: Vec<_> = d.lines.iter().map(|l| (l.kind, l.old, l.new, l.text.as_str())).collect();
-        assert_eq!(
-            k,
-            vec![
-                (Kind::Hunk, None, None, "@@ -3,3 +3,4 @@ fn f"),
-                (Kind::Same, Some(3), Some(3), "a"),
-                (Kind::Del, Some(4), None, "b"),
-                (Kind::Add, None, Some(4), "B"),
-                (Kind::Add, None, Some(5), "C"),
-                (Kind::Same, Some(5), Some(6), "c"),
-                (Kind::Note, None, None, "\\ No newline at end of file"),
-            ]
-        );
-        assert_eq!(d.widest, "\\ No newline at end of file".len(), "the note is the widest line");
-    }
-
-    #[test]
-    fn a_new_and_a_binary_file_say_so() {
-        let d = parse("diff --git a/n b/n\nnew file mode 100644\n--- /dev/null\n+++ b/n\n@@ -0,0 +1,2 @@\n+one\n+two\ndiff --git a/p.png b/p.png\nBinary files a/p.png and b/p.png differ\n");
-        let k: Vec<_> = d.lines.iter().map(|l| (l.kind, l.new)).collect();
-        assert_eq!(k, vec![(Kind::Note, None), (Kind::Hunk, None), (Kind::Add, Some(1)), (Kind::Add, Some(2)), (Kind::Note, None)]);
-    }
-}

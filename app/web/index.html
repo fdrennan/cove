@@ -127,6 +127,13 @@
   /* The same splash, over the App panel while its site loads (src/ide.rs
      site_frame LOADER): full while there is nothing to show yet, a veil over
      the old page while a save's reload loads behind it, then it fades. */
+  /* Every frame over the canvas (the App site, the Viewer, previews) a hair
+     short of opaque. Chrome 158 culls the canvas under what it takes for an
+     opaque frame and dropped the wrong piece: the App window's tab strip and
+     toolbar above a tall site frame were never drawn (operator, 2026-11-25:
+     "the icons disappeared"; measured: an egui rect painted there did not
+     show, and showed with this). 0.999 is invisible and ends the culling. */
+  iframe { opacity: 0.999; }
   #cove-site-loader { place-items: center; text-align: center; overflow: hidden; color: var(--text);
     font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
     background: linear-gradient(rgba(0,0,0,.27), rgba(0,0,0,.27)),

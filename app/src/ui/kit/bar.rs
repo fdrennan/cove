@@ -153,6 +153,22 @@ pub fn glyph(ui: &mut egui::Ui, g: icons::Glyph, tip: &str, enabled: bool) -> Re
     draw(ui, g, "", tip, Weight::Icon, enabled, None)
 }
 
+/// A glyph alone at a rect the caller laid out - inside a row of a list
+/// that paints by rect (the diff's hunk and fold lines). Same states and
+/// name as `glyph`.
+pub fn glyph_at(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, g: icons::Glyph, tip: &str) -> Response {
+    let resp = ui.interact(rect, id, Sense::click());
+    let (gc, _) = paint_state(ui, rect, &resp, true, false, false);
+    let side = (rect.height() * 0.62).min(16.0);
+    icons::paint(ui.painter(), egui::Rect::from_center_size(rect.center(), egui::vec2(side, side)), g, gc);
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let name = tip.to_owned();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+    resp.on_hover_text(tip)
+}
+
 /// A switch: lit while `on`. Clicked = flipped by the caller.
 pub fn toggle(ui: &mut egui::Ui, ctl: &Ctl, on: bool, weight: Weight) -> Response {
     draw(ui, ctl.glyph, ctl.word, ctl.tip, weight, true, Some(on))
@@ -235,37 +251,4 @@ impl Toolbar {
         l.spacing_mut().item_spacing.x = 4.0;
         l
     }
-}
-
-/// A row of choices, one lit: the pane switcher, a set of views. Returns the
-/// one clicked.
-pub fn segmented(ui: &mut egui::Ui, items: &[&str], selected: usize) -> Option<usize> {
-    let m = metrics(ui.ctx());
-    let font = egui::FontId::proportional(m.font);
-    let mut picked = None;
-    let galleys: Vec<_> = items.iter().map(|s| ui.painter().layout_no_wrap((*s).to_owned(), font.clone(), Color32::WHITE)).collect();
-    let w: f32 = galleys.iter().map(|g| g.size().x + m.pad * 2.0).sum::<f32>() + 4.0;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, m.h), Sense::hover());
-    ui.painter().rect_filled(rect, 8.0, theme::lift(theme::ground(), 0.06));
-    let mut x = rect.left() + 2.0;
-    for (i, g) in galleys.into_iter().enumerate() {
-        let cell = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 2.0), egui::vec2(g.size().x + m.pad * 2.0, m.h - 4.0));
-        x = cell.right();
-        let resp = ui.interact(cell, ui.id().with(("seg", items[i])), Sense::click());
-        let on = i == selected;
-        if on {
-            ui.painter().rect_filled(cell, 6.0, theme::bg());
-            ui.painter().rect_stroke(cell, 6.0, Stroke::new(1.0, theme::moss()), egui::StrokeKind::Inside);
-        } else if resp.hovered() {
-            ui.painter().rect_filled(cell, 6.0, theme::surface_hi());
-        }
-        let ink = if on { theme::text_strong() } else { theme::muted() };
-        ui.painter().galley_with_override_text_color(cell.center() - g.size() / 2.0, g, ink);
-        let name = items[i].to_owned();
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, &name));
-        if resp.clicked() && !on {
-            picked = Some(i);
-        }
-    }
-    picked
 }

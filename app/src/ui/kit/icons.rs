@@ -150,10 +150,21 @@ pub enum Glyph {
     Live,
     /// New: a plus.
     Plus,
-    /// Clear a console: a sweep of lines with a cross.
-    Clear,
     /// Copy: two sheets, one over the other.
     Copy,
+    /// Side by side: two columns of lines.
+    Split,
+    /// Unified: one column, lines out and in.
+    Unified,
+    /// Inline: one line with a word marked in it.
+    Inline,
+    ChevronUp,
+    ChevronDown,
+    Minus,
+    /// Undo: an arrow turning back.
+    Undo,
+    /// Open every fold: arrows apart.
+    Unfold,
 }
 
 pub fn paint(p: &egui::Painter, rect: egui::Rect, g: Glyph, c: Color32) {
@@ -251,16 +262,45 @@ pub fn paint(p: &egui::Painter, rect: egui::Rect, g: Glyph, c: Color32) {
             line(&[(-6.0, 0.0), (6.0, 0.0)]);
             line(&[(0.0, -6.0), (0.0, 6.0)]);
         }
-        Glyph::Clear => {
-            line(&[(-6.5, -4.5), (6.5, -4.5)]);
-            line(&[(-6.5, -1.0), (1.0, -1.0)]);
-            line(&[(-6.5, 2.5), (-1.5, 2.5)]);
-            line(&[(2.5, 1.5), (6.5, 5.5)]);
-            line(&[(2.5, 5.5), (6.5, 1.5)]);
-        }
         Glyph::Copy => {
             line(&[(-2.5, -6.5), (6.5, -6.5), (6.5, 3.0), (-2.5, 3.0), (-2.5, -6.5)]);
             line(&[(-4.5, -3.5), (-6.5, -3.5), (-6.5, 6.5), (3.5, 6.5), (3.5, 5.0)]);
+        }
+        Glyph::Split => {
+            line(&[(-6.5, -6.0), (-6.5, 6.0), (6.5, 6.0), (6.5, -6.0), (-6.5, -6.0)]);
+            line(&[(0.0, -6.0), (0.0, 6.0)]);
+            for y in [-2.5, 1.0] {
+                line(&[(-4.5, y), (-2.0, y)]);
+                line(&[(2.0, y), (4.5, y)]);
+            }
+        }
+        Glyph::Unified => {
+            line(&[(-6.5, -6.0), (-6.5, 6.0), (6.5, 6.0), (6.5, -6.0), (-6.5, -6.0)]);
+            for (y, w) in [(-3.0, 3.0), (0.0, 4.5), (3.0, 2.0)] {
+                line(&[(-4.5, y), (w, y)]);
+            }
+        }
+        Glyph::Inline => {
+            line(&[(-6.5, -6.0), (-6.5, 6.0), (6.5, 6.0), (6.5, -6.0), (-6.5, -6.0)]);
+            line(&[(-4.5, 0.0), (4.5, 0.0)]);
+            p.rect_filled(egui::Rect::from_min_max(at(-1.0, -2.0), at(3.0, 2.0)), 1.0 * s, c.gamma_multiply(0.6));
+        }
+        Glyph::ChevronUp => line(&[(-5.0, 2.5), (0.0, -2.5), (5.0, 2.5)]),
+        Glyph::ChevronDown => line(&[(-5.0, -2.5), (0.0, 2.5), (5.0, -2.5)]),
+        Glyph::Minus => line(&[(-6.0, 0.0), (6.0, 0.0)]),
+        Glyph::Undo => {
+            let pts: Vec<egui::Pos2> = (0..=14).map(|i| {
+                let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 14.0;
+                o + egui::vec2(1.0 * s + 5.0 * s * a.cos(), 0.5 * s + 5.0 * s * a.sin())
+            }).collect();
+            p.add(egui::Shape::line(pts, st));
+            line(&[(1.0, -4.5), (-5.0, -4.5)]);
+            line(&[(-2.5, -7.0), (-5.0, -4.5), (-2.5, -2.0)]);
+        }
+        Glyph::Unfold => {
+            line(&[(-4.5, -3.0), (0.0, -7.0), (4.5, -3.0)]);
+            line(&[(-4.5, 3.0), (0.0, 7.0), (4.5, 3.0)]);
+            line(&[(-6.0, 0.0), (6.0, 0.0)]);
         }
         Glyph::Live => {
             let pts: Vec<egui::Pos2> = (0..=20).map(|i| {
@@ -328,14 +368,21 @@ pub mod ctl {
     pub const RELOAD_SITE: Ctl = Ctl::new(Glyph::Refresh, "Reload", "reload the site");
     pub const OPEN_OUT: Ctl = Ctl::new(Glyph::Open, "Open", "open in a new browser tab");
     pub const COPY_ADDRESS: Ctl = Ctl::new(Glyph::Copy, "Copy address", "copy the site's address");
-    pub const BACK: Ctl = Ctl::new(Glyph::Back, "Back", "back");
-    pub const FORWARD: Ctl = Ctl::new(Glyph::Forward, "Forward", "forward");
-    pub const RELOAD: Ctl = Ctl::new(Glyph::Refresh, "Reload", "reload");
-    pub const CLEAR_VIEW: Ctl = Ctl::new(Glyph::Close, "Clear", "clear the Viewer");
-    pub const CLEAR_CONSOLE: Ctl = Ctl::new(Glyph::Clear, "Clear", "clear the console · Ctrl+L");
-    pub const RESTART_SESSION: Ctl = Ctl::new(Glyph::Refresh, "Restart", "restart this session");
     pub const INTERRUPT: Ctl = Ctl::new(Glyph::Halt, "Interrupt", "interrupt · Esc");
     pub const FULLSCREEN: Ctl = Ctl::new(Glyph::Expand, "Full screen", "full screen (F11)");
     pub const EXIT_FULLSCREEN: Ctl = Ctl::new(Glyph::Collapse, "Exit full screen", "exit full screen (F11)");
+    // The Git window's diff (ui/ide/gitview).
+    pub const DIFF_SPLIT: Ctl = Ctl::new(Glyph::Split, "Side by side", "the old file on the left, the new on the right");
+    pub const DIFF_UNIFIED: Ctl = Ctl::new(Glyph::Unified, "Unified", "one column: removed lines, then the lines that took their place");
+    pub const DIFF_INLINE: Ctl = Ctl::new(Glyph::Inline, "Inline", "an edited line as one line, its removed words struck through");
+    pub const PREV_CHANGE: Ctl = Ctl::new(Glyph::ChevronUp, "Previous change", "the change before · Shift+F7 or Alt+↑");
+    pub const NEXT_CHANGE: Ctl = Ctl::new(Glyph::ChevronDown, "Next change", "the change after · F7 or Alt+↓");
+    pub const UNFOLD: Ctl = Ctl::new(Glyph::Unfold, "Every line", "show the unchanged lines too, or fold them again");
+    pub const STAGE: Ctl = Ctl::new(Glyph::Plus, "Stage", "put it in the next version");
+    pub const UNSTAGE: Ctl = Ctl::new(Glyph::Minus, "Unstage", "take it back out of the next version; the file keeps it");
+    pub const REVERT: Ctl = Ctl::new(Glyph::Undo, "Revert", "take it out of the file");
+    pub const COPY_PATCH: Ctl = Ctl::new(Glyph::Copy, "Copy patch", "the patch, to paste anywhere");
+    pub const EXPORT_PATCH: Ctl = Ctl::new(Glyph::Download, "Export patch", "save the patch as a file");
+    pub const APPLY_PATCH: Ctl = Ctl::new(Glyph::Upload, "Apply a patch", "paste or open a patch and apply it to the project's files");
     pub const NEW_TAB: Ctl = Ctl::new(Glyph::Plus, "New tab", "go to a project, or create one (Projects)");
 }

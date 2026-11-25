@@ -53,7 +53,7 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 # The Software tab's clock (software.rs now_secs).
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Blob", "CssStyleDeclaration", "Document", "Element", "EventTarget", "File", "FileList", "HtmlCanvasElement", "HtmlElement", "HtmlIFrameElement", "HtmlInputElement", "Location", "Node", "Storage", "UrlSearchParams", "Window", "console"] }
+web-sys = { version = "0.3", features = ["Blob", "CssStyleDeclaration", "Document", "Element", "EventTarget", "File", "FileList", "HtmlCanvasElement", "HtmlElement", "HtmlIFrameElement", "HtmlInputElement", "Location", "Node", "Storage", "Url", "UrlSearchParams", "Window", "console"] }
 
 # The App panel's embedded browser on the desktop (webview.rs): the live site
 # inside the IDE window - WKWebView on macOS, WebKitGTK 4.1 on Linux (X11).

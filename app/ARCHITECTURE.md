@@ -21,11 +21,13 @@ src/
   host/            what it answers with, one subsystem a file
                    kernel runner envs stack apps record storage limits patches
                    pkgflow boxes recap brief messages lsp boxcomplete zippack
-                   vitals localagent account shares update
+                   vitals localagent account shares update git
   server.rs      `cove serve`: the UI and /api over HTTP (Unix)
   server/          what builds on it: multiuser (a serve per person), localserve
   desktop/       the desktop window's native pieces: webview, desk (hand-over)
   project/       what a project is, both sides: dotcove (.cove/), starters, find
+    diff/          its diffs as data: patch (parse, write), words, model (rows,
+                   hunks, folds, pairings)
   catalog/       what the stack holds, both sides: manifest, names, source
   ui/            everything drawn, desktop and browser alike
     mod.rs
@@ -35,6 +37,7 @@ src/
     ide.rs         Workspace mode: the windows and their tabs
     ide/             its panes and parts: dock tabs term db gitview
                      settings_tab account_tab access localstack
+      gitview/         the Git window's drawing: render (the page), ruler, tree
     editor/        the editor's language knowledge: syntax edcomplete editkeys
     agent.rs       the agent tab and its conversation
     agent/           voice, spoken (where each word came from), drafts
@@ -97,6 +100,11 @@ systems), are listed under "Open" below. Don't add new ones.
   or glyph and word. What a bar has no room for goes in its ⋯ (`bar::more`).
   Never a framed `egui::Button` in a bar, and never a font symbol as an icon:
   `theme::tool("⟳")` draws the registered glyph.
+- **A diff or a patch:** git runs in `host/git.rs`; reading and laying one
+  out is `project/diff/` (no drawing, tested alone); drawing it is
+  `ui/ide/gitview/`; what a click does is `ui/ide/gitview.rs`. A new view of
+  a diff is a pairing in `model.rs` and a drawing in `render.rs`, never a
+  second parser.
 - **Logic both the UI and the host need, with no drawing and no machine
   access:** `project/` when it is about a project, `catalog/` when it is about
   the stack's contents. Anything else that fits neither needs a new boundary,

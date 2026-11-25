@@ -4856,6 +4856,8 @@ impl Ide {
         let input_h = row_h * (self.consoles[ix(Lang::R)].input.lines().count().clamp(1, 8) as f32) + 12.0;
         let pop_h = if listing { row_h * self.completing.items.len().min(8) as f32 + 10.0 } else { 0.0 };
         let out_h = (ui.available_height() - input_h - pop_h - ui.spacing().item_spacing.y * 2.0).max(row_h * 3.0);
+        // A "runs in the Terminal" line clicked: the Terminal, in front.
+        let mut open_term = false;
         egui::Frame::new().fill(ace::bg()).inner_margin(egui::Margin::symmetric(8, 4)).show(ui, |ui| {
             ui.set_height(out_h - 8.0);
             let (r, sh, jl) = (rv.lock().unwrap(), sv.lock().unwrap(), jv.lock().unwrap());
@@ -4906,7 +4908,18 @@ impl Ide {
                         let (bar, _) = ui.allocate_exact_size(egui::vec2(2.0, line_h), egui::Sense::hover());
                         ui.painter().rect_filled(bar, 0.0, band.color().gamma_multiply(0.6));
                         let text = if text.is_empty() { " " } else { text };
-                        ui.add(egui::Label::new(egui::RichText::new(text).font(line_font.clone()).color(color)).extend());
+                        // The line a full-screen program leaves (console_rows)
+                        // takes you there (operator, 2026-11-25: "clicking
+                        // terminal from the console should open the terminal
+                        // and go to it"); it was text to read only.
+                        if kind == LineKind::System && text.starts_with("↗ a full-screen program") {
+                            let r = ui.add(egui::Label::new(egui::RichText::new(text).font(line_font.clone()).color(theme::primary())).extend().sense(egui::Sense::click()));
+                            if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("open the Terminal").clicked() {
+                                open_term = true;
+                            }
+                        } else {
+                            ui.add(egui::Label::new(egui::RichText::new(text).font(line_font.clone()).color(color)).extend());
+                        }
                     });
                 }
             });
@@ -4917,6 +4930,11 @@ impl Ide {
                 self.console_follow = true;
             }
         });
+
+        if open_term {
+            self.view_term = true;
+            self.bring(Tab::Viewer);
+        }
 
         // ── keys ──
         let focused = ui.memory(|m| m.has_focus(input_id));

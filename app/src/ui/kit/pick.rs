@@ -1,4 +1,5 @@
-//! Picking files on this device, for Attach, Upload and Messages.
+//! Picking files on this device, for Attach, Upload and Messages, and
+//! saving one there (Export).
 //!
 //! On the desktop it is rfd's system dialog. In a browser rfd puts up a box of
 //! its own first - a white page-styled "Choose Files / Ok / Cancel" - to have
@@ -70,4 +71,35 @@ pub async fn files(_title: &str, many: bool) -> Option<Vec<Picked>> {
     }
     input.remove();
     (!out.is_empty()).then_some(out)
+}
+
+/// Text saved as a file the person names - an exported patch: the system's
+/// save dialog on the desktop, a download in a browser. Returns at once.
+pub fn save_text(name: &str, text: String) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let name = name.to_owned();
+        std::thread::spawn(move || {
+            if let Some(h) = pollster::block_on(rfd::AsyncFileDialog::new().set_file_name(&name).save_file()) {
+                let _ = std::fs::write(h.path(), text);
+            }
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let parts = js_sys::Array::of1(&text.into());
+        let Ok(blob) = web_sys::Blob::new_with_str_sequence(&parts) else { return };
+        let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { return };
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            if let Ok(a) = doc.create_element("a") {
+                let _ = a.set_attribute("href", &url);
+                let _ = a.set_attribute("download", name);
+                if let Ok(a) = a.dyn_into::<web_sys::HtmlElement>() {
+                    a.click();
+                }
+            }
+        }
+        let _ = web_sys::Url::revoke_object_url(&url);
+    }
 }
