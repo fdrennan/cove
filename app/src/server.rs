@@ -36,6 +36,10 @@
 //! A cell is one account, so loopback is that account's own. Never set it on a
 //! machine people share - `cove multiuser` is for those.
 
+// What builds on `cove serve`.
+pub(crate) mod multiuser;
+pub(crate) mod localserve;
+
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -110,7 +114,7 @@ pub fn main(args: &[String]) -> i32 {
     if !trusted.is_empty() {
         println!("trusting the gate's X-Auth-Email for: {}", trusted.join(", "));
     }
-    crate::runner::set_serving();
+    crate::host::runner::set_serving();
     // The name this Cove is reached at, before anyone has reached it. Caddy
     // asks /__tls/ask for the first certificate before any request can come
     // through, and that ask comes from 127.0.0.1, so a fresh server learned
@@ -128,7 +132,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     // Stopped (a session ended from multiuser's /admin, systemd): the kernels
     // go with it rather than running on as orphans.
-    on_term(crate::kernel::shutdown_all);
+    on_term(crate::host::kernel::shutdown_all);
     let _ = LISTEN_PORT.set(server.server_addr().to_ip().map_or(0, |a| a.port()));
     let ctx = Arc::new(Ctx { token, trusted, trust_loopback, web });
     keep_current();
@@ -205,7 +209,7 @@ fn from_platform(req: &Request, make: impl Fn(&str) -> ehttp::Request) -> Respon
     let Some(token) = ndx_token(req) else {
         return text(401, "this needs an ndexr sign-in, or Claude Code signed in on this server (claude on its PATH, then claude login) - neither is here");
     };
-    match crate::account::platform_request(&token, make) {
+    match crate::host::account::platform_request(&token, make) {
         Ok(r) => {
             let ct = r.content_type().unwrap_or("application/json").to_owned();
             Response::from_data(r.bytes).with_status_code(r.status).with_header(header("Content-Type", &ct)).with_header(header("Cache-Control", "no-store"))
@@ -531,7 +535,7 @@ fn handle(ctx: &Ctx, mut req: Request) {
             // own Claude, as the desktop's does signed out (localagent.rs) -
             // it had answered "401 this needs ndexr's platform" (operator,
             // 2026-11-22, Cove on ndexrtesting.com).
-            Ok(q) if q.platform_only() && !has_platform() => match ndx_token(&req).is_none().then(|| crate::localagent::answer(&q)).flatten() {
+            Ok(q) if q.platform_only() && !has_platform() => match ndx_token(&req).is_none().then(|| crate::host::localagent::answer(&q)).flatten() {
                 Some(Ok(v)) => json(200, &v),
                 Some(Err(e)) => text(500, &e),
                 None => from_platform(&req, |base| {
@@ -572,7 +576,7 @@ pub fn showcase_dir() -> PathBuf {
 // /view/third-party-notices: whoever has a copy of Cove may read what it owes,
 // signed in or not (onprem/compliance.py checks it is served).
 fn notices_response() -> Response<std::io::Cursor<Vec<u8>>> {
-    const NOTICES: &str = include_str!("../THIRD-PARTY-NOTICES.txt");
+    const NOTICES: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/THIRD-PARTY-NOTICES.txt"));
     text(200, NOTICES).with_header(header("Content-Type", "text/plain; charset=utf-8"))
 }
 
@@ -650,7 +654,7 @@ pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<
         // (packaging/install.sh): cove.ndexr.io's front page offers it too,
         // and / itself is behind the sign-in (operator, 2026-11-14: "make
         // sure we are updating cove.ndexr.io for front page and installation").
-        "install.sh" => open(Response::from_data(include_bytes!("../packaging/install.sh").to_vec())
+        "install.sh" => open(Response::from_data(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/install.sh")).to_vec())
             .with_header(header("Content-Type", "text/x-shellscript; charset=utf-8"))
             .with_header(header("Cache-Control", "no-cache"))),
         "software.json" => open(software_response(req)),
@@ -704,7 +708,7 @@ pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<
                 .with_header(header("Cache-Control", "public, max-age=300")))
         }
         // Every patched module and the patches its install recorded (patches.rs).
-        "patches.json" => open(Response::from_data(serde_json::to_vec(&crate::patches::patched()).unwrap_or_default())
+        "patches.json" => open(Response::from_data(serde_json::to_vec(&crate::host::patches::patched()).unwrap_or_default())
             .with_header(header("Content-Type", "application/json"))
             .with_header(header("Cache-Control", "public, max-age=600"))),
         // What a module's installs were built from (patches.rs record): the
@@ -713,14 +717,14 @@ pub fn public_response(req: &Request, web: &Path, url: &str) -> Option<Response<
         // records/, so this says nothing a reader could not fetch.
         "record.json" => {
             let name = query_param(url, "name").and_then(|v| url_decode(&v)).unwrap_or_default();
-            open(Response::from_data(serde_json::to_vec(&crate::patches::record(&name)).unwrap_or_default())
+            open(Response::from_data(serde_json::to_vec(&crate::host::patches::record(&name)).unwrap_or_default())
                 .with_header(header("Content-Type", "application/json"))
                 .with_header(header("Cache-Control", "public, max-age=600")))
         }
         // One applied patch's text, to read and compare in the atlas.
         "patch.txt" => {
             let q = |k: &str| query_param(url, k).and_then(|v| url_decode(&v)).unwrap_or_default();
-            open(match crate::patches::patch_text(&q("name"), &q("version"), &q("file")) {
+            open(match crate::host::patches::patch_text(&q("name"), &q("version"), &q("file")) {
                 Some(t) => Response::from_data(t.into_bytes())
                     .with_header(header("Content-Type", "text/plain; charset=utf-8"))
                     .with_header(header("Cache-Control", "public, max-age=3600")),
@@ -1175,7 +1179,7 @@ fn keep_current() {
     }
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(every));
-        match crate::update::swap_if_newer() {
+        match crate::host::update::swap_if_newer() {
             Ok(Some(v)) => {
                 println!("serve: v{v} installed in place; restarting into it");
                 std::process::exit(75);

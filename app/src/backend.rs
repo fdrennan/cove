@@ -53,7 +53,7 @@ pub enum Backend {
     Local,
     Http { base: String },
     #[cfg(not(target_arch = "wasm32"))]
-    Cell { base: String, session: crate::account::Session },
+    Cell { base: String, session: crate::host::account::Session },
 }
 
 impl Backend {
@@ -370,7 +370,7 @@ impl Backend {
                 std::thread::spawn(move || {
                     // Signed out, with this computer's own Claude ready, the
                     // agent runs here on it (localagent.rs).
-                    if let Some(r) = crate::localagent::answer(&q) {
+                    if let Some(r) = crate::host::localagent::answer(&q) {
                         cb(r.and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string())));
                         ctx.request_repaint();
                         return;
@@ -379,7 +379,7 @@ impl Backend {
                     // the signed-in person. The laptop's own files stay its
                     // own: only a refusal goes, never a query that works here.
                     let r = match crate::host::answer(&q) {
-                        Err(e) if needs_platform(e.as_bytes()) => match (crate::account::key_session(), &q) {
+                        Err(e) if needs_platform(e.as_bytes()) => match (crate::host::account::key_session(), &q) {
                             (Some(s), _) => on_platform(&s, serde_json::to_vec(&q).unwrap_or_default()),
                             // Not signed in, a request still goes: anonymously,
                             // without its files (server.rs anon_request_response).
@@ -453,7 +453,7 @@ const PLATFORM_ONLY: [&str; 6] = [
 #[cfg(not(target_arch = "wasm32"))]
 fn local_or_platform(here: Result<Vec<u8>, String>, path: &str) -> Result<Vec<u8>, String> {
     match here {
-        Err(e) if needs_platform(e.as_bytes()) => match crate::account::key_session() {
+        Err(e) if needs_platform(e.as_bytes()) => match crate::host::account::key_session() {
             Some(s) => platform_file(&s, path),
             None => Err(SIGNED_OUT.to_owned()),
         },
@@ -469,9 +469,9 @@ fn needs_platform(body: &[u8]) -> bool {
 
 /// A request to this person's session on the platform's Cove.
 #[cfg(not(target_arch = "wasm32"))]
-fn on_platform_raw(session: &crate::account::Session, make: impl Fn(&str) -> ehttp::Request) -> Result<ehttp::Response, String> {
+fn on_platform_raw(session: &crate::host::account::Session, make: impl Fn(&str) -> ehttp::Request) -> Result<ehttp::Response, String> {
     let token = session.lock().unwrap().clone();
-    crate::account::platform_request(&token, make)
+    crate::host::account::platform_request(&token, make)
 }
 
 /// What a query only ndexr answers says on a computer nobody has signed in
@@ -498,7 +498,7 @@ pub fn anon_refused(status: u16) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn anon_request(what: &str, contact: &str, page: &str) -> Result<i64, String> {
     let body = serde_json::to_vec(&serde_json::json!({ "what": what, "contact": contact, "page": page })).unwrap_or_default();
-    let mut req = ehttp::Request::post(format!("{}/view/request", crate::account::cove_base()), body);
+    let mut req = ehttp::Request::post(format!("{}/view/request", crate::host::account::cove_base()), body);
     req.headers.insert("Content-Type", "text/plain");
     let r = ehttp::fetch_blocking(&req)?;
     if !r.ok {
@@ -509,14 +509,14 @@ pub fn anon_request(what: &str, contact: &str, page: &str) -> Result<i64, String
 
 /// The question again, at this person's session on the platform's Cove.
 #[cfg(not(target_arch = "wasm32"))]
-fn on_platform<T: DeserializeOwned>(session: &crate::account::Session, body: Vec<u8>) -> Result<T, String> {
+fn on_platform<T: DeserializeOwned>(session: &crate::host::account::Session, body: Vec<u8>) -> Result<T, String> {
     decode(on_platform_raw(session, |base| post(format!("{base}/api/q"), body.clone())))
 }
 
 /// One of the build views' files, from the platform: a cell has no build
 /// database, so they are never asked of it.
 #[cfg(not(target_arch = "wasm32"))]
-fn platform_file(session: &crate::account::Session, path: &str) -> Result<Vec<u8>, String> {
+fn platform_file(session: &crate::host::account::Session, path: &str) -> Result<Vec<u8>, String> {
     let r = on_platform_raw(session, |base| {
         let mut r = ehttp::Request::get(format!("{base}{path}"));
         r.headers.insert("Accept", "application/json");

@@ -79,7 +79,8 @@ def run(args):
     @check("cove.licence", "Cove", "Cove is MIT, and says so where people see it", gate=True)
     def _():
         lic = open(os.path.join(COVE, "LICENSE")).read()
-        about = open(os.path.join(APP, "src", "app.rs")).read()
+        # The About dialog (ui/app.rs since the 2026-11-25 reorganisation by system).
+        about = open(os.path.join(APP, "src", "ui", "app.rs")).read()
         ok = lic.startswith("MIT License") and "Cove is MIT-licensed and contains no RStudio code" in about
         return ("pass" if ok else "fail"), f"LICENSE starts '{lic.splitlines()[0]}'; About states MIT: {'yes' if 'Cove is MIT-licensed' in about else 'no'}"
 

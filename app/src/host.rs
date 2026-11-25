@@ -2,6 +2,33 @@
 //! app calls it in-process (backend.rs, Local); `cove serve` calls it
 //! for /api/q (server.rs). Native only — a browser has no machine to look at.
 
+// What the dispatcher answers with: each subsystem of this machine.
+pub(crate) mod account;
+pub(crate) mod apps;
+pub(crate) mod boxcomplete;
+pub(crate) mod boxes;
+pub(crate) mod brief;
+pub(crate) mod envs;
+pub(crate) mod kernel;
+#[cfg(unix)]
+pub(crate) mod limits;
+pub(crate) mod localagent;
+pub(crate) mod lsp;
+pub(crate) mod messages;
+pub(crate) mod patches;
+pub(crate) mod pkgflow;
+pub(crate) mod recap;
+#[cfg(unix)]
+pub(crate) mod record;
+pub(crate) mod runner;
+#[cfg(unix)]
+pub(crate) mod shares;
+pub(crate) mod stack;
+pub(crate) mod storage;
+pub(crate) mod update;
+pub(crate) mod vitals;
+pub(crate) mod zippack;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -9,9 +36,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::api::{b64_encode, shell_quote, DirEntry, FileText, JobView, Lang, Listing, Modules, Package, PlotData, Probe, Query, Settings, SettingsView, StackView};
-use crate::kernel;
-use crate::runner::{capture, capture_within};
-use crate::stack;
+use crate::host::runner::{capture, capture_within};
 
 /// Files the source pane opens: text, and not huge.
 const MAX_FILE: u64 = 5 << 20;
@@ -22,7 +47,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::Settings => {
             let v = settings_view();
             // Resolved before the first console asks (envs.rs; once per stack revision).
-            crate::envs::warm(&v.settings.module);
+            crate::host::envs::warm(&v.settings.module);
             serde_json::to_value(v)
         }
         Query::SaveSettings { settings } => {
@@ -31,8 +56,8 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         }
         Query::PinEnv { dir, modules } => {
             let dir = resolve(dir)?;
-            crate::envs::pin(&dir, modules)?;
-            serde_json::to_value(crate::envs::pinned(&dir).unwrap_or_default())
+            crate::host::envs::pin(&dir, modules)?;
+            serde_json::to_value(crate::host::envs::pinned(&dir).unwrap_or_default())
         }
         Query::Modules => serde_json::to_value(modules()),
         Query::Eval { lang, code, at } => {
@@ -68,27 +93,27 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::Render { path } => serde_json::to_value(render(path)?),
         Query::RenderJob => serde_json::to_value(stack::jobs::view("render")),
         Query::ListDomains => serde_json::to_value(list_domains()),
-        Query::Inbox { all, chat, find } => serde_json::to_value(crate::messages::inbox(&session_owner(), *all, chat, find)?),
-        Query::InboxAct { act } => Ok(crate::messages::act(&session_owner(), act)?),
-        Query::ProjectNames { names } => serde_json::to_value(crate::messages::project_names(&session_owner(), names)?),
+        Query::Inbox { all, chat, find } => serde_json::to_value(crate::host::messages::inbox(&session_owner(), *all, chat, find)?),
+        Query::InboxAct { act } => Ok(crate::host::messages::act(&session_owner(), act)?),
+        Query::ProjectNames { names } => serde_json::to_value(crate::host::messages::project_names(&session_owner(), names)?),
         Query::DeployApp { .. } | Query::DeployJob { .. } | Query::AppRoute { .. } | Query::ProjectRelease { .. } | Query::AppAccess { .. } | Query::SitePassword { .. } => return Err("apps are routed from cove.ndexr.io, where they are served".into()),
         // Build / Up / Down (apps.rs): the project's own scripts, run here as
         // the person - in a cove.ndexr.io session and on a desktop alike.
-        Query::AppStatus { host } => serde_json::to_value(crate::apps::status(Path::new(&app_dir(host)?))),
-        Query::AppAction { host, verb } => serde_json::to_value(crate::apps::action(host, Path::new(&app_dir(host)?), verb)?),
+        Query::AppStatus { host } => serde_json::to_value(crate::host::apps::status(Path::new(&app_dir(host)?))),
+        Query::AppAction { host, verb } => serde_json::to_value(crate::host::apps::action(host, Path::new(&app_dir(host)?), verb)?),
         Query::AppType { host, language } => serde_json::to_value(app_type(Path::new(&app_dir(host)?), language)?),
-        Query::AppJob { host } => serde_json::to_value(crate::apps::job(host)),
+        Query::AppJob { host } => serde_json::to_value(crate::host::apps::job(host)),
         Query::Versions { host } => serde_json::to_value(versions_at(Path::new(&app_dir(host)?))?),
         Query::VersionRestore { host, sha } => serde_json::to_value(version_restore_at(Path::new(&app_dir(host)?), sha, &session_owner())?),
         Query::Image { host, verb } => serde_json::to_value(image_at(&session_owner(), Path::new(&app_dir(host)?), host, verb)?),
         #[cfg(unix)]
-        Query::Record { host, capture } => serde_json::to_value(crate::record::view(Path::new(&app_dir(host)?), *capture)),
+        Query::Record { host, capture } => serde_json::to_value(crate::host::record::view(Path::new(&app_dir(host)?), *capture)),
         #[cfg(not(unix))]
         Query::Record { .. } => return Err("a project's record is read on Linux".into()),
         Query::GitChanges { host, sha } => serde_json::to_value(git_changes_at(Path::new(&app_dir(host)?), sha)?),
         Query::GitDiff { host, sha, path, old } => serde_json::to_value(git_diff_at(Path::new(&app_dir(host)?), sha, path, old)?),
         Query::Easyconfig { name, version } => serde_json::to_value(easyconfig(name, version)?),
-        Query::DmFile { id } => serde_json::to_value(crate::messages::dm_file(&session_owner(), *id)?),
+        Query::DmFile { id } => serde_json::to_value(crate::host::messages::dm_file(&session_owner(), *id)?),
         Query::Serving { apexes, targets } => {
             if !admin_cached() {
                 return Err("the serving path is for ndexr admins".into());
@@ -98,9 +123,9 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         // A desktop or single-person server: the cycle as this machine sees
         // it, no sessions (multiuser.rs answers it with them).
         Query::PackageFlow { set, package } => {
-            let mut f = crate::pkgflow::flow(set, package);
+            let mut f = crate::host::pkgflow::flow(set, package);
             if let Ok(b) = builds_live() {
-                f.live_machines = crate::pkgflow::live_machines(&b);
+                f.live_machines = crate::host::pkgflow::live_machines(&b);
             }
             serde_json::to_value(f)
         }
@@ -108,21 +133,21 @@ pub fn answer(q: &Query) -> Result<Value, String> {
             if !ndexr_admin(&session_owner()) {
                 return Err("the recap is for ndexr admins".into());
             }
-            serde_json::to_value(crate::recap::recap(*minutes))
+            serde_json::to_value(crate::host::recap::recap(*minutes))
         }
-        Query::Spoken { asked, reply } => serde_json::to_value(crate::brief::spoken(asked, reply)?),
-        Query::ReadAloud { text } => serde_json::to_value(crate::brief::read_aloud(text)?),
+        Query::Spoken { asked, reply } => serde_json::to_value(crate::host::brief::spoken(asked, reply)?),
+        Query::ReadAloud { text } => serde_json::to_value(crate::host::brief::read_aloud(text)?),
         Query::RecapBrief { minutes, fresh } => {
             if !ndexr_admin(&session_owner()) {
                 return Err("the briefing is for ndexr admins".into());
             }
-            serde_json::to_value(crate::brief::brief(*minutes, *fresh))
+            serde_json::to_value(crate::host::brief::brief(*minutes, *fresh))
         }
         Query::ConvertDomain { host, starter } => serde_json::to_value(convert_domain(host, starter)?),
         Query::CreateDomain { host, parent, rust, starter } => {
             let starter = match starter.as_str() {
-                "" if *rust => crate::starters::RUST_APP,
-                "" => crate::starters::SHINY_CHAOS,
+                "" if *rust => crate::project::starters::RUST_APP,
+                "" => crate::project::starters::SHINY_CHAOS,
                 s => s,
             };
             // The host decides, not the client's guess (`parent`, the folder
@@ -147,9 +172,9 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::AgentHistory { domain } => serde_json::to_value(agent_history(domain)?),
         Query::AgentBusy { domains } => serde_json::to_value(agent_busy(&session_owner(), domains)),
         Query::AppViewer { host, on } => serde_json::to_value(app_viewer(&host.trim().to_ascii_lowercase(), *on)?),
-        Query::Term { id, offset, rows, cols } => serde_json::to_value(crate::term::pty::read(*id, *offset, *rows, *cols)?),
-        Query::TermWrite { id, input } => serde_json::to_value(crate::term::pty::write(*id, input)?),
-        Query::TermKill { id } => serde_json::to_value(crate::term::pty::kill(*id)),
+        Query::Term { id, offset, rows, cols } => serde_json::to_value(crate::ui::ide::term::pty::read(*id, *offset, *rows, *cols)?),
+        Query::TermWrite { id, input } => serde_json::to_value(crate::ui::ide::term::pty::write(*id, input)?),
+        Query::TermKill { id } => serde_json::to_value(crate::ui::ide::term::pty::kill(*id)),
         Query::ClaudeStatus => serde_json::to_value(claude_as(&session_owner(), "status", "")?),
         Query::ClaudeConnect { token } => serde_json::to_value(claude_as(&session_owner(), "connect", token)?),
         Query::ClaudeForget => serde_json::to_value(claude_as(&session_owner(), "forget", "")?),
@@ -164,40 +189,40 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::SiteRequests { host } => serde_json::to_value(site_requests(host)?),
         Query::Stamps { paths } => serde_json::to_value(paths.iter().take(500).map(|p| stamp(p)).collect::<Vec<String>>()),
         Query::SiteStamp { path } => serde_json::to_value(site_stamp(path)?),
-        Query::SourceOpen { kind, name, version, sets, env } => serde_json::to_value(crate::source::open(kind, name, version, sets, env)?),
+        Query::SourceOpen { kind, name, version, sets, env } => serde_json::to_value(crate::catalog::source::open(kind, name, version, sets, env)?),
         Query::DomainClaim { hosts } => serde_json::to_value(claim_as(&session_owner(), hosts)?),
         Query::PublishDomain { host } => serde_json::to_value(publish_as(&session_owner(), host)?),
         Query::DomainRestore { host } => serde_json::to_value(restore_as(&session_owner(), host)?),
-        Query::SourceStatus { path } => serde_json::to_value(crate::source::status(path)?),
-        Query::SourceCheckpoint { path, message } => serde_json::to_value(crate::source::checkpoint(path, message)?),
-        Query::CandidateBuild { path } => serde_json::to_value(crate::source::build(path)?),
-        Query::CandidateTest { dir, code } => serde_json::to_value(crate::source::test(dir, code)?),
-        Query::CandidateJob => serde_json::to_value(stack::jobs::view(crate::source::JOB)),
-        Query::EnvRevise { dir } => serde_json::to_value(crate::source::revise(dir)?),
+        Query::SourceStatus { path } => serde_json::to_value(crate::catalog::source::status(path)?),
+        Query::SourceCheckpoint { path, message } => serde_json::to_value(crate::catalog::source::checkpoint(path, message)?),
+        Query::CandidateBuild { path } => serde_json::to_value(crate::catalog::source::build(path)?),
+        Query::CandidateTest { dir, code } => serde_json::to_value(crate::catalog::source::test(dir, code)?),
+        Query::CandidateJob => serde_json::to_value(stack::jobs::view(crate::catalog::source::JOB)),
+        Query::EnvRevise { dir } => serde_json::to_value(crate::catalog::source::revise(dir)?),
         Query::WriteFile { path, text } => serde_json::to_value(write_file(path, text)?),
-        Query::DbSchema { path } => serde_json::to_value(crate::db::schema(path)?),
+        Query::DbSchema { path } => serde_json::to_value(crate::ui::ide::db::schema(path)?),
         Query::DbRows { path, table, offset, limit, filter, sort, desc, count } => {
-            serde_json::to_value(crate::db::rows(path, table, *offset, *limit, filter, sort.as_deref(), *desc, *count)?)
+            serde_json::to_value(crate::ui::ide::db::rows(path, table, *offset, *limit, filter, sort.as_deref(), *desc, *count)?)
         }
-        Query::DbRow { path, table, rowid } => serde_json::to_value(crate::db::row(path, table, *rowid)?),
-        Query::DbSql { path, sql } => serde_json::to_value(crate::db::sql(path, sql)?),
+        Query::DbRow { path, table, rowid } => serde_json::to_value(crate::ui::ide::db::row(path, table, *rowid)?),
+        Query::DbSql { path, sql } => serde_json::to_value(crate::ui::ide::db::sql(path, sql)?),
         Query::Storage { refresh } => {
             if *refresh {
-                crate::storage::poke();
+                crate::host::storage::poke();
             }
-            serde_json::to_value(crate::storage::mine())
+            serde_json::to_value(crate::host::storage::mine())
         }
         #[cfg(unix)]
-        Query::StorageClear => serde_json::to_value(crate::storage::clear()?),
+        Query::StorageClear => serde_json::to_value(crate::host::storage::clear()?),
         #[cfg(not(unix))]
         Query::StorageClear => return Err("nothing measures storage here".into()),
-        Query::Manifests => serde_json::to_value(crate::manifest::host::list()),
-        Query::Manifest { name } => serde_json::to_value(crate::manifest::host::detail(name)?),
-        Query::InstallInfo => serde_json::to_value(crate::manifest::host::info()),
-        Query::Install { install } => serde_json::to_value(crate::manifest::host::install(install)?),
-        Query::InstallJob => serde_json::to_value(crate::manifest::host::job()),
-        Query::InstallStop => serde_json::to_value(crate::manifest::host::stop()),
-        Query::MyBuilds => serde_json::to_value(crate::manifest::host::my_builds()),
+        Query::Manifests => serde_json::to_value(crate::catalog::manifest::host::list()),
+        Query::Manifest { name } => serde_json::to_value(crate::catalog::manifest::host::detail(name)?),
+        Query::InstallInfo => serde_json::to_value(crate::catalog::manifest::host::info()),
+        Query::Install { install } => serde_json::to_value(crate::catalog::manifest::host::install(install)?),
+        Query::InstallJob => serde_json::to_value(crate::catalog::manifest::host::job()),
+        Query::InstallStop => serde_json::to_value(crate::catalog::manifest::host::stop()),
+        Query::MyBuilds => serde_json::to_value(crate::catalog::manifest::host::my_builds()),
     };
     v.map_err(|e| e.to_string())
 }
@@ -216,7 +241,7 @@ pub fn software_catalog() -> Result<Vec<u8>, String> {
     if let Ok(b) = std::fs::read(software_dir().join("catalog.json")) {
         return Ok(b);
     }
-    let cache = crate::kernel::cache_dir().join("catalog.json");
+    let cache = crate::host::kernel::cache_dir().join("catalog.json");
     if saved_settings().airgap {
         return std::fs::read(&cache).map_err(|_| "airgap mode: no software catalog on this machine - the atlas and Packages stay empty".to_owned());
     }
@@ -227,7 +252,7 @@ pub fn software_catalog() -> Result<Vec<u8>, String> {
         }
     }
     let url = std::env::var("COVE_PUBLIC_CATALOG").unwrap_or_else(|_| "https://cove.ndexr.io/view/software.json".into());
-    let _ = std::fs::create_dir_all(crate::kernel::cache_dir());
+    let _ = std::fs::create_dir_all(crate::host::kernel::cache_dir());
     let tmp = cache.with_extension("json.part");
     let got = Command::new("curl").args(["-fsSL", "--max-time", "30", "-o"]).arg(&tmp).arg(&url).status().is_ok_and(|s| s.success());
     if got && std::fs::rename(&tmp, &cache).is_ok() {
@@ -455,7 +480,7 @@ pub fn project_folder(host: &str) -> Option<PathBuf> {
         return None;
     }
     let root = Path::new(PLATFORM_DOMAINS);
-    let has = |d: &Path| d.join(crate::dotcove::DIR).join("app.env").is_file();
+    let has = |d: &Path| d.join(crate::project::dotcove::DIR).join("app.env").is_file();
     let flat = root.join(host);
     if has(&flat) {
         return Some(flat);
@@ -466,7 +491,7 @@ pub fn project_folder(host: &str) -> Option<PathBuf> {
 /// Whether a project is listed on the public viewer: APP_VIEWER=yes in its
 /// .cove/app.env, its owner's choice (Query::AppViewer). Not said: no.
 pub fn in_viewer(host: &str) -> bool {
-    project_folder(host).is_some_and(|d| viewer_line(&std::fs::read_to_string(d.join(crate::dotcove::DIR).join("app.env")).unwrap_or_default()))
+    project_folder(host).is_some_and(|d| viewer_line(&std::fs::read_to_string(d.join(crate::project::dotcove::DIR).join("app.env")).unwrap_or_default()))
 }
 
 fn viewer_line(env: &str) -> bool {
@@ -478,7 +503,7 @@ fn viewer_line(env: &str) -> bool {
 /// The file keeps its owner and mode (written in place).
 pub fn app_viewer(host: &str, on: Option<bool>) -> Result<bool, String> {
     let dir = project_folder(host).ok_or_else(|| format!("{host}: no .cove/app.env here - only a Cove project can be listed"))?;
-    let path = dir.join(crate::dotcove::DIR).join("app.env");
+    let path = dir.join(crate::project::dotcove::DIR).join("app.env");
     let env = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let Some(on) = on else { return Ok(viewer_line(&env)) };
     std::fs::write(&path, set_viewer_line(&env, on)).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1392,7 +1417,7 @@ pub fn grep(root: &str, query: &str, case: bool, regex: bool) -> Result<crate::a
     if !root.starts_with('/') {
         return Err(format!("{root}: not a folder"));
     }
-    let m = crate::find::Matcher::new(query, case, regex)?;
+    let m = crate::project::find::Matcher::new(query, case, regex)?;
     let mut out = crate::api::GrepView { root: root.to_owned(), ..Default::default() };
     let mut stack = vec![PathBuf::from(root)];
     while let Some(dir) = stack.pop() {
@@ -1579,7 +1604,7 @@ fn save_settings(s: &Settings) -> Result<(), String> {
     }
     let s = &s.clone().one_module();
     s.cvmfs.check()?;
-    crate::envs::warm(&s.module);
+    crate::host::envs::warm(&s.module);
     let f = settings_file();
     std::fs::create_dir_all(f.parent().unwrap()).map_err(|e| e.to_string())?;
     let body = serde_json::to_vec_pretty(s).map_err(|e| e.to_string())?;
@@ -1685,7 +1710,7 @@ fn installed_modules() -> Vec<String> {
         }
     }
     let Some(u) = use_sh() else { return Vec::new() };
-    let cmd = format!(". {} >/dev/null 2>&1 && {}ml -t av 2>&1", shell_quote(&u.display().to_string()), crate::source::module_use_line());
+    let cmd = format!(". {} >/dev/null 2>&1 && {}ml -t av 2>&1", shell_quote(&u.display().to_string()), crate::catalog::source::module_use_line());
     let v: Vec<String> = capture_within(&cmd, Duration::from_secs(30))
         .unwrap_or_default()
         .lines()
@@ -1707,7 +1732,7 @@ pub fn modules() -> Modules {
     let Some(u) = use_sh() else {
         return Modules { source: stack_absent(), ..Default::default() };
     };
-    let cmd = format!(". {} >/dev/null 2>&1 && {}ml -t av 2>&1", shell_quote(&u.display().to_string()), crate::source::module_use_line());
+    let cmd = format!(". {} >/dev/null 2>&1 && {}ml -t av 2>&1", shell_quote(&u.display().to_string()), crate::catalog::source::module_use_line());
     match capture_within(&cmd, Duration::from_secs(30)) {
         Some(out) => {
             let (mut env, r, python) = parse_modules(&out);
@@ -2037,7 +2062,7 @@ pub fn download(path: &str, format: &str) -> Result<(String, Vec<u8>), String> {
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| "root".into());
     let m = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
     if format == "zip" {
-        return Ok((format!("{name}.zip"), crate::zippack::zip(&p, TRANSFER_MAX)?));
+        return Ok((format!("{name}.zip"), crate::host::zippack::zip(&p, TRANSFER_MAX)?));
     }
     if m.is_dir() || format == "tar.gz" {
         let parent = p.parent().ok_or("not a folder that can be archived")?;
@@ -2077,7 +2102,7 @@ pub fn upload(dir: &str, name: &str, body: impl std::io::Read) -> Result<String,
     if !upload_name_ok(name) {
         return Err(format!("not a file name: {name:?}"));
     }
-    crate::storage::refuse_growth()?;
+    crate::host::storage::refuse_growth()?;
     // A domain's supporting_docs/ is made on its first upload - where the
     // Agents tab puts what a person attaches to a message (operator,
     // 2026-10-15: "upload files and supporting docs through cove agent").
@@ -2140,14 +2165,14 @@ pub(crate) fn domain_at(p: &Path) -> Option<crate::api::DomainInfo> {
         .and_then(|l| l.strip_prefix("# ").map(|t| t.split(" · ").next().unwrap_or(t).trim().to_owned()))
         .filter(|t| *t != host)
         .unwrap_or_default();
-    let env = crate::envs::pinned(p).unwrap_or_default();
+    let env = crate::host::envs::pinned(p).unwrap_or_default();
     let target = std::fs::read_to_string(p.join("nginx.conf")).map(|c| domain_target(&c)).unwrap_or_default();
     let app = app_kind(&target, p).to_owned();
     // The folder's own mtime moves only when an entry is added or removed;
     // its top-level files move on every save.
     let mtime = |q: &Path| std::fs::metadata(q).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
     let modified = std::fs::read_dir(p).into_iter().flatten().flatten().filter(|e| !e.file_name().to_string_lossy().starts_with('.')).map(|e| mtime(&e.path())).max().unwrap_or(0).max(mtime(p));
-    let language = crate::apps::language(p).0;
+    let language = crate::host::apps::language(p).0;
     let env_default = language_env(&language);
     let framework = framework_of(p, &language, &app).to_owned();
     // When the folder was made (its birth time): Connect's Created for a
@@ -2162,7 +2187,7 @@ pub(crate) fn domain_at(p: &Path) -> Option<crate::api::DomainInfo> {
 /// in app/Cargo.toml (cove.ndexr.io, scripts/new-rust-app.sh) has no
 /// language at the top of its folder, and showed "Not detected" in Connect.
 fn framework_of(dir: &Path, language: &str, kind: &str) -> &'static str {
-    match crate::apps::framework(dir, language) {
+    match crate::host::apps::framework(dir, language) {
         "" if kind == "rust" => "rust",
         "" if kind == "shiny" => "shiny",
         f => f,
@@ -2208,7 +2233,7 @@ fn app_kinds() -> std::collections::HashMap<String, AppFacts> {
         let Some(h) = d.file_name().and_then(|n| n.to_str()).filter(|n| is_host_name(n)) else { return false };
         let target = std::fs::read_to_string(d.join("nginx.conf")).map(|c| domain_target(&c)).unwrap_or_default();
         let kind = app_kind(&target, d);
-        let language = crate::apps::language(d).0;
+        let language = crate::host::apps::language(d).0;
         let framework = framework_of(d, &language, kind);
         if !kind.is_empty() || !language.is_empty() {
             m.insert(h.to_owned(), AppFacts { kind, language, framework });
@@ -2290,8 +2315,8 @@ pub fn project_port(name: &str) -> Option<(u16, bool)> {
     if seen.as_ref().is_none_or(|(at, _)| at.elapsed() > Duration::from_secs(5)) {
         let mut map = HashMap::new();
         for d in list_domains() {
-            let env = std::fs::read_to_string(crate::dotcove::contract_dir(Path::new(&d.path)).join("app.env")).unwrap_or_default();
-            let kv = crate::apps::read_env(&env);
+            let env = std::fs::read_to_string(crate::project::dotcove::contract_dir(Path::new(&d.path)).join("app.env")).unwrap_or_default();
+            let kv = crate::host::apps::read_env(&env);
             let get = |k: &str| kv.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str());
             if get("APP_KIND") == Some("port") {
                 if let Some(port) = get("APP_PORT").and_then(|p| p.parse::<u16>().ok()) {
@@ -2365,7 +2390,7 @@ fn list_domains() -> Vec<crate::api::DomainInfo> {
     }
     // Domains shared with this person to work on (shares.rs), at ~/shared.
     #[cfg(unix)]
-    for (_, p, owner) in crate::shares::granted(Path::new(&home())) {
+    for (_, p, owner) in crate::host::shares::granted(Path::new(&home())) {
         if let Some(mut d) = domain_at(Path::new(&p)) {
             d.owner = owner;
             out.push(d);
@@ -2420,7 +2445,7 @@ fn domains_root(project: &Path) -> PathBuf {
 /// A new domain's folder, shaped like the shared contract (AGENTS-shared §2):
 /// the id is the hostname, the server is wrapped in measured().
 fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::DomainInfo, String> {
-    use crate::starters::{RUST_APP, SHINY_BLANK, SHINY_CHAOS};
+    use crate::project::starters::{RUST_APP, SHINY_BLANK, SHINY_CHAOS};
     let folder = starter_files(starter);
     if ![RUST_APP, SHINY_BLANK, SHINY_CHAOS].contains(&starter) && folder.is_empty() {
         return Err(format!("{starter}: not a starter Cove knows"));
@@ -2432,7 +2457,7 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
     if let Some(m) = crate::api::posit_mark(&host) {
         return Err(crate::api::posit_mark_words(&host, m));
     }
-    crate::storage::refuse_growth()?;
+    crate::host::storage::refuse_growth()?;
     let parent = resolve(parent)?;
     if !parent.is_dir() {
         return Err(format!("{}: no such folder", parent.display()));
@@ -2467,9 +2492,9 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
         seed_into(&dir, starter);
         let _ = capture_within(&format!("cd {} && git init -q && git add -A", shell_quote(&dir.display().to_string())), Duration::from_secs(20));
         let info = domain_at(&dir).ok_or_else(|| "created, but it does not read back as a domain".to_owned())?;
-        let app = crate::apps::status(&dir);
+        let app = crate::host::apps::status(&dir);
         if app.kind == "port" && app.verbs.iter().any(|v| v == "build") {
-            let _ = crate::apps::action(&host, &dir, "build");
+            let _ = crate::host::apps::action(&host, &dir, "build");
         }
         return Ok(info);
     }
@@ -2499,7 +2524,7 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
     let context = format!("# {host} · {host}\nOne-paragraph purpose.\n\n## Files\n- module.r\n\n## Auth\nYou and the people you share it with (Project › Access).\n\n## Open\n- Publish it at route.ndexr.io (DNS, certificate, vhost).\n");
     let mut files: Vec<(String, String)> = vec![("module.r".into(), module), ("CONTEXT.md".into(), context), (".gitignore".into(), ".Rhistory\n.RData\n*.log\n".into())];
     app_contract(&mut files, "r", "module", "")?;
-    crate::dotcove::write(&dir, &crate::dotcove::lay(&host, files, &starter_files))?;
+    crate::project::dotcove::write(&dir, &crate::project::dotcove::lay(&host, files, &starter_files))?;
     // Each domain is its own repo; `ndexr push` / Push all gives it a remote.
     let _ = capture_within(&format!("cd {} && git init -q && git add -A", shell_quote(&dir.display().to_string())), Duration::from_secs(20));
     domain_at(&dir).ok_or_else(|| "created, but it does not read back as a domain".into())
@@ -2543,20 +2568,20 @@ fn convert_domain(host: &str, starter: &str) -> Result<crate::api::Converted, St
     if laid.is_empty() {
         return Err(format!("{starter}: Cove cannot convert to this starter yet - pick one with its own folder"));
     }
-    crate::storage::refuse_growth()?;
-    let cove = crate::dotcove::contract_dir(&dir);
+    crate::host::storage::refuse_growth()?;
+    let cove = crate::project::dotcove::contract_dir(&dir);
     if cove.join("down.sh").is_file() {
         let _ = capture_within(&format!("cd {} && ./{}/down.sh", shell_quote(&dir.display().to_string()), cove.strip_prefix(&dir).map(|p| p.display().to_string()).unwrap_or_else(|_| ".cove".into())), Duration::from_secs(30));
     }
-    let st = crate::apps::status(&dir);
-    let fw = crate::apps::framework(&dir, &st.language);
+    let st = crate::host::apps::status(&dir);
+    let fw = crate::host::apps::framework(&dir, &st.language);
     let from = if !fw.is_empty() { fw.to_owned() } else if !st.language.is_empty() { st.language.clone() } else { st.kind.clone() };
     let from = if from.is_empty() { "app".to_owned() } else { from };
-    let was_rel = move_aside(&dir, &format!(".cove/was/{from}-{}", crate::software::now_secs()))?;
+    let was_rel = move_aside(&dir, &format!(".cove/was/{from}-{}", crate::ui::software::now_secs()))?;
     write_laid(&dir, laid)?;
     // The same port as before, where it had one: its address is routed there.
     if !st.port.is_empty() {
-        let env = crate::dotcove::contract_dir(&dir).join("app.env");
+        let env = crate::project::dotcove::contract_dir(&dir).join("app.env");
         if let Ok(t) = std::fs::read_to_string(&env) {
             let t: String = t.lines().map(|l| if l.trim_start().starts_with("APP_PORT=") { format!("APP_PORT={}", st.port) } else { l.to_owned() }).collect::<Vec<_>>().join("\n") + "\n";
             let _ = std::fs::write(&env, t);
@@ -2565,9 +2590,9 @@ fn convert_domain(host: &str, starter: &str) -> Result<crate::api::Converted, St
     seed_into(&dir, starter);
     let _ = capture_within(&format!("cd {} && git add -A && git commit -qm {}", shell_quote(&dir.display().to_string()), shell_quote(&format!("convert: {from} -> {starter} (the old app is in {was_rel})"))), Duration::from_secs(30));
     let domain = domain_at(&dir).ok_or_else(|| "converted, but it does not read back as a domain".to_owned())?;
-    let app = crate::apps::status(&dir);
+    let app = crate::host::apps::status(&dir);
     if app.kind == "port" && app.verbs.iter().any(|v| v == "build") {
-        let _ = crate::apps::action(host, &dir, "build");
+        let _ = crate::host::apps::action(host, &dir, "build");
     }
     Ok(crate::api::Converted { domain, was: was_rel, from })
 }
@@ -2587,7 +2612,7 @@ fn new_signup_page(dir: &Path, host: &str) -> bool {
 /// filled in (2026-10-25). Empty for the two Shiny starters create_domain
 /// writes itself.
 fn starter_layout(host: &str, starter: &str) -> Result<Vec<(String, String)>, String> {
-    let rust = starter == crate::starters::RUST_APP;
+    let rust = starter == crate::project::starters::RUST_APP;
     let mut laid: Vec<(String, String)> = if rust {
         rust_app_files(host).into_iter().map(|(n, b)| (n.to_owned(), b)).collect()
     } else {
@@ -2608,7 +2633,7 @@ fn starter_layout(host: &str, starter: &str) -> Result<Vec<(String, String)>, St
     }
     // The contract and every type's scripts in .cove/ (dotcove.rs): the
     // person's folder starts with their app and nothing else.
-    Ok(crate::dotcove::lay(host, laid, &starter_files))
+    Ok(crate::project::dotcove::lay(host, laid, &starter_files))
 }
 
 fn write_laid(dir: &Path, laid: Vec<(String, String)>) -> Result<(), String> {
@@ -2672,8 +2697,8 @@ fn seed_stamp(starter: &str) -> Result<String, String> {
 
 /// The starters a seed is built for: those that compile (a Cargo.toml).
 fn seeded_starters() -> Vec<&'static str> {
-    std::iter::once(crate::starters::RUST_APP)
-        .chain(crate::starters::FOLDER_STARTERS.iter().copied())
+    std::iter::once(crate::project::starters::RUST_APP)
+        .chain(crate::project::starters::FOLDER_STARTERS.iter().copied())
         .filter(|s| starter_layout(SEED_HOST, s).is_ok_and(|l| l.iter().any(|(n, _)| n == "Cargo.toml")))
         .collect()
 }
@@ -2713,7 +2738,7 @@ pub fn seed_cli(args: &[String]) -> i32 {
         // A person's own site, laid into a folder that exists (scripts/reset-user-sites.py).
         "site" if !a(2).is_empty() => {
             let host = a(1).trim().to_ascii_lowercase();
-            starter_layout(&host, crate::starters::NODE_SITE).and_then(|l| write_laid(Path::new(a(2)), l)).map(|_| format!("{host}: laid in {}", a(2)))
+            starter_layout(&host, crate::project::starters::NODE_SITE).and_then(|l| write_laid(Path::new(a(2)), l)).map(|_| format!("{host}: laid in {}", a(2)))
         }
         _ => Err("cove seed list | stamp <starter> | lay <starter> <new dir> | site <host> <dir>".into()),
     };
@@ -2731,7 +2756,7 @@ pub fn seed_cli(args: &[String]) -> i32 {
 
 /// The Shiny starter, compiled in like the Rust one so every Cove (the
 /// desktop builds on neo and the laptop too) lays down the same file.
-const SHINY_CHAOS_MODULE: &str = include_str!("../templates/shiny-app/module.r");
+const SHINY_CHAOS_MODULE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/shiny-app/module.r"));
 
 /// Whose `host` is on this machine, when it is not under `parent`: the
 /// platform's flat src/domains/<host> or another owner's
@@ -2766,20 +2791,20 @@ fn held_elsewhere(host: &str, parent: &Path) -> Option<String> {
 /// user has inspiration"), with the first app's media core over the stack's
 /// FFmpeg (clean audio, cut, extract) as its second tab.
 const RUST_APP: &[(&str, &str)] = &[
-    ("Cargo.toml", include_str!("../templates/rust-app/Cargo.toml")),
-    ("CONTEXT.md", include_str!("../templates/rust-app/CONTEXT.md")),
-    (".gitignore", include_str!("../templates/rust-app/gitignore")),
-    ("run.sh", include_str!("../templates/rust-app/run.sh")),
-    ("build-web.sh", include_str!("../templates/rust-app/build-web.sh")),
-    ("web/index.html", include_str!("../templates/rust-app/web/index.html")),
-    ("src/main.rs", include_str!("../templates/rust-app/src/main.rs")),
-    ("src/api.rs", include_str!("../templates/rust-app/src/api.rs")),
-    ("src/app.rs", include_str!("../templates/rust-app/src/app.rs")),
-    ("src/atlas.rs", include_str!("../templates/rust-app/src/atlas.rs")),
-    ("src/catalog.rs", include_str!("../templates/rust-app/src/catalog.rs")),
-    ("src/chaos.rs", include_str!("../templates/rust-app/src/chaos.rs")),
-    ("src/media.rs", include_str!("../templates/rust-app/src/media.rs")),
-    ("src/server.rs", include_str!("../templates/rust-app/src/server.rs")),
+    ("Cargo.toml", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/Cargo.toml"))),
+    ("CONTEXT.md", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/CONTEXT.md"))),
+    (".gitignore", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/gitignore"))),
+    ("run.sh", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/run.sh"))),
+    ("build-web.sh", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/build-web.sh"))),
+    ("web/index.html", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/web/index.html"))),
+    ("src/main.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/main.rs"))),
+    ("src/api.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/api.rs"))),
+    ("src/app.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/app.rs"))),
+    ("src/atlas.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/atlas.rs"))),
+    ("src/catalog.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/catalog.rs"))),
+    ("src/chaos.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/chaos.rs"))),
+    ("src/media.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/media.rs"))),
+    ("src/server.rs", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/rust-app/src/server.rs"))),
 ];
 
 /// The template's files for `host`: its name in the UI and docs, and a crate
@@ -2915,9 +2940,9 @@ pub fn taken_ports() -> std::collections::HashSet<u16> {
 /// Settings › Info's Type menu (dotcove.rs set_type): the project
 /// becomes `language`, given a port of its own when it needs one.
 fn app_type(dir: &Path, language: &str) -> Result<String, String> {
-    crate::dotcove::adopt(dir, &starter_files)?;
-    let running = crate::apps::status(dir).running;
-    crate::dotcove::set_type(dir, language, running, &free_app_port)
+    crate::project::dotcove::adopt(dir, &starter_files)?;
+    let running = crate::host::apps::status(dir).running;
+    crate::project::dotcove::set_type(dir, language, running, &free_app_port)
 }
 
 /// `cove dotcove <dir>...`: each project folder moved into .cove/
@@ -2925,7 +2950,7 @@ fn app_type(dir: &Path, language: &str) -> Result<String, String> {
 pub fn dotcove_cli(dirs: &[String]) -> i32 {
     let mut code = 0;
     for d in dirs {
-        match crate::dotcove::adopt(Path::new(d), &starter_files) {
+        match crate::project::dotcove::adopt(Path::new(d), &starter_files) {
             Ok(true) => println!("moved   {d}"),
             Ok(false) => println!("skipped {d}"),
             Err(e) => {
@@ -3259,7 +3284,7 @@ pub fn versions_at(dir: &Path) -> Result<Vec<crate::api::Version>, String> {
 pub fn code_complete(path: &str, lang: &str, line: &str, col: usize, text: &str, row: usize) -> Result<crate::api::Completion, String> {
     // `alias$` of a box::use: the module's own exports, R running or not.
     if lang == "r" {
-        if let Some(c) = crate::boxcomplete::complete(path, text, line, col, &saved_settings().module) {
+        if let Some(c) = crate::host::boxcomplete::complete(path, text, line, col, &saved_settings().module) {
             return Ok(c);
         }
     }
@@ -3268,7 +3293,7 @@ pub fn code_complete(path: &str, lang: &str, line: &str, col: usize, text: &str,
         "python" => Lang::Python,
         "julia" => Lang::Julia,
         "shell" => Lang::Shell,
-        "rust" => return crate::lsp::complete_rust(path, text, row, col),
+        "rust" => return crate::host::lsp::complete_rust(path, text, row, col),
         _ => return Err("this kind of file completes from its own words only".into()),
     };
     kernel::complete(session, line, col)
@@ -3675,8 +3700,8 @@ fn shared_platform_paths(owner: &str, text: &str) -> String {
         return text.to_owned();
     }
     let mut out = text.to_owned();
-    for (host, _, _) in crate::shares::granted(&home) {
-        if let Some(to) = crate::shares::platform_path_of(&home, &host) {
+    for (host, _, _) in crate::host::shares::granted(&home) {
+        if let Some(to) = crate::host::shares::platform_path_of(&home, &host) {
             let at = format!("{lead}{host}");
             out = if out == at { to.display().to_string() } else { out.replace(&format!("{at}/"), &format!("{}/", to.display())) };
         }
@@ -3695,8 +3720,8 @@ fn shared_platform_paths(_owner: &str, text: &str) -> String {
 fn project_brief(owner: &str, domain: &str) -> Option<String> {
     let dir = [Path::new(PLATFORM_DOMAINS).join(owner).join(domain), Path::new(PLATFORM_DOMAINS).join(domain)]
         .into_iter()
-        .find(|d| d.join(crate::dotcove::DIR).join("app.env").is_file())?;
-    let env = std::fs::read_to_string(dir.join(crate::dotcove::DIR).join("app.env")).ok()?;
+        .find(|d| d.join(crate::project::dotcove::DIR).join("app.env").is_file())?;
+    let env = std::fs::read_to_string(dir.join(crate::project::dotcove::DIR).join("app.env")).ok()?;
     Some(brief_text(domain, &env))
 }
 
@@ -3775,7 +3800,7 @@ pub fn agent_run_as(owner: &str, domain: &str, prompt: &str, model: &str, cwd: O
         None => prompt,
     };
     // Over the free storage cap, every turn is about getting back under it.
-    let prompt = match crate::storage::agent_brief_for(owner) {
+    let prompt = match crate::host::storage::agent_brief_for(owner) {
         Some(brief) => format!("{brief}{prompt}"),
         None => prompt.to_owned(),
     };
@@ -5449,7 +5474,7 @@ mod tests {
 
     #[test]
     fn a_new_project_is_laid_out_with_cove() {
-        for id in ["python-ml", "shiny-trial", "node-site", crate::starters::RUST_APP] {
+        for id in ["python-ml", "shiny-trial", "node-site", crate::project::starters::RUST_APP] {
             let laid = super::starter_layout("x.ndexr.io", id).unwrap();
             let has = |n: &str| laid.iter().any(|(p, _)| p == n);
             assert!(has(".cove/app.env") && has(".cove/build.sh") && has(".cove/up.sh") && has(".cove/r/build.sh") && has(".cove/rust/run.sh"), "{id}");
@@ -5505,7 +5530,7 @@ mod tests {
         fn every_folder_starter_has_its_files() {
         // A starter in the chooser with no folder would fail at create time
         // ("not a starter Cove knows"); one with no way to run, at first use.
-        for id in crate::starters::FOLDER_STARTERS {
+        for id in crate::project::starters::FOLDER_STARTERS {
             let files = super::starter_files(id);
             let has = |n: &str| files.iter().any(|(p, _)| *p == n);
             assert!(has("CONTEXT.md"), "{id}: no CONTEXT.md - it would not read back as a domain");
@@ -5568,7 +5593,7 @@ mod tests {
         for (shared, helper) in [("_r", "r/log.r"), ("_python", "log.py"), ("_node", "log.js"), ("_julia", "log.jl"), ("_rust", "src/log.rs")] {
             assert!(super::starter_files(shared).iter().any(|(p, _)| *p == helper), "{shared} lays no {helper}");
         }
-        for id in crate::starters::FOLDER_STARTERS {
+        for id in crate::project::starters::FOLDER_STARTERS {
             let files = super::starter_files(id);
             let logs = files.iter().any(|(p, b)| {
                 let ext = p.rsplit('.').next().unwrap_or("");
@@ -5622,9 +5647,9 @@ mod tests {
 
     fn starter_needs() -> Vec<(&'static str, &'static str, &'static str)> {
         let mut out = Vec::new();
-        for id in crate::starters::FOLDER_STARTERS {
+        for id in crate::project::starters::FOLDER_STARTERS {
             if let Some((_, env)) = super::starter_files(id).into_iter().find(|(p, _)| *p == "app.env") {
-                for (k, n) in crate::starters::needs(env) {
+                for (k, n) in crate::project::starters::needs(env) {
                     out.push((*id, k, n));
                 }
             }
@@ -5639,7 +5664,7 @@ mod tests {
         // ndexr.ndexr.io) or a module in the CVMFS stack (EasyBuild). Skipped
         // where ndexr.ndexr.io's manifests or the stack are not on disk (a
         // desktop build).
-        for id in crate::starters::FOLDER_STARTERS {
+        for id in crate::project::starters::FOLDER_STARTERS {
             let files = super::starter_files(id);
             if let Some((_, env)) = files.iter().find(|(p, _)| *p == "app.env") {
                 assert!(env.contains("APP_NEEDS="), "{id}: app.env has no APP_NEEDS");
@@ -6151,7 +6176,7 @@ mod mask_secrets_multibyte {
     /// binary files are not searched (operator, 2026-10-20).
     #[test]
     fn find_in_files_reads_the_work_not_the_store() {
-        let d = crate::kernel::cache_dir().join("grep-test");
+        let d = crate::host::kernel::cache_dir().join("grep-test");
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join(".git")).unwrap();
         std::fs::create_dir_all(d.join("R")).unwrap();

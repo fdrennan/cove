@@ -469,7 +469,7 @@ pub enum Query {
     /// (a job, kind "install"), its progress, Stop; and the person's builds
     /// as their account has them (api.ndexr.io/v1/builds, their key).
     InstallInfo,
-    Install { install: crate::manifest::InstallRequest },
+    Install { install: crate::catalog::manifest::InstallRequest },
     InstallJob,
     InstallStop,
     MyBuilds,

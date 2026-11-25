@@ -68,9 +68,9 @@ build_web() {
 # and every session keeps what it has. Several sessions edit the atlas at
 # once; one whole-file copy from a stale buffer undid another's work.
 guard() {
-  [[ -f "$state/guard.stamp" && -z "$(find "$app/src/atlas.rs" "$app/src/atlas" -newer "$state/guard.stamp" -print -quit 2>/dev/null)" ]] && return 0
+  [[ -f "$state/guard.stamp" && -z "$(find "$app/src/ui/atlas.rs" "$app/src/ui/atlas" -newer "$state/guard.stamp" -print -quit 2>/dev/null)" ]] && return 0
   local t0=$SECONDS
-  if CARGO_TARGET_DIR="$state/test-target" cargo_ test --manifest-path "$app/Cargo.toml" --bin cove atlas:: >"$state/guard.log" 2>&1; then
+  if CARGO_TARGET_DIR="$state/test-target" cargo_ test --manifest-path "$app/Cargo.toml" --bin cove ui::atlas:: >"$state/guard.log" 2>&1; then
     touch -r "$state/build-started" "$state/guard.stamp"
     log "atlas tests passed in $((SECONDS - t0))s"
     return 0
@@ -210,10 +210,10 @@ prune_releases() {
 # The root server is restarted only when its own code changed: everything a
 # session runs comes from its release, so a UI or session-side build needs no
 # restart at all. When it is restarted the sessions carry on (KillMode=process,
-# multiuser.rs adopt) - a few seconds of failed polls, nobody signed out.
+# server/multiuser.rs adopt) - a few seconds of failed polls, nobody signed out.
 server_changed() {
   [[ ! -f "$state/server.stamp" ]] && return 0
-  [[ -n "$(find "$app/src/multiuser.rs" "$app/src/server.rs" "$app/src/host.rs" "$app/src/api.rs" "$app/src/storage.rs" "$app/src/kernel.rs" "$app/src/envs.rs" "$app/assets" "$app/templates" "$app/assets/route-app.sh" "$app/Cargo.toml" "$app/Cargo.lock" "$app/THIRD-PARTY-NOTICES.txt" -newer "$state/server.stamp" -print -quit 2>/dev/null)" ]]
+  [[ -n "$(find "$app/src/server/multiuser.rs" "$app/src/server.rs" "$app/src/host.rs" "$app/src/api.rs" "$app/src/host/storage.rs" "$app/src/host/kernel.rs" "$app/src/host/envs.rs" "$app/assets" "$app/templates" "$app/assets/route-app.sh" "$app/Cargo.toml" "$app/Cargo.lock" "$app/THIRD-PARTY-NOTICES.txt" -newer "$state/server.stamp" -print -quit 2>/dev/null)" ]]
 }
 # Claude Code for every account's Terminal (operator, 2026-10-16: "not working
 # claude" - fdrennan got "claude: command not found"; the only copy was in

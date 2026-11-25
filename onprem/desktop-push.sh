@@ -152,7 +152,7 @@ case "${1:-}" in
     # would die with cove-onprem on its next restart, mid-build.
     # Not the laptop (operator, 2026-11-20: "you cant touch the laptop outside
     # of me updating it"): it takes each release from the published feed
-    # (src/update.rs), like anyone's. `desktop-push.sh laptop` by hand still works.
+    # (src/host/update.rs), like anyone's. `desktop-push.sh laptop` by hand still works.
     for h in neo cell; do
       systemd-run --user --quiet --collect --unit="cove-desktop-$h-$(date +%s%N)" \
         --setenv=SETTLE="$SETTLE" "$0" "$h-queued" "${2:-}" 2>/dev/null ||

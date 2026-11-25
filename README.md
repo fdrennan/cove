@@ -208,7 +208,7 @@ cargo test --release           # tests; the live ones are #[ignore] and need a d
 
 | path | what it is |
 |---|---|
-| `app/src/` | the program: UI, server (`server.rs`, `multiuser.rs`), host actions (`host.rs`), atlas (`atlas.rs`, `atlas/`), the public viewer (`view.rs`) |
+| `app/src/` | the program, laid out by system (`app/ARCHITECTURE.md`): `ui/` (everything drawn; atlas, builds, the public viewer in `ui/front/`), `host/` (the machine side), `server/` (`cove serve`, multiuser), `desktop/`, `project/`, `catalog/` |
 | `app/templates/starters/` | the project starters, compiled in by `build.rs` |
 | `app/assets/` | fonts, backdrops, framework marks, helper scripts |
 | `app/packaging/` | Linux, macOS and Windows packaging |

@@ -148,7 +148,7 @@ else
   COVE_QUIET=1 "$1" > "$tmp/install.log" 2>&1 || { tail -n 15 "$tmp/install.log" >&2; fail "the tarball's installer failed (above)"; }
   where="${PREFIX:-$HOME/.local}/bin/cove"; start="or open Cove from your applications"
   # No WebKitGTK to install (operator, 2026-11-24): bin/cove links none, and
-  # the App panel's embedded browser is the stack's (src/desk.rs).
+  # the App panel's embedded browser is the stack's (src/desktop/desk.rs).
 fi
 
 # The ndexr software stack: asked once, here, not only by the desktop app at

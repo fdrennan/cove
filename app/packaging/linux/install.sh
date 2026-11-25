@@ -57,7 +57,7 @@ install -Dm644 "$here/share/icons/hicolor/scalable/apps/io.ndexr.cove.svg" "$ico
 refresh
 
 # bin/cove links no WebKit or GTK, so it starts on any desktop. The App
-# panel's embedded browser comes from a sibling build (src/desk.rs): the
+# panel's embedded browser comes from a sibling build (src/desktop/desk.rs): the
 # ndexr stack's WebKitGTK when the stack is mounted, else the system's when it
 # has one. Nothing is installed for it (operator, 2026-11-24: "build it into
 # the stack so when cvmfs is used its there"); without either, the panel

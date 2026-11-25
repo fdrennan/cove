@@ -1,9 +1,9 @@
 {
-  "at": "2026-11-24T06:03:03Z",
-  "cove_commit": "5611795",
+  "at": "2026-11-25T06:03:05Z",
+  "cove_commit": "c3db3e8d",
   "counts": {
-    "pass": 13,
-    "fail": 0,
+    "pass": 12,
+    "fail": 1,
     "skip": 0
   },
   "checks": [
@@ -12,11 +12,11 @@
       "tool": "Cove",
       "duty": "Cove is MIT, and says so where people see it",
       "gate": true,
-      "status": "pass",
-      "evidence": "LICENSE starts 'MIT License'; About states MIT: yes",
+      "status": "fail",
+      "evidence": "check raised FileNotFoundError: [Errno 2] No such file or directory: '/home/ubuntu/ndexr/src/domains/drennanfreddy/cove.ndexr.io/app/src/app.rs'",
       "check": "cove.licence",
       "product": "cove",
-      "summary": "LICENSE starts 'MIT License'; About states MIT: yes",
+      "summary": "check raised FileNotFoundError: [Errno 2] No such file or directory: '/home/ubuntu/ndexr/src/domains/drennanfreddy/cove.ndexr.io/app/src/app.rs'",
       "details": {}
     },
     {
@@ -61,12 +61,12 @@
       "duty": "No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only)",
       "gate": true,
       "status": "pass",
-      "evidence": "71542 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "evidence": "72357 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "check": "cove.not-derivative",
       "product": "cove",
-      "summary": "71542 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "summary": "72357 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "details": {
-        "cove_lines": 71542,
+        "cove_lines": 72357,
         "reference_lines": 408860,
         "allow_listed": 26,
         "matches": []
@@ -78,10 +78,10 @@
       "duty": "No Posit mark (RStudio, Posit, Positron, Shiny) in any served ndexr hostname",
       "gate": true,
       "status": "pass",
-      "evidence": "623 vhosts, none names a Posit mark",
+      "evidence": "403 vhosts, none names a Posit mark",
       "check": "platform.no-marks-in-hostnames",
       "product": "platform",
-      "summary": "623 vhosts, none names a Posit mark",
+      "summary": "403 vhosts, none names a Posit mark",
       "details": {}
     },
     {

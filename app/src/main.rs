@@ -14,87 +14,19 @@
 //!                             sign-in, a `serve` per person run as them
 //!   (wasm32)                      the UI in a browser, driving its server
 
-#[cfg(not(target_arch = "wasm32"))]
-mod account;
-mod links;
-mod tabs;
-#[cfg(not(target_arch = "wasm32"))]
-mod boxcomplete;
-mod device;
-mod drafts;
-mod spoken;
-#[cfg(not(target_arch = "wasm32"))]
-mod localagent;
-mod manage;
-#[cfg(unix)]
-mod localserve;
-#[cfg(all(target_os = "linux", not(feature = "webview")))]
-mod desk;
-mod localstack;
-mod account_tab;
-mod settings_tab;
-mod access;
-mod agent;
-mod ansi;
+// The map of the code (ARCHITECTURE.md): the contract both sides share sits
+// here at the root; the machine side, the ways it is served and the native
+// desktop pieces are native-only; the UI and the logic both sides use compile
+// everywhere, wasm32 included.
+
+/// The contract: every Query and every view, the same on both sides.
 mod api;
-#[cfg(not(target_arch = "wasm32"))]
-mod apps;
-#[cfg(unix)]
-mod record;
-mod app;
-mod atlas;
-mod backdrop;
+/// The one boundary between the UI and a machine: Local, Http, Cell.
 mod backend;
-#[cfg(not(target_arch = "wasm32"))]
-mod boxes;
-mod db;
-mod dock;
-// Server-side but for TYPES, which the Settings tab's Type menu reads.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-mod dotcove;
-mod edcomplete;
-mod editkeys;
-#[cfg(not(target_arch = "wasm32"))]
-mod envs;
-mod find;
-mod frameworks;
-mod gitview;
+/// The machine side: answers a Query by looking at this machine.
 #[cfg(not(target_arch = "wasm32"))]
 mod host;
-#[cfg(not(target_arch = "wasm32"))]
-mod zippack;
-#[cfg(not(target_arch = "wasm32"))]
-mod vitals;
-mod icons;
-mod ide;
-#[cfg(not(target_arch = "wasm32"))]
-mod lsp;
-mod inbox;
-#[cfg(not(target_arch = "wasm32"))]
-mod kernel;
-#[cfg(not(target_arch = "wasm32"))]
-mod messages;
-#[cfg(not(target_arch = "wasm32"))]
-mod recap;
-#[cfg(not(target_arch = "wasm32"))]
-mod brief;
-#[cfg(not(target_arch = "wasm32"))]
-mod patches;
-#[cfg(not(target_arch = "wasm32"))]
-mod pkgflow;
-mod manifest;
-mod md;
-mod pick;
-mod names;
-mod paste;
-mod recents;
-mod release;
-#[cfg(not(target_arch = "wasm32"))]
-mod runner;
-#[cfg(all(unix, not(target_arch = "wasm32")))]
-mod limits;
-#[cfg(all(unix, not(target_arch = "wasm32")))]
-mod multiuser;
+/// `cove serve` and what builds on it: multiuser, this computer in a browser.
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod server;
 /// A desktop build with no server in it (Windows: `cove serve` is Unix-only)
@@ -110,30 +42,14 @@ mod server {
         String::new()
     }
 }
-#[cfg(all(unix, not(target_arch = "wasm32")))]
-mod shares;
-mod software;
-mod source;
-mod stage;
-#[cfg(not(target_arch = "wasm32"))]
-mod stack;
-mod syntax;
-mod starters;
-#[cfg(not(target_arch = "wasm32"))]
-mod storage;
-mod term;
-mod setup;
-mod shots;
-mod showcase;
-mod theme;
-mod tour;
-#[cfg(target_arch = "wasm32")]
-mod view;
-mod voice;
-#[cfg(not(target_arch = "wasm32"))]
-mod update;
-#[cfg(not(target_arch = "wasm32"))]
-mod webview;
+/// The desktop window's native pieces: the embedded browser and its hand-over.
+mod desktop;
+/// What a project is, on both sides: `.cove/`, starters, find in files.
+mod project;
+/// What the stack holds, on both sides: manifests, names, sources.
+mod catalog;
+/// Everything drawn.
+mod ui;
 
 /// Cove was "ndexr ide" until 2026-10-14, and kept a person's settings, server
 /// token and run-on pick in ~/.config/ndexr/ide*. Moved once to the cove names
@@ -163,7 +79,7 @@ fn keep_crashes() {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         use std::io::Write;
-        let path = kernel::cache_dir().join("crash.log");
+        let path = host::kernel::cache_dir().join("crash.log");
         let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let thread = std::thread::current().name().unwrap_or("?").to_owned();
         let trace = std::backtrace::Backtrace::force_capture();
@@ -194,15 +110,15 @@ fn main() -> eframe::Result<()> {
     // `--folder <dir>` opens a folder as the project, as cove.ndexr.io/?folder= does.
     let folder = args.iter().position(|a| a == "--folder").and_then(|i| args.get(i + 1)).cloned();
     match args.get(1).map(String::as_str) {
-        Some("--update") => std::process::exit(update::cli()),
+        Some("--update") => std::process::exit(host::update::cli()),
         Some("--version") => {
-            println!("cove {} ({})", update::VERSION, update::platform());
+            println!("cove {} ({})", host::update::VERSION, host::update::platform());
             return Ok(());
         }
         #[cfg(unix)]
         Some("serve") => std::process::exit(server::main(&args[2..])),
         #[cfg(unix)]
-        Some("multiuser") => std::process::exit(multiuser::main(&args[2..])),
+        Some("multiuser") => std::process::exit(server::multiuser::main(&args[2..])),
         // Compiled starters, built once for everyone (host.rs seeds).
         #[cfg(unix)]
         Some("seed") => std::process::exit(host::seed_cli(&args[2..])),
@@ -213,20 +129,20 @@ fn main() -> eframe::Result<()> {
         // `cove record [dir]`: the software a running project uses, saved to
         // its .cove/record.json (record.rs). Up runs it once the app answers.
         #[cfg(unix)]
-        Some("record") => std::process::exit(record::cli(&args[2..])),
+        Some("record") => std::process::exit(host::record::cli(&args[2..])),
         // `cove setup-stack [--yes]`: mount the ndexr stack from a terminal
         // (stack.rs setup_cli) - a server's, or the installer's --stack.
         #[cfg(unix)]
-        Some("setup-stack") => std::process::exit(stack::setup_cli(&args[2..])),
+        Some("setup-stack") => std::process::exit(host::stack::setup_cli(&args[2..])),
         // `cove setup-front [--yes]`: HTTPS in front of this Cove from the
         // stack's Caddy (stack.rs setup_front_cli) - the installer's --front.
         #[cfg(unix)]
-        Some("setup-front") => std::process::exit(stack::setup_front_cli(&args[2..])),
+        Some("setup-front") => std::process::exit(host::stack::setup_front_cli(&args[2..])),
         // `cove setup-server [--user NAME] [--name HOST] [--yes]`: Cove on this
         // server from the stack - the organisation's (multiuser) or one
         // person's (stack.rs setup_server_cli); the installer's --server.
         #[cfg(unix)]
-        Some("setup-server") => std::process::exit(stack::setup_server_cli(&args[2..])),
+        Some("setup-server") => std::process::exit(host::stack::setup_server_cli(&args[2..])),
         Some("--connect") => match args.get(2) {
             Some(url) => {
                 // The server's token (~/.config/ndexr/cove-token there):
@@ -249,7 +165,7 @@ fn main() -> eframe::Result<()> {
     // WebKit or GTK, so it always starts; when neither loads, it runs on and
     // the panel opens sites in the browser.
     #[cfg(all(target_os = "linux", not(feature = "webview")))]
-    desk::hand_over(&args);
+    desktop::desk::hand_over(&args);
     // Where this window runs (account.rs `choose`): signed in, the person's
     // cell - on every machine, unless "this computer" was picked. A cell that
     // cannot be woken falls back here, and the app says why.
@@ -257,9 +173,9 @@ fn main() -> eframe::Result<()> {
     // A server saved on this computer (account menu › Connect to a server): a
     // managed one or the person's company's. No ndexr account needed. One that
     // does not answer leaves the window here, and it says why.
-    if matches!(backend, backend::Backend::Local) && account::choose() == account::RunOn::Server {
-        if let Some((base, token)) = account::saved_server() {
-            match account::probe_server(&base, &token) {
+    if matches!(backend, backend::Backend::Local) && host::account::choose() == host::account::RunOn::Server {
+        if let Some((base, token)) = host::account::saved_server() {
+            match host::account::probe_server(&base, &token) {
                 Ok(()) => {
                     backend::set_server_token(&token);
                     backend = backend::Backend::Http { base };
@@ -268,8 +184,8 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
-    if matches!(backend, backend::Backend::Local) && account::find_key().is_some() && account::choose() == account::RunOn::Cell {
-        match account::connect_cell() {
+    if matches!(backend, backend::Backend::Local) && host::account::find_key().is_some() && host::account::choose() == host::account::RunOn::Cell {
+        match host::account::connect_cell() {
             Ok((base, session)) => backend = backend::Backend::Cell { base, session },
             Err(e) => startup_note = Some(format!("running on this computer: {e}")),
         }
@@ -295,14 +211,14 @@ fn main() -> eframe::Result<()> {
             .with_min_inner_size([860.0, 540.0])
             // The tent on its tile (assets/cove-mark.svg): the taskbar and
             // switcher showed eframe's own icon without it.
-            .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/cove-app-256.png")).unwrap_or_default()),
+            .with_icon(eframe::icon_data::from_png_bytes(include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/cove-app-256.png"))).unwrap_or_default()),
         ..Default::default()
     };
     eframe::run_native(
         "Cove",
         options,
         Box::new(move |cc| {
-            let mut app = app::App::new(cc, backend, folder);
+            let mut app = ui::app::App::new(cc, backend, folder);
             if let Some(n) = startup_note {
                 app.startup_note(n, &cc.egui_ctx);
             }
@@ -366,9 +282,9 @@ fn main() {
                 eframe::WebOptions::default(),
                 Box::new(move |cc| {
                     if public {
-                        Ok(Box::new(view::ViewApp::new(cc, backend)) as Box<dyn eframe::App>)
+                        Ok(Box::new(ui::front::view::ViewApp::new(cc, backend)) as Box<dyn eframe::App>)
                     } else {
-                        Ok(Box::new(app::App::new(cc, backend, folder)) as Box<dyn eframe::App>)
+                        Ok(Box::new(ui::app::App::new(cc, backend, folder)) as Box<dyn eframe::App>)
                     }
                 }),
             )
