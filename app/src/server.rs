@@ -207,7 +207,7 @@ fn ndx_token(req: &Request) -> Option<String> {
 /// The same request, answered by the person's session on the platform.
 fn from_platform(req: &Request, make: impl Fn(&str) -> ehttp::Request) -> Response<std::io::Cursor<Vec<u8>>> {
     let Some(token) = ndx_token(req) else {
-        return text(401, "this needs an ndexr sign-in, or Claude Code signed in on this server (claude on its PATH, then claude login) - neither is here");
+        return text(401, &crate::host::localagent::why_not());
     };
     match crate::host::account::platform_request(&token, make) {
         Ok(r) => {
@@ -535,7 +535,7 @@ fn handle(ctx: &Ctx, mut req: Request) {
             // own Claude, as the desktop's does signed out (localagent.rs) -
             // it had answered "401 this needs ndexr's platform" (operator,
             // 2026-11-22, Cove on ndexrtesting.com).
-            Ok(q) if q.platform_only() && !has_platform() => match ndx_token(&req).is_none().then(|| crate::host::localagent::answer(&q)).flatten() {
+            Ok(q) if q.platform_only() && !has_platform() => match ndx_token(&req).is_none().then(|| crate::host::localagent::answer_here(&q)).flatten() {
                 Some(Ok(v)) => json(200, &v),
                 Some(Err(e)) => text(500, &e),
                 None => from_platform(&req, |base| {

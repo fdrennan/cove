@@ -33,15 +33,48 @@ fn thread(domain: &str) -> PathBuf {
     root().join("threads").join(domain)
 }
 
-/// `claude` on the login shell's PATH, and signed in here: its own
-/// credentials file, an account in ~/.claude.json (a Mac keeps the token in
-/// the keychain), or a token or key in the environment. Asked again every
-/// 30 s at most: the Agents tab polls.
+/// Where `claude` is: on the login shell's PATH, else where its installers
+/// put it - the native installer's ~/.local/bin, the old local install, npm,
+/// bun, volta, nvm, Homebrew. A person account Cove's server made often has
+/// no ~/.profile, so ~/.local/bin was never on PATH: `claude` ran in the
+/// Terminal (which adds it) while the agent said none was here (operator,
+/// 2026-11-25, ndexrtesting.com: "should always work with whatever the
+/// default claude installer is setup as").
+pub fn claude_bin() -> Option<String> {
+    if let Some(p) = crate::host::runner::capture_within("command -v claude", Duration::from_secs(5)).map(|p| p.trim().to_owned()).filter(|p| p.starts_with('/')) {
+        return Some(p);
+    }
+    let home = PathBuf::from(crate::host::home());
+    let mut places: Vec<PathBuf> = [".local/bin/claude", ".claude/local/claude", ".npm-global/bin/claude", ".bun/bin/claude", ".volta/bin/claude", ".local/share/pnpm/claude", "bin/claude"].iter().map(|r| home.join(r)).collect();
+    if let Ok(dirs) = std::fs::read_dir(home.join(".nvm/versions/node")) {
+        places.extend(dirs.flatten().map(|d| d.path().join("bin/claude")));
+    }
+    places.extend(["/usr/local/bin/claude", "/opt/homebrew/bin/claude", "/usr/bin/claude"].iter().map(PathBuf::from));
+    places.into_iter().find(|p| is_program(p)).map(|p| p.display().to_string())
+}
+
+fn is_program(p: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        p.is_file()
+    }
+}
+
+/// `claude` found (claude_bin) and signed in here: its own credentials file,
+/// an account in ~/.claude.json (a Mac keeps the token in the keychain), or
+/// a token or key in the environment. A yes is kept 30 s (the Agents tab
+/// polls); a no is asked again after 3 s, so installing Claude or signing in
+/// shows at once.
 pub fn usable() -> bool {
     static SEEN: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
     let mut seen = SEEN.lock().unwrap();
     if let Some((at, ok)) = *seen {
-        if at.elapsed() < Duration::from_secs(30) {
+        if at.elapsed() < Duration::from_secs(if ok { 30 } else { 3 }) {
             return ok;
         }
     }
@@ -49,16 +82,38 @@ pub fn usable() -> bool {
     let signed_in = home.join(".claude/.credentials.json").is_file()
         || std::fs::read_to_string(home.join(".claude.json")).is_ok_and(|t| t.contains("\"oauthAccount\""))
         || !crate::host::account::find_local_claude().is_empty();
-    let ok = signed_in && crate::host::runner::capture_within("command -v claude", Duration::from_secs(5)).is_some_and(|p| !p.trim().is_empty());
+    let ok = signed_in && claude_bin().is_some();
     *seen = Some((Instant::now(), ok));
     ok
+}
+
+/// What stands between this server and an agent, in a sentence the person
+/// can act on: no Claude here, or one that is not signed in.
+pub fn why_not() -> String {
+    let user = std::env::var("USER").unwrap_or_default();
+    let who = if user.is_empty() { String::new() } else { format!(" for {user}") };
+    match claude_bin() {
+        None => format!("Claude Code is not installed{who} on this server - run its installer (curl -fsSL https://claude.ai/install.sh | bash) in the Terminal, then claude login. Or sign in to ndexr."),
+        Some(p) => format!("{p} is here but not signed in{who} - run claude login (or claude setup-token) in the Terminal. Or sign in to ndexr."),
+    }
 }
 
 /// The agent's queries, answered here when nobody is signed in to ndexr and
 /// this computer's Claude is ready; None leaves them to the usual way.
 pub fn answer(q: &Query) -> Option<Result<Value, String>> {
+    if crate::host::account::find_key().is_some() {
+        return None;
+    }
+    answer_here(q)
+}
+
+/// The same for `cove serve`, asked by a browser with no ndexr sign-in: an
+/// ndexr key saved on the server does not matter there - without the
+/// person's own sign-in the platform cannot be asked as them anyway, and a
+/// key left by the installer sent every agent turn to a 401.
+pub fn answer_here(q: &Query) -> Option<Result<Value, String>> {
     let mine = matches!(q, Query::AgentRun { .. } | Query::AgentPoll { .. } | Query::AgentStop { .. } | Query::AgentHistory { .. } | Query::AgentBusy { .. } | Query::ClaudeStatus);
-    if !mine || crate::host::account::find_key().is_some() || !usable() {
+    if !mine || !usable() {
         return None;
     }
     let v = |r: Result<Value, String>| Some(r);
@@ -126,9 +181,11 @@ fn run(domain: &str, prompt: &str, model: &str, cwd: Option<&str>, mode: Option<
     std::fs::write(f("prompt"), prompt).map_err(|e| e.to_string())?;
     std::fs::write(td.join(format!("{id}.prompt")), prompt).map_err(|e| e.to_string())?;
     let q = |p: PathBuf| crate::api::shell_quote(&p.display().to_string());
+    let claude = claude_bin().ok_or("no claude here - install Claude Code, then claude login")?;
     let script = format!(
-        "cd {dir} || exit 1; claude -p --output-format stream-json --verbose --model {model} --permission-mode {perm}{resume} < {prompt} > {stream} 2> {err}; echo $? > {done}",
+        "cd {dir} || exit 1; {claude} -p --output-format stream-json --verbose --model {model} --permission-mode {perm}{resume} < {prompt} > {stream} 2> {err}; echo $? > {done}",
         dir = crate::api::shell_quote(&dir),
+        claude = crate::api::shell_quote(&claude),
         model = crate::api::shell_quote(&model_name(model)),
         perm = permission(mode),
         resume = resume.map(|s| format!(" --resume {}", crate::api::shell_quote(&s))).unwrap_or_default(),

@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-25T18:20Z · A new box starts with the guided setup, not a settings window: look, the ndexr stack and, on the desktop, your account, then one next step - Build something opens the starters. What it sets is saved, so nothing asks again.
 - 2026-11-25T15:30Z · The Git window reads like an annotated manuscript. Changed files are a folder tree with their lines added and removed; a diff shows side by side, unified or inline in the editor's own type and colours, the changed words marked inside each line, unchanged code folded with a way to open it, and a ruler of every change beside it. Step through changes with the arrows, F7 or Alt+↓. Stage, unstage, revert, copy or export a whole file or one hunk, and apply a patch you paste or open.
 - 2026-11-25T14:45Z · In the Console, the "↗ a full-screen program: it runs in the Terminal" line is a link: click it and the Terminal opens in front. On a phone, anything that brings a tab forward (that line, ⋯ › Logs) now switches the screen to it.
 - 2026-11-25T13:55Z · The App window's tabs and toolbar show again above your site in Chrome: a tall site frame had blanked them.

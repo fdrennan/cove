@@ -4611,10 +4611,17 @@ impl eframe::App for App {
                 self.saved.zoom_tab = None;
             }
         }
-        // Nothing chosen on this machine yet: ask, once, rather than guess.
-        if !self.asked_options && self.mode != Mode::Atlas && !self.setup.covering() && self.settings.lock().unwrap().as_ref().is_some_and(|v| !v.chosen) {
+        // A new box - nothing chosen on this machine yet: the guided setup,
+        // from its first step, in a browser too. It was Global Options, a
+        // form of every setting with nothing saying what mattered first
+        // (operator, 2026-11-25: "I dont know why a settings window show up on
+        // first launch ... pick what is needed and guide the user through the
+        // setup process. There shouldnt be ambiguity once its started").
+        if !self.asked_options && self.mode != Mode::Atlas && self.settings.lock().unwrap().as_ref().is_some_and(|v| !v.chosen) {
             self.asked_options = true;
-            self.open_options(ctx);
+            if !self.setup.covering() {
+                self.setup.start();
+            }
         }
         if self.options.is_none() && !self.about && !self.setup.open && self.mode != Mode::Atlas {
             self.shortcuts(ctx);
@@ -4713,6 +4720,12 @@ impl eframe::App for App {
             };
             if let crate::ui::setup::Done::Closed(toast) = self.setup.show(ctx, env) {
                 self.saved.setup_seen = true;
+                // What the guide set, or the defaults, saved: the machine has
+                // its settings, and nothing asks for them again.
+                if self.settings.lock().unwrap().as_ref().is_some_and(|v| !v.chosen) {
+                    let s = self.saved_settings();
+                    self.save_options(s, ctx);
+                }
                 // Their Claude may have changed: ask again now.
                 self.setup.refresh(&self.backend, ctx, 0.0);
                 if let Some(t) = toast {

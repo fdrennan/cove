@@ -444,6 +444,7 @@ impl Setup {
             .inner_margin(egui::Margin { left: 28, right: 28, top: 22, bottom: 22 })
             .shadow(egui::epaint::Shadow { offset: [0, 14], blur: 48, spread: 0, color: Color32::from_black_alpha(if theme::is_light() { 50 } else { 150 }) });
         let mut close: Option<Option<String>> = None;
+        let mut build_now = false;
         let asking = *ASK_CVMFS.lock().unwrap() == Some("setup");
         let mut mount = false;
         if self.step != Step::Stack {
@@ -469,13 +470,21 @@ impl Setup {
                 Step::Stack => self.stack(ui, ctx, &mut env),
                 Step::Account => self.account(ui, ctx, &mut env),
                 Step::Claude => self.claude(ui, ctx, &mut env),
-                Step::Ready => self.ready(ui, &env),
+                Step::Ready => {
+                    if self.ready(ui, &mut env) {
+                        build_now = true;
+                    }
+                }
             });
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(4.0);
             close = self.nav(ui);
         });
+        if build_now {
+            env.ide.new_tab();
+            close = Some(None);
+        }
         if mount {
             #[cfg(not(target_arch = "wasm32"))]
             crate::host::account::set_stack_mode(crate::api::StackMode::Cvmfs);
@@ -1080,7 +1089,9 @@ impl Setup {
     }
 
     // ── Ready ───────────────────────────────────────────────────────────────
-    fn ready(&mut self, ui: &mut egui::Ui, env: &Env<'_>) {
+    /// True when the person picks Build something: setup closes onto the
+    /// starters (ide new_tab), the first decision a new box asks.
+    fn ready(&mut self, ui: &mut egui::Ui, env: &mut Env<'_>) -> bool {
         Self::title(ui, "You're set", "Here is what Cove is using. All of it can be changed later.");
         let claude = match self.status() {
             Some(Ok(v)) if v.own() => (theme::ok(), v.label.clone()),
@@ -1110,18 +1121,18 @@ impl Setup {
             }
         }
         summary_row(ui, claude.0, "Claude", &claude.1);
-        ui.add_space(8.0);
-        ui.label(RichText::new("WHERE TO START").size(10.5).color(theme::hush()));
-        for (k, v) in [
-            ("Agents", "Say what you want built in your domain; the agent works beside the code and you watch it happen. Your first commands are free."),
-            ("Software", "The ndexr stack's environments and tools - pick one from Environment in the toolbar."),
-            ("Terminal", "A real shell in your environment; claude, vim and ranger run there too."),
-        ] {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(k).strong().color(theme::text_strong()));
-                ui.label(RichText::new(v).size(12.5).color(theme::muted()));
-            });
+        ui.add_space(10.0);
+        // One next step, not a list of places (the same day: "there
+        // shouldnt be ambiguity once its started"): build something, or
+        // look around first.
+        let mut build = false;
+        let w = ui.available_width();
+        if next_card(ui, w, true, "Build something", "Pick a starter - a dashboard, a model, an API, a site - in R, Python, Julia, Rust or JavaScript. It opens running, with its agent beside it.") {
+            build = true;
         }
+        ui.add_space(6.0);
+        ui.label(RichText::new("Or Start using Cove to look around first: the Agents tab, the consoles and the Terminal are ready.").size(12.5).color(theme::text()));
+        build
     }
 
     // ── the Terminal helper ─────────────────────────────────────────────────
@@ -1224,6 +1235,34 @@ impl Setup {
     pub fn covering(&self) -> bool {
         self.open || self.helper.on
     }
+}
+
+/// A wide, inviting card for the next step: its title strong, what it does
+/// under it, the whole card the button. `lead` paints it in the accent.
+fn next_card(ui: &mut egui::Ui, w: f32, lead: bool, title: &str, what: &str) -> bool {
+    let h = if crate::ui::kit::device::coarse() { 86.0 } else { 74.0 };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), Sense::click());
+    let p = ui.painter();
+    let hot = resp.hovered();
+    let fill = if lead { theme::primary().gamma_multiply(if hot { 0.26 } else { 0.18 }) } else { theme::surface() };
+    p.rect(rect, 12.0, fill, Stroke::new(1.0, if lead { theme::primary().gamma_multiply(0.7) } else { theme::pane_brd() }), egui::StrokeKind::Inside);
+    // A small mark: the starters' spark, drawn.
+    let c = rect.left_center() + egui::vec2(30.0, 0.0);
+    for k in 0..8 {
+        let a = std::f32::consts::TAU * k as f32 / 8.0;
+        let (r0, r1) = if k % 2 == 0 { (5.0, 13.0) } else { (5.0, 8.5) };
+        p.line_segment([c + egui::vec2(a.cos(), a.sin()) * r0, c + egui::vec2(a.cos(), a.sin()) * r1], Stroke::new(2.0, theme::primary()));
+    }
+    let x = rect.left() + 58.0;
+    p.text(egui::pos2(x, rect.top() + 16.0), egui::Align2::LEFT_TOP, title, theme::display(17.0), theme::text_strong());
+    let job = egui::text::LayoutJob::simple(what.to_owned(), egui::FontId::proportional(12.5), theme::text(), rect.right() - x - 40.0);
+    let g = ui.fonts_mut(|f| f.layout_job(job));
+    p.galley(egui::pos2(x, rect.top() + 40.0), g, theme::text());
+    p.text(rect.right_center() - egui::vec2(18.0, 0.0), egui::Align2::RIGHT_CENTER, "→", egui::FontId::proportional(20.0), theme::primary());
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
 }
 
 /// The toolbar's chip: which Claude the agent runs on, at a glance; a click
