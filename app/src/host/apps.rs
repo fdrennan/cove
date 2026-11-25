@@ -160,6 +160,10 @@ pub fn status(dir: &Path) -> crate::api::AppStatus {
         }
     }
     s.seen_at = seen_at(&s.kind, &s.port);
+    let port = s.port.trim();
+    if s.kind == "port" && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
+        s.here_at = format!("/port/{port}/");
+    }
     // In .cove/ every project has all four verbs; a module app's Up and
     // Down have nothing to do, so it shows Build alone, as before.
     s.verbs = VERBS.iter().filter(|v| is_executable(&cdir.join(format!("{v}.sh"))) && (s.kind == "port" || **v == "build")).map(|v| (*v).to_owned()).collect();

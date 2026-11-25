@@ -482,7 +482,9 @@ impl Setup {
             close = self.nav(ui);
         });
         if build_now {
-            env.ide.new_tab();
+            // The New project dialog, then the starters: what the welcome
+            // tour opens too.
+            env.ide.start_new_project();
             close = Some(None);
         }
         if mount {
@@ -674,7 +676,9 @@ impl Setup {
         }
         let dir = self.airgap_dir.get_or_insert_with(|| if v.settings.stack_dir.trim().is_empty() { s.build_dir.clone() } else { v.settings.stack_dir.clone() });
         let mut save: Option<(bool, Option<String>)> = None;
-        if show(crate::api::StackMode::Installed) {
+        // With the stack here, airgap is an advanced choice, not a question
+        // for a first start: Global Options › Environment keeps it.
+        if show(crate::api::StackMode::Installed) && (!s.ok || air) {
         choice(
             ui,
             "Airgapped",
@@ -742,7 +746,7 @@ impl Setup {
             });
         }
         ui.horizontal(|ui| {
-            if ui.add_enabled(!running, egui::Button::new("Check again")).clicked() {
+            if !s.ok && ui.add_enabled(!running, egui::Button::new("Check again")).clicked() {
                 self.stack_asked = f64::NEG_INFINITY;
             }
             if !s.ok {
@@ -1089,8 +1093,9 @@ impl Setup {
     }
 
     // ── Ready ───────────────────────────────────────────────────────────────
-    /// True when the person picks Build something: setup closes onto the
-    /// starters (ide new_tab), the first decision a new box asks.
+    /// True when the person picks Build something: setup closes onto a new
+    /// project and its starters (ide start_new_project), the first decision a
+    /// new box asks.
     fn ready(&mut self, ui: &mut egui::Ui, env: &mut Env<'_>) -> bool {
         Self::title(ui, "You're set", "Here is what Cove is using. All of it can be changed later.");
         let claude = match self.status() {

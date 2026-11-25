@@ -405,6 +405,11 @@ struct Launch {
     /// What answers at https://<host>/ (Query::SiteGate), asked every few seconds.
     gate: Slot<String>,
     gate_asked: f64,
+    /// The public address answered and App moved to it.
+    public_shown: bool,
+    /// The card opened again from its one-line note (it folds to that once
+    /// the app shows in App).
+    expanded: bool,
 }
 
 impl Launch {
@@ -432,6 +437,8 @@ impl Launch {
             pkgs_asked: f64::NEG_INFINITY,
             gate: Default::default(),
             gate_asked: f64::NEG_INFINITY,
+            public_shown: false,
+            expanded: false,
         }
     }
 }
@@ -7208,7 +7215,12 @@ impl Ide {
         let port = (!l.rust || here) && matches!(&app, Some(Ok(s)) if s.kind == "port");
         // Until the project has been read, nothing past publishing is decided.
         let known = l.rust || matches!(&app, Some(_));
-        if port && published {
+        // Up does not wait for registering: the app starts on its port at
+        // once, and App shows it there (site_url `here_at`) while DNS, the
+        // certificate and routing are made behind it (operator, 2026-11-25:
+        // "network routing and nginx configurations can run in background,
+        // optimize ... developer feedback ... within seconds").
+        if port {
             let up = l.up.lock().unwrap().clone();
             // The project's job slot, every 2 s: first the Build create_domain
             // started, then this Up. Only an Up's own view counts as Up's.
@@ -7238,7 +7250,7 @@ impl Ide {
             // Up worked: route https://<host>/ to the port. "not published
             // yet" means the vhost is still being written - asked again.
             let pending = matches!(&*l.route.lock().unwrap(), Some(Ok(m)) if m.starts_with("not published yet"));
-            if !here && matches!(&up, Some(Ok(v)) if ours(v) && v.ok == Some(true)) && (!l.route_sent || (pending && now - l.route_asked > 5.0)) {
+            if !here && published && matches!(&up, Some(Ok(v)) if ours(v) && v.ok == Some(true)) && (!l.route_sent || (pending && now - l.route_asked > 5.0)) {
                 l.route_sent = true;
                 l.route_asked = now;
                 let slot = l.route.clone();
@@ -7291,6 +7303,18 @@ impl Ide {
         }
         let gate = l.gate.lock().unwrap().clone().unwrap_or_default();
         let live = published && deployed && (here || matches!(gate.as_str(), "open" | "login" | "password"));
+        // The public address answers: App, which showed the app where it
+        // runs meanwhile (site_url), moves to it, once.
+        if live && !here && !l.public_shown {
+            l.public_shown = true;
+            *self.gate.lock().unwrap() = Some((l.host.clone(), gate.clone()));
+            self.site_seq += 1;
+        }
+        // The app answers where it runs and App shows it: the rest - DNS,
+        // the certificate, routing - is background, and the card folds to a
+        // line (the same day: "optimize human visualization ... developer
+        // feedback not end user feedback (within seconds)").
+        let seen_here = port && matches!(&l.up.lock().unwrap().clone(), Some(Ok(v)) if v.what.starts_with("up ") && v.ok == Some(true));
         let up_failed = port && matches!(&up, Some(Err(_)) | Some(Ok(JobView { ok: Some(false), .. }))) && l.up_sent;
         let deploy_failed = (l.rust && !here && matches!(&deploy, Some(Err(_)) | Some(Ok(JobView { ok: Some(false), .. })))) || up_failed || (port && matches!(&route, Some(Err(_))));
         // A first Rust build is ~7 minutes before routing starts (measured on
@@ -7366,6 +7390,24 @@ impl Ide {
             });
             ui.add_space(4.0);
         };
+        if seen_here && !live && !failed && !l.expanded {
+            let mut open = false;
+            egui::Area::new(egui::Id::new("launch-note")).anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -12.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+                egui::Frame::window(&ctx.global_style()).fill(theme::surface_hi().gamma_multiply(0.9)).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+                    let r = ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(12.0));
+                        ui.label(RichText::new(format!("https://{host}/ in the background")).size(12.5).color(theme::text_strong()));
+                        ui.label(RichText::new(format!("DNS, certificate · {secs} s")).size(11.5).color(theme::text()));
+                    });
+                    open = r.response.interact(egui::Sense::click()).on_hover_text("App shows the app already, where it runs; its own address follows - click for the steps").clicked();
+                });
+            });
+            if open {
+                l.expanded = true;
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            return;
+        }
         let title = if live { format!("{host} is live") } else { format!("Bringing {host} live") };
         // A corner card, see-through a little, out of the way while the
         // person moves on (operator, 2026-10-28: "can be in the bottom left or
@@ -7449,7 +7491,6 @@ impl Ide {
                     let tail = |v: &JobView| v.lines.iter().rev().take(4).map(String::as_str).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
                     let on = if port_no.is_empty() { String::new() } else { format!(" on port {port_no}") };
                     match &up {
-                        _ if !published => row(ui, None, &format!("Start the app{on}"), ".cove/up.sh, as you, after it is registered"),
                         Some(Ok(v)) if local && v.what.starts_with("up ") && v.ok == Some(true) => row(ui, Some(true), &format!("Started on this computer{on}"), ""),
                         Some(Err(e)) => row(ui, Some(false), "The app did not start", e),
                         Some(Ok(v)) if v.what.starts_with("up ") => match v.ok {
@@ -8874,6 +8915,17 @@ impl Ide {
             if !s.seen_at.is_empty() {
                 return self.backend.viewer_url(&s.seen_at);
             }
+            // A site being brought live, or one whose public address does
+            // not answer: the running app where it runs, through this Cove,
+            // within seconds of Up - not after DNS and a certificate (operator,
+            // 2026-11-25: "immediately we see our template project on domain
+            // of any name").
+            let gate = self.gate.lock().unwrap().clone().filter(|(h, _)| *h == d.host).map(|(_, g)| g);
+            let public = matches!(gate.as_deref(), Some("open" | "login" | "password"));
+            let launching = self.launch.as_ref().is_some_and(|l| l.host == d.host);
+            if s.running && !s.here_at.is_empty() && !public && (launching || gate.as_deref() == Some("down")) {
+                return self.backend.viewer_url(&s.here_at);
+            }
         }
         format!("https://{}/", d.host)
     }
@@ -8889,7 +8941,7 @@ impl Ide {
         // Shown where it runs (seen_at), not at the domain's public address:
         // no gate of that address applies.
         let local = !url.starts_with(&format!("https://{}/", d.host));
-        if self.launch.as_ref().is_some_and(|l| l.quiet && l.host == d.host) {
+        if !local && self.launch.as_ref().is_some_and(|l| l.quiet && l.host == d.host) {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
                 ui.add(egui::Spinner::new().size(22.0));

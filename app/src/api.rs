@@ -1718,6 +1718,11 @@ pub struct AppStatus {
     /// connected to a cell and the cell in a browser show the same thing.
     #[serde(default)]
     pub seen_at: String,
+    /// Where this Cove can show a port app whatever routes to it: its own
+    /// /port/<n>/. On ndexr's servers App shows it there while a new site's
+    /// public address is still being made (DNS, certificate, routing).
+    #[serde(default)]
+    pub here_at: String,
 }
 
 /// What a person may use and uses, read from their cgroup (limits.rs `mine`).
