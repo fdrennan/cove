@@ -97,6 +97,19 @@ mod limits;
 mod multiuser;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod server;
+/// A desktop build with no server in it (Windows: `cove serve` is Unix-only)
+/// still asks the two things the UI reads from it. It never serves, so it is
+/// never the platform and has no name it was reached at. Without these the
+/// Windows build stopped compiling and the feed stayed at 0.1.8 (2026-11-25).
+#[cfg(all(not(unix), not(target_arch = "wasm32")))]
+mod server {
+    pub(crate) fn has_platform() -> bool {
+        false
+    }
+    pub(crate) fn served_as() -> String {
+        String::new()
+    }
+}
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod shares;
 mod software;

@@ -30,6 +30,12 @@ mkdir -p "$root" "$cache"
 
 python3 - "$mirror" "$codename" "$deb_arch" "$cache" "$root" <<'PY'
 import hashlib, lzma, os, re, subprocess, sys, urllib.request
+# ports.ubuntu.com answers Python's default User-Agent (Python-urllib/3.x) with
+# 403 while serving the same file to curl (2026-11-25): every .deb failed and the
+# aarch64 build stopped. One opener names this script for every download.
+_op = urllib.request.build_opener()
+_op.addheaders = [("User-Agent", "cove-cross-sysroot/1 (ndexr; +https://cove.ndexr.io)")]
+urllib.request.install_opener(_op)
 
 mirror, codename, arch, cache, root = sys.argv[1:]
 # shared-mime-info is no library and no -dev, but gdk-pixbuf-2.0.pc names it
