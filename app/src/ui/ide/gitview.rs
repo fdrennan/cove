@@ -134,26 +134,33 @@ impl GitView {
         let narrow = ui.available_width() < 760.0;
         if narrow {
             match self.step {
-                0 => self.log_pane(ui, list, backend, &ctx, &mut act),
+                0 => theme::pane(ui, |ui| self.log_pane(ui, list, backend, &ctx, &mut act)),
                 1 => {
                     if back(ui, "← history") {
                         self.step = 0;
                     }
-                    self.files_pane(ui, list, backend, &ctx, &mut act);
+                    theme::pane(ui, |ui| self.files_pane(ui, list, backend, &ctx, &mut act));
                 }
                 _ => {
                     if back(ui, "← files") {
                         self.step = 1;
                     }
-                    self.diff_pane(ui, backend, &ctx, true);
+                    theme::pane(ui, |ui| self.diff_pane(ui, backend, &ctx, true));
                 }
             }
             return act;
         }
         let w = ui.available_width();
-        egui::Panel::left("git-log").resizable(true).default_size((w * 0.22).clamp(220.0, 340.0)).show(ui, |ui| self.log_pane(ui, list, backend, &ctx, &mut act));
-        egui::Panel::left("git-files").resizable(true).default_size((w * 0.2).clamp(210.0, 320.0)).show(ui, |ui| self.files_pane(ui, list, backend, &ctx, &mut act));
-        egui::CentralPanel::no_frame().show(ui, |ui| self.diff_pane(ui, backend, &ctx, false));
+        // Three windows as the IDE's are: rounded panes, each headed by its
+        // own bar, a gap between (operator, 2026-11-26: "the git window
+        // should be more beautiful ... how the bars look").
+        let gap = (theme::WIN_GAP / 2) as i8;
+        let side = egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: gap, top: 0, bottom: 0 });
+        egui::Panel::left("git-log").resizable(true).show_separator_line(false).frame(side).default_size((w * 0.22).clamp(220.0, 340.0)).show(ui, |ui| theme::pane(ui, |ui| self.log_pane(ui, list, backend, &ctx, &mut act)));
+        let mid = egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: gap, top: 0, bottom: 0 });
+        egui::Panel::left("git-files").resizable(true).show_separator_line(false).frame(mid).default_size((w * 0.2).clamp(210.0, 320.0)).show(ui, |ui| theme::pane(ui, |ui| self.files_pane(ui, list, backend, &ctx, &mut act)));
+        let last = egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: 0, top: 0, bottom: 0 });
+        egui::CentralPanel::default().frame(last).show(ui, |ui| theme::pane(ui, |ui| self.diff_pane(ui, backend, &ctx, false)));
         act
     }
 
@@ -249,58 +256,63 @@ impl GitView {
     /// The history: the unsaved changes, then every version, a line of dots
     /// down the left joining them as PyCharm's log does.
     fn log_pane(&mut self, ui: &mut egui::Ui, list: &[Version], backend: &Backend, ctx: &egui::Context, act: &mut GitAct) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("History").size(14.0).strong().color(theme::text_strong()));
-            ui.label(RichText::new(format!("{}", list.len())).size(12.5).color(theme::muted()));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::tool(ui, "⟳", "read the history and the changes again").clicked() {
-                    *act = GitAct::Refresh;
-                    let sha = self.sha.clone();
-                    self.pick(sha, backend, ctx);
-                }
-            });
-        });
-        ui.separator();
+        let mut tb = bar::Toolbar::top(ui);
+        if bar::glyph(tb.right(), crate::ui::kit::icons::Glyph::Refresh, "read the history and the changes again", true).clicked() {
+            *act = GitAct::Refresh;
+            let sha = self.sha.clone();
+            self.pick(sha, backend, ctx);
+        }
+        bar::title(&mut tb.left(), "History", &list.len().to_string());
         let now = crate::ui::software::now_secs();
         let rows = list.len() + 1;
         let mut picked = None;
         egui::ScrollArea::vertical().id_salt("git-log").auto_shrink([false, false]).show_rows(ui, LOG_ROW, rows, |ui, range| {
             for i in range {
-                let (sha, title, sub) = if i == 0 {
-                    (String::new(), "Changes not saved yet".to_owned(), "saved as a version within 30 minutes, or by Save".to_owned())
+                let (sha, title, who, short) = if i == 0 {
+                    (String::new(), "Changes not saved yet".to_owned(), "saved within 30 minutes, or by Save".to_owned(), String::new())
                 } else {
                     let v = &list[i - 1];
-                    (v.sha.clone(), first_line(&v.message).to_owned(), format!("{} · {} ago · {}", v.author, crate::ui::software::fmt_dur((now - v.when).max(0)), &v.sha[..v.sha.len().min(7)]))
+                    (v.sha.clone(), first_line(&v.message).to_owned(), format!("{} · {} ago", v.author, crate::ui::software::fmt_dur((now - v.when).max(0))), v.sha[..v.sha.len().min(7)].to_owned())
                 };
                 let on = self.sha.as_deref() == Some(sha.as_str());
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), LOG_ROW), Sense::click());
                 let p = ui.painter();
+                // Picked: a soft wash and the accent along its edge, as the
+                // tab in front is marked - not a block of colour.
                 if on {
-                    p.rect_filled(rect, 6.0, theme::primary().gamma_multiply(0.16));
+                    p.rect_filled(rect, 0.0, theme::primary().gamma_multiply(0.08));
+                    p.vline(rect.left() + 1.0, rect.y_range(), egui::Stroke::new(2.0, theme::primary()));
                 } else if resp.hovered() {
-                    p.rect_filled(rect, 6.0, theme::surface());
+                    p.rect_filled(rect, 0.0, theme::surface());
                 }
-                // The lane: one line through every version, a dot on each.
-                let x = rect.left() + 12.0;
-                let lane = theme::primary().gamma_multiply(0.55);
+                // The lane: a hairline through every version, a dot on each.
+                let x = rect.left() + 16.0;
                 let top = if i == 0 { rect.center().y } else { rect.top() };
                 let bottom = if i + 1 == rows { rect.center().y } else { rect.bottom() };
                 if rows > 1 {
-                    p.line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], egui::Stroke::new(2.0, lane));
+                    p.line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], egui::Stroke::new(1.5, theme::moss()));
                 }
+                let c = egui::pos2(x, rect.center().y);
                 if i == 0 {
-                    p.circle(rect.left_center() + egui::vec2(12.0, 0.0), 5.0, theme::bg(), egui::Stroke::new(2.0, theme::amber()));
+                    p.circle(c, 4.5, theme::bg(), egui::Stroke::new(1.5, theme::amber()));
                 } else {
-                    p.circle_filled(egui::pos2(x, rect.center().y), if i == 1 { 5.5 } else { 4.5 }, theme::primary());
+                    p.circle_filled(c, 4.5, theme::bg());
+                    p.circle_filled(c, 3.2, if on { theme::primary() } else { theme::primary().gamma_multiply(0.7) });
                 }
-                let tx = rect.left() + 28.0;
-                let tw = rect.right() - tx - 6.0;
-                let title_g = ui.painter().layout(title, FontId::proportional(13.5), if i == 0 { theme::amber() } else { theme::text_strong() }, f32::INFINITY);
-                let sub_g = ui.painter().layout(sub, FontId::proportional(11.5), theme::muted(), f32::INFINITY);
-                let clip = egui::Rect::from_min_max(egui::pos2(tx, rect.top()), egui::pos2(tx + tw, rect.bottom()));
-                let p = ui.painter().with_clip_rect(clip);
-                p.galley(egui::pos2(tx, rect.top() + 6.0), title_g, Color32::WHITE);
-                p.galley(egui::pos2(tx, rect.top() + 26.0), sub_g, Color32::WHITE);
+                let tx = rect.left() + 32.0;
+                let right = rect.right() - 10.0;
+                let sha_g = ui.painter().layout_no_wrap(short, FontId::monospace(10.5), theme::hush());
+                let mut job = egui::text::LayoutJob::single_section(title, egui::TextFormat::simple(FontId::proportional(13.0), if i == 0 { theme::amber() } else if on { theme::text_strong() } else { theme::text() }));
+                job.wrap = egui::text::TextWrapping::truncate_at_width(right - tx);
+                let title_g = ui.painter().layout_job(job);
+                let mut sub = egui::text::LayoutJob::single_section(who, egui::TextFormat::simple(FontId::proportional(11.5), theme::muted()));
+                sub.wrap = egui::text::TextWrapping::truncate_at_width((right - tx - sha_g.size().x - 8.0).max(20.0));
+                let sub_g = ui.painter().layout_job(sub);
+                let p = ui.painter().with_clip_rect(rect);
+                p.galley(egui::pos2(tx, rect.top() + 7.0), title_g, Color32::WHITE);
+                let sub_y = rect.top() + 26.0;
+                p.galley(egui::pos2(tx, sub_y), sub_g, Color32::WHITE);
+                p.galley(egui::pos2(right - sha_g.size().x, sub_y + 1.0), sha_g, Color32::WHITE);
                 if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     picked = Some(sha);
                 }
@@ -317,44 +329,53 @@ impl GitView {
     fn files_pane(&mut self, ui: &mut egui::Ui, list: &[Version], backend: &Backend, ctx: &egui::Context, act: &mut GitAct) {
         let sha = self.sha.clone().unwrap_or_default();
         let v = list.iter().position(|v| v.sha == sha).map(|k| (k, &list[k]));
+        let count = match &*self.files.lock().unwrap() {
+            Some(Ok(f)) => f.len().to_string(),
+            _ => String::new(),
+        };
+        let mut tb = bar::Toolbar::top(ui);
         match v {
             Some((k, v)) => {
-                ui.add(egui::Label::new(RichText::new(&v.message).size(13.5).strong().color(theme::text_strong())).wrap());
-                ui.label(RichText::new(format!("{} · {} UTC", v.author, crate::ui::software::fmt_date(v.when))).size(12.0).color(theme::text()));
-                ui.horizontal(|ui| {
-                    if ui.add(egui::Label::new(RichText::new(&v.sha[..v.sha.len().min(10)]).monospace().size(12.0).color(theme::muted())).sense(Sense::click())).on_hover_text("copy the whole id").clicked() {
-                        ui.ctx().copy_text(v.sha.clone());
+                // The newest is what is there now; any other can come back,
+                // asked twice: Restore, then Restore it.
+                if k > 0 {
+                    let r = tb.right();
+                    if self.confirm.as_deref() == Some(sha.as_str()) {
+                        if bar::button(r, &ctl::REVERT.tip("what is there now is saved as a version first, so nothing is lost"), Weight::Primary).clicked() {
+                            *act = GitAct::Restore(sha.clone());
+                            self.confirm = None;
+                        }
+                        if bar::glyph(r, crate::ui::kit::icons::Glyph::Close, "keep things as they are", true).clicked() {
+                            self.confirm = None;
+                        }
+                    } else if bar::glyph(r, crate::ui::kit::icons::Glyph::Undo, "Restore: put this version back - what is there now is saved as a version first", true).clicked() {
+                        self.confirm = Some(sha.clone());
                     }
-                    // The newest is what is there now; any other can come back.
-                    if k > 0 {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if self.confirm.as_deref() == Some(sha.as_str()) {
-                                if ui.add(theme::primary_button("Restore it")).on_hover_text("what is there now is saved as a version first, so nothing is lost").clicked() {
-                                    *act = GitAct::Restore(sha.clone());
-                                    self.confirm = None;
-                                }
-                                if ui.button("Cancel").clicked() {
-                                    self.confirm = None;
-                                }
-                            } else if ui.button("Restore").on_hover_text("put this version back - what is there now is saved as a version first").clicked() {
-                                self.confirm = Some(sha.clone());
-                            }
-                        });
-                    }
-                });
-            }
-            None => {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Changes not saved yet").size(13.5).strong().color(theme::amber()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if bar::button(ui, &ctl::APPLY_PATCH, Weight::Icon).clicked() {
-                            self.apply = Some(Apply::default());
+                }
+                bar::title(&mut tb.left(), &v.sha[..v.sha.len().min(7)], &count);
+                // The version: its message and whose and when, under the bar.
+                egui::Frame::NONE.inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(&v.message).size(13.0).color(theme::text_strong())).wrap());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{} · {} UTC", v.author, crate::ui::software::fmt_date(v.when))).size(11.5).color(theme::muted()));
+                        if ui.add(egui::Label::new(RichText::new("copy id").size(11.5).color(theme::primary())).sense(Sense::click())).on_hover_text(v.sha.clone()).clicked() {
+                            ui.ctx().copy_text(v.sha.clone());
                         }
                     });
+                    if self.confirm.as_deref() == Some(sha.as_str()) {
+                        ui.label(RichText::new("Restore puts this version back. What is there now is saved as a version first.").size(12.0).color(theme::warn()));
+                    }
                 });
+                ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, theme::pane_brd()));
+            }
+            None => {
+                if bar::button(tb.right(), &ctl::APPLY_PATCH, Weight::Icon).clicked() {
+                    self.apply = Some(Apply::default());
+                }
+                bar::title(&mut tb.left(), "Changes", &count);
             }
         }
-        ui.separator();
+        ui.add_space(4.0);
         let files = self.files.lock().unwrap().clone();
         let files = match files {
             None => {
@@ -412,7 +433,7 @@ impl GitView {
         let mut ask: Option<(&'static str, String)> = None;
 
         // ── the bar ──
-        let mut tb = bar::Toolbar::new(ui, theme::bg());
+        let mut tb = bar::Toolbar::top(ui);
         {
             let ui = tb.right();
             bar::more(ui, "more for this file", |ui| {

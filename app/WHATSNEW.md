@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-26T16:05Z · Signing in to a Cove server set up from the ndexr stack works without the system's PAM: Cove uses the stack's Linux-PAM when the machine has none it can load, and its sign-in rules use only the modules every PAM has.
 - 2026-11-26T15:25Z · Versions sits beside Save: every saved version of the open project, what changed in each, and Restore. Every 30-minute save that changes something is now a version of its own.
 - 2026-11-26T15:05Z · Speaking to the agent works from an iPhone: a recording is named by what it really is and sent to transcription as FLAC, which it always takes - Safari's recordings were refused as "Invalid file format".
 - 2026-11-26T12:05Z · The Claude chip and Connect Claude read your connection again: since 2026-11-25 every check said "Couldn't check your Claude here" and offered Continue without, though your agent ran on your Claude all along. When such a check fails now, it says why.

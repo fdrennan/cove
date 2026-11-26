@@ -222,10 +222,21 @@ pub struct Toolbar {
 
 impl Toolbar {
     pub fn new(ui: &mut egui::Ui, fill: Color32) -> Toolbar {
+        Toolbar::shaped(ui, fill, 0)
+    }
+
+    /// A pane's head: the bar at the top of a window (theme::pane), in the
+    /// pane-header ink and rounded with the window, so it is the window's
+    /// own top, not a strip laid over it with square corners.
+    pub fn top(ui: &mut egui::Ui) -> Toolbar {
+        Toolbar::shaped(ui, theme::pane_hdr(), theme::WIN_RADIUS)
+    }
+
+    fn shaped(ui: &mut egui::Ui, fill: Color32, round: u8) -> Toolbar {
         let m = metrics(ui.ctx());
         let h = m.h + 6.0;
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::hover());
-        ui.painter().rect_filled(rect, 0.0, fill);
+        ui.painter().rect_filled(rect, egui::CornerRadius { nw: round, ne: round, sw: 0, se: 0 }, fill);
         ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, theme::pane_brd()));
         let inner = rect.shrink2(egui::vec2(6.0, 3.0));
         let clip = ui.clip_rect();
@@ -250,5 +261,19 @@ impl Toolbar {
         l.set_clip_rect(room.intersect(self.clip));
         l.spacing_mut().item_spacing.x = 4.0;
         l
+    }
+}
+
+/// A bar's name: the title strong, then a count or a short state, quieter.
+/// One type size for every head (History, a version, a file), so the heads
+/// of a window line up and read as one family.
+pub fn title(ui: &mut egui::Ui, title: &str, detail: &str) {
+    let m = metrics(ui.ctx());
+    ui.add(egui::Label::new(egui::RichText::new(title).font(theme::display(m.font + 0.5)).color(theme::text_strong())).truncate());
+    if !detail.is_empty() {
+        let g = ui.painter().layout_no_wrap(detail.to_owned(), egui::FontId::proportional(m.font - 1.5), theme::muted());
+        let (r, _) = ui.allocate_exact_size(g.size() + egui::vec2(12.0, 4.0), Sense::hover());
+        ui.painter().rect_filled(r, 8.0, theme::lift(theme::surface_hi(), 0.04));
+        ui.painter().galley(r.center() - g.size() / 2.0, g, theme::muted());
     }
 }
