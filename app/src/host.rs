@@ -3922,7 +3922,7 @@ pub(crate) fn platform_r_as(owner: &str, name: &str, script: &str, args: &[&str]
          [ \"$POSTGRES_DIRECT_HOST\" = postgres ] && export POSTGRES_DIRECT_HOST=127.0.0.1; \
          export NDEXR_HOST_LOCAL=1 NDEXR_SRC={src} NDEXR_HOST_RUNS={runs} COVE_OWNER={owner} LANG=C.UTF-8; \
          set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1; ml {env} >/dev/null 2>&1; \
-         Rscript --no-save --no-restore-data {rf} {args} 2>/dev/null",
+         ef=$(mktemp); Rscript --no-save --no-restore-data {rf} {args} 2>\"$ef\" || printf 'R-ERROR: %s\\n' \"$(grep -v '^<pool>' \"$ef\" | grep -v '^Calls:\\|^Execution halted' | tail -n 2 | tr '\\n' ' ')\"; rm -f \"$ef\"",
         root = shell_quote(&root.display().to_string()),
         src = shell_quote(&root.join("src").display().to_string()),
         runs = shell_quote(HOST_RUNS),
@@ -3940,7 +3940,13 @@ pub(crate) fn platform_r_as(owner: &str, name: &str, script: &str, args: &[&str]
     };
     let out = capture_within(&cmd, Duration::from_secs(secs));
     let _ = std::fs::remove_file(&rf);
-    let out = out.ok_or("the platform R gave no answer")?;
+    let out = out.ok_or("the platform R gave no answer in time")?;
+    // R's own words when it stopped (an import that moved, a database
+    // down): "gave no answer" hid that credentials.ndexr.io's module had
+    // moved, and every Claude check failed for a day (2026-11-26).
+    if let Some(e) = out.lines().last().and_then(|l| l.strip_prefix("R-ERROR: ")) {
+        return Err(format!("the platform R stopped: {}", e.trim()));
+    }
     let v: Value = serde_json::from_str(out.lines().last().unwrap_or("")).map_err(|_| format!("unexpected answer: {}", out.chars().take(300).collect::<String>()))?;
     match v["error"].as_str() {
         Some(e) => Err(e.to_owned()),
@@ -4126,14 +4132,15 @@ pub fn claude_env() -> (Vec<(String, String)>, String) {
 }
 
 /// Cove's setup (setup.rs): where the person stands with Claude, and
-/// connecting or removing their own - credentials.ndexr.io's connect.r, the
+/// connecting or removing their own - src/r/credentials/connect.r (moved from
+/// credentials.ndexr.io when that site was retired, 2026-11-25), the
 /// same store, check and wording as console.ndexr.io's Claude tab. The token
 /// comes in a 0600 file, never in argv.
 const CLAUDE_SET_R: &str = r#"
 args <- commandArgs(TRUE); op <- args[[1]]; owner <- args[[length(args)]]
 out <- function(x) { cat(jsonlite::toJSON(x, auto_unbox = TRUE, null = "null")); quit(status = 0) }
 options(box.path = Sys.getenv("NDEXR_SRC"))
-box::use(pg = r/connections/postgres, cn = domains/drennanfreddy/`credentials.ndexr.io`/connect)
+box::use(pg = r/connections/postgres, cn = r/credentials/connect)
 email <- tryCatch({
   con <- pg$connection_postgres_direct(); on.exit(pool::poolReturn(con), add = TRUE)
   r <- DBI::dbGetQuery(con, "SELECT email FROM ndexr_users WHERE lower(username) = lower($1) LIMIT 1", params = list(owner))
@@ -4311,6 +4318,27 @@ if (!isTRUE(r$ok)) out(list(error = paste("could not transcribe:", r$text)))
 out(list(text = tryCatch(vocab$vocab_apply(r$text, email), error = function(e) r$text)))
 "#;
 
+/// A recording's container from its first bytes: WebM, MP4 (an iPhone's
+/// AAC), Ogg, WAV, FLAC or MP3 - the file name Whisper reads the format by.
+fn audio_kind(b: &[u8]) -> Option<&'static str> {
+    let at = |i: usize, m: &[u8]| b.get(i..i + m.len()) == Some(m);
+    Some(if at(0, &[0x1A, 0x45, 0xDF, 0xA3]) {
+        "webm"
+    } else if at(4, b"ftyp") {
+        "mp4"
+    } else if at(0, b"OggS") {
+        "ogg"
+    } else if at(0, b"RIFF") && at(8, b"WAVE") {
+        "wav"
+    } else if at(0, b"fLaC") {
+        "flac"
+    } else if at(0, b"ID3") || (b.len() > 1 && b[0] == 0xFF && b[1] & 0xE0 == 0xE0) {
+        "mp3"
+    } else {
+        return None;
+    })
+}
+
 /// A recording (a browser's data URL: `data:audio/webm;codecs=opus;base64,…`)
 /// as text, for `owner`.
 pub fn transcribe_as(owner: &str, data_url: &str) -> Result<String, String> {
@@ -4327,9 +4355,25 @@ pub fn transcribe_as(owner: &str, data_url: &str) -> Result<String, String> {
     if bytes.len() < 512 {
         return Err("nothing was recorded".into());
     }
+    // What the bytes are, over what the browser said: an iPhone's Safari
+    // labelled its recording one thing and Whisper refused it as "Invalid
+    // file format" (operator's screenshot, 2026-11-26).
+    let ext = audio_kind(&bytes).unwrap_or(ext);
     let f = platform_file(&format!("voice-{}-{}.{ext}", std::process::id(), unique()), &bytes)?;
-    let v = platform_r_as(owner, "transcribe.R", TRANSCRIBE_R, &[&f.display().to_string()], 180);
+    // Then 16 kHz mono FLAC through the stack's FFmpeg, a format Whisper
+    // always takes - Safari's fragmented MP4 among those it does not. Whisper
+    // hears 16 kHz mono anyway, so nothing is lost; if FFmpeg is not there,
+    // the recording goes as it came.
+    let flac = f.with_extension("flac");
+    let convert = format!(
+        "set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1; module load FFmpeg >/dev/null 2>&1; ffmpeg -nostdin -hide_banner -loglevel error -y -i {} -vn -ac 1 -ar 16000 -c:a flac {} && echo converted",
+        shell_quote(&f.display().to_string()),
+        shell_quote(&flac.display().to_string())
+    );
+    let send = if capture_within(&convert, Duration::from_secs(60)).is_some_and(|o| o.trim().ends_with("converted")) && flac.is_file() { flac.clone() } else { f.clone() };
+    let v = platform_r_as(owner, "transcribe.R", TRANSCRIBE_R, &[&send.display().to_string()], 180);
     let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&flac);
     v?["text"].as_str().map(|t| t.trim().to_owned()).ok_or_else(|| "no text came back".into())
 }
 
@@ -4989,6 +5033,20 @@ fn write_file(path: &str, text: &str) -> Result<FileText, String> {
     }
     std::fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))?;
     Ok(FileText { path: p.display().to_string(), text: String::new() })
+}
+
+#[cfg(test)]
+mod audio_kind_tests {
+    #[test]
+    fn a_recording_is_named_by_its_bytes() {
+        let mut mp4 = vec![0, 0, 0, 0x1c];
+        mp4.extend_from_slice(b"ftypiso5");
+        assert_eq!(super::audio_kind(&mp4), Some("mp4"));
+        assert_eq!(super::audio_kind(&[0x1A, 0x45, 0xDF, 0xA3, 1]), Some("webm"));
+        assert_eq!(super::audio_kind(b"OggS\0\0"), Some("ogg"));
+        assert_eq!(super::audio_kind(b"RIFF\0\0\0\0WAVEfmt "), Some("wav"));
+        assert_eq!(super::audio_kind(b"hello"), None);
+    }
 }
 
 #[cfg(test)]
