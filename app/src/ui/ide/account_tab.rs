@@ -242,7 +242,7 @@ impl AccountPane {
                         let k = live[r];
                         match c {
                             0 => {
-                                ui.add(egui::Label::new(RichText::new(k.label.as_deref().unwrap_or("Unnamed key")).size(13.0).color(theme::text_strong())).truncate())
+                                ui.add(egui::Label::new(RichText::new(k.label.as_deref().filter(|l| !l.trim().is_empty()).unwrap_or("Unnamed key")).size(13.0).color(theme::text_strong())).truncate())
                                     .on_hover_text(format!("made {} · scopes {}", k.created_at.as_deref().unwrap_or("–"), k.scopes.as_deref().unwrap_or("*")));
                             }
                             1 => {
@@ -279,7 +279,7 @@ impl AccountPane {
                         egui::CollapsingHeader::new(RichText::new(format!("{} revoked keys", gone.len())).size(12.5).color(theme::text())).id_salt("acct-revoked").show(ui, |ui| {
                             for k in &gone {
                                 ui.label(
-                                    RichText::new(format!("{} · {} · revoked {}", k.label.as_deref().unwrap_or("Unnamed"), k.key_id, when(k.revoked_at.as_deref(), "")))
+                                    RichText::new(format!("{} · {} · revoked {}", k.label.as_deref().filter(|l| !l.trim().is_empty()).unwrap_or("Unnamed"), k.key_id, when(k.revoked_at.as_deref(), "")))
                                         .size(12.0)
                                         .color(theme::text()),
                                 );
