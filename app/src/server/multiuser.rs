@@ -345,6 +345,39 @@ mod pam {
         SUCCESS
     }
 
+    /// libpam: the system's, else the ndexr stack's Linux-PAM. `cove
+    /// multiuser` from the stack (`ml cove`, setup-server's unit) runs under
+    /// the stack's own loader, which never looks in the host's /usr/lib, so
+    /// "libpam.so.0" was not found there and nobody could sign in (operator's
+    /// new server, 2026-11-26: "this needs to be built through cvmfs if its
+    /// not there"). The stack's libpam carries its own RPATH, so loading it by
+    /// its path is enough; it reads the host's /etc/pam.d and loads modules
+    /// from its own lib/security.
+    fn open_libpam() -> Result<*mut c_void, String> {
+        let mut tried = vec!["libpam.so.0".to_owned()];
+        if let Ok(root) = std::env::var("EBROOTLINUXMINPAM") {
+            tried.push(format!("{root}/lib/libpam.so.0"));
+        }
+        let arch = std::env::consts::ARCH;
+        let mut stack: Vec<String> = std::fs::read_dir("/opt/ndexr/stack")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|t| t.file_name().to_string_lossy().starts_with(arch))
+            .flat_map(|t| std::fs::read_dir(t.path().join("eb/software/Linux-PAM")).into_iter().flatten().flatten().map(|v| v.path().join("lib/libpam.so.0").display().to_string()))
+            .collect();
+        stack.sort();
+        tried.extend(stack.into_iter().rev());
+        for t in &tried {
+            let Ok(c) = CString::new(t.as_str()) else { continue };
+            let lib = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW) };
+            if !lib.is_null() {
+                return Ok(lib);
+            }
+        }
+        Err(format!("no libpam here - neither this machine's nor the ndexr stack's (tried {}); mount the stack, or install the system's PAM", tried.join(", ")))
+    }
+
     fn sym<T>(lib: *mut c_void, name: &str) -> Result<T, String> {
         let c = CString::new(name).unwrap();
         let p = unsafe { libc::dlsym(lib, c.as_ptr()) };
@@ -357,10 +390,7 @@ mod pam {
     /// Authenticate `user` with `pass` through `service`, then its account
     /// rules (expired, locked). The error is PAM's own word for why.
     pub fn check(service: &str, user: &str, pass: &str) -> Result<(), String> {
-        let lib = unsafe { libc::dlopen(c"libpam.so.0".as_ptr(), libc::RTLD_NOW) };
-        if lib.is_null() {
-            return Err("libpam.so.0 is not on this machine".into());
-        }
+        let lib = open_libpam()?;
         let start: Start = sym(lib, "pam_start")?;
         let authenticate: Step = sym(lib, "pam_authenticate")?;
         let acct: Step = sym(lib, "pam_acct_mgmt")?;

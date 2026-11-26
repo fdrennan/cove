@@ -63,3 +63,6 @@ fi
 git -C "$dest" push -q origin HEAD:main "HEAD:refs/heads/$branch" || { say "push of $id failed"; exit 1; }
 touch "$stamp"
 say "pushed $id as $(git -C "$dest" rev-parse --short HEAD) to main and $branch"
+# Every platform against this version, for whoever looks next
+# (onprem/platforms.sh; Cove's admin bar and ops read the file).
+"$here/onprem/platforms.sh" --json > "$state/platforms.json.part" 2>/dev/null; mv -f "$state/platforms.json.part" "$state/platforms.json"

@@ -1,5 +1,10 @@
-# /etc/pam.d/cove — how `cove multiuser` signs people in: the
-# machine's own rules, as a console login uses them (password, then account:
-# expired, locked). Replace with a site's own stack (SSSD, LDAP) as needed.
-@include common-auth
-@include common-account
+# /etc/pam.d/cove — how `cove multiuser` signs people in: the machine's own
+# accounts and passwords (/etc/shadow), then whether the account may log in
+# now (expired, locked, /etc/nologin). Only modules every libpam carries -
+# the system's or the ndexr stack's Linux-PAM, which `cove multiuser` from
+# the stack loads - so it works on any distribution: the common-auth this
+# included is Debian's alone, and could name modules the stack does not ship
+# (2026-11-26). A site with SSSD or LDAP replaces it with its own.
+auth     required   pam_unix.so
+account  required   pam_nologin.so
+account  required   pam_unix.so
