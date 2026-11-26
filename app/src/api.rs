@@ -344,6 +344,14 @@ pub enum Query {
     /// A patch put to work (host/git.rs patch_at): `action` "stage",
     /// "unstage", "revert", "apply" or "check".
     GitPatch { host: String, action: String, patch: String },
+    /// A shell command in `dir`, as the person, in a login shell (the ndexr
+    /// stack on PATH): its exit code and output (host.rs run_command). The
+    /// MCP connector's run_command; the Terminal stays the person's own way.
+    RunCommand { dir: String, command: String, timeout_secs: u64 },
+    /// The person's Claude connectors (server/mcp.rs): what each may do,
+    /// and Revoke. Answered by `cove multiuser`.
+    McpGrants,
+    McpRevoke { id: String },
     /// Route a published domain to its app's APP_PORT (app/assets/route-app.sh,
     /// run as root by `cove multiuser`): the one step of Up a person's session
     /// cannot take itself.

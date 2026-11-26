@@ -37,6 +37,7 @@
 //! machine people share - `cove multiuser` is for those.
 
 // What builds on `cove serve`.
+pub(crate) mod mcp;
 pub(crate) mod multiuser;
 pub(crate) mod localserve;
 

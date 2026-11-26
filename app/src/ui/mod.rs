@@ -4,6 +4,7 @@
 
 pub(crate) mod kit;
 pub(crate) mod app;
+pub(crate) mod connect;
 pub(crate) mod ide;
 pub(crate) mod editor;
 pub(crate) mod agent;

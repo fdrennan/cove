@@ -1070,8 +1070,20 @@ fn ndexr_admin_cached(owner: &str) -> bool {
 /// Agent tab worked for the operator alone - every other account got "this
 /// needs the platform checked out on this machine". None: the session answers.
 fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
+    let q: crate::api::Query = serde_json::from_slice(body).ok()?;
+    let answer = answer_on_behalf(ctx, owner, id, &q)?;
+    Some(match answer {
+        Ok(v) => Response::from_data(v.to_string().into_bytes()).with_header(Header::from_bytes("Content-Type", "application/json").unwrap()),
+        Err(e) => Response::from_data(e.into_bytes()).with_status_code(500),
+    })
+}
+
+/// What only this server answers for a person (their session, `id`, cannot):
+/// None leaves the query to the session. Cove's page and the MCP connector
+/// (mcp.rs, through `McpHost`) both come through here.
+fn answer_on_behalf(ctx: &Ctx, owner: &str, id: &str, q: &crate::api::Query) -> Option<Result<serde_json::Value, String>> {
     use crate::api::Query;
-    let q: Query = serde_json::from_slice(body).ok()?;
+    let q = q.clone();
     let account = ctx.sessions.lock().unwrap().get(id).map(|s| s.account.clone())?;
     // A page that loads asks something first: by the time the Account tab is
     // opened its answer is here (after a restart the cache is empty).
@@ -1432,12 +1444,90 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
                 crate::host::agent_poll(run, *offset).and_then(|c| serde_json::to_value(c).map_err(|e| e.to_string()))
             }
         }
+        // The person's Claude connectors (mcp.rs), kept by this server.
+        Query::McpGrants => Ok(crate::server::mcp::grants_of(owner)),
+        Query::McpRevoke { id: grant } => {
+            let r = crate::server::mcp::revoke(owner, grant);
+            if r.is_ok() {
+                audit(ctx, owner, "mcp-revoke", grant);
+            }
+            r
+        }
         _ => return None,
     };
-    Some(match answer {
-        Ok(v) => Response::from_data(v.to_string().into_bytes()).with_header(Header::from_bytes("Content-Type", "application/json").unwrap()),
-        Err(e) => Response::from_data(e.into_bytes()).with_status_code(500),
-    })
+    Some(answer)
+}
+
+/// The MCP connector's way into Cove (mcp.rs `Host`): the person's projects,
+/// and each query answered as them - by this server where only it can,
+/// else by their latest Cove session (started if they have none), exactly
+/// as Cove's page is answered.
+struct McpHost<'a>(&'a Ctx);
+
+impl crate::server::mcp::Host for McpHost<'_> {
+    fn projects(&self, user: &str) -> Vec<(String, String)> {
+        account_for(self.0, user).map(|a| workable_domains(user, &a)).unwrap_or_default()
+    }
+
+    fn ask(&self, user: &str, q: crate::api::Query) -> Result<serde_json::Value, String> {
+        let ctx = self.0;
+        let id = latest_or_new(ctx, user)?;
+        if let Some(a) = answer_on_behalf(ctx, user, &id, &q) {
+            return a;
+        }
+        let (port, token) = ctx.sessions.lock().unwrap().get(&id).filter(|s| s.owner == user).map(|s| (s.port, s.token.clone())).ok_or("your Cove session ended - try again")?;
+        let body = serde_json::to_vec(&q).map_err(|e| e.to_string())?;
+        session_post(port, &token, &body)
+    }
+
+    fn audit(&self, user: &str, what: &str, detail: &str) {
+        audit(self.0, user, what, detail);
+    }
+}
+
+/// POST a query to a person's session at `port` and read its answer: 200 is
+/// JSON, anything else its text as the error.
+fn session_post(port: u16, token: &str, body: &[u8]) -> Result<serde_json::Value, String> {
+    let until = Instant::now() + Duration::from_secs(20);
+    let mut s = loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(s) => break s,
+            Err(_) if Instant::now() < until => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => return Err(format!("your Cove session is not answering: {e}")),
+        }
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_secs(660)));
+    let head = format!("POST /api/q HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nCookie: cove={token}\r\nX-Cove: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+    s.write_all(head.as_bytes()).and_then(|_| s.write_all(body)).map_err(|e| e.to_string())?;
+    let mut raw = Vec::new();
+    let _ = s.read_to_end(&mut raw);
+    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or("no answer from your session")?;
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
+    let mut body = raw[split + 4..].to_vec();
+    if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        body = unchunk(&body);
+    }
+    let status = head.split_whitespace().nth(1).and_then(|c| c.parse::<u16>().ok()).unwrap_or(0);
+    if status == 200 {
+        serde_json::from_slice(&body).map_err(|e| format!("an answer that is not JSON: {e}"))
+    } else {
+        Err(String::from_utf8_lossy(&body).trim().to_owned())
+    }
+}
+
+fn unchunk(b: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(eol) = b[i..].windows(2).position(|w| w == b"\r\n") {
+        let n = usize::from_str_radix(String::from_utf8_lossy(&b[i..i + eol]).trim(), 16).unwrap_or(0);
+        i += eol + 2;
+        if n == 0 || i + n > b.len() {
+            break;
+        }
+        out.extend_from_slice(&b[i..i + n]);
+        i += n + 2;
+    }
+    out
 }
 
 /// Start a new session for `owner`: an `cove serve` as their account,
@@ -2472,6 +2562,24 @@ fn handle(ctx: &Ctx, mut req: Request) {
         let _ = req.respond(resp);
         return;
     }
+    // Cove as an MCP server for Claude (mcp.rs): its discovery documents,
+    // registration, tokens and the endpoint itself are called by Claude's
+    // servers, with no Cove sign-in - the endpoint takes a bearer token only.
+    if crate::server::mcp::is_open_path(&path) {
+        let base = crate::server::mcp::base(get_header(&req, "X-Forwarded-Host").or_else(|| get_header(&req, "Host")));
+        let mut body = Vec::new();
+        let _ = req.as_reader().take(BODY_MAX).read_to_end(&mut body);
+        let resp = match path.as_str() {
+            p if p.starts_with("/.well-known/oauth-protected-resource") => crate::server::mcp::protected_resource(&base),
+            p if p.starts_with("/.well-known/oauth-authorization-server") => crate::server::mcp::authorization_server(&base),
+            "/mcp/register" if method == Method::Post => crate::server::mcp::register(&body),
+            "/mcp/token" if method == Method::Post => crate::server::mcp::token(&form(&body)),
+            "/mcp" | "/mcp/" => crate::server::mcp::endpoint(&base, method.as_str(), get_header(&req, "Authorization"), &body, &McpHost(ctx)),
+            _ => Response::from_data(b"not found".to_vec()).with_status_code(404),
+        };
+        let _ = req.respond(resp);
+        return;
+    }
     // The public view needs no sign-in and gets no session (server.rs).
     if let Some(resp) = crate::server::public_response(&req, &ctx.web, &url) {
         let _ = req.respond(resp);
@@ -2546,6 +2654,12 @@ fn handle(ctx: &Ctx, mut req: Request) {
             })
         }
         // Old bookmarks of the list land in Cove.
+        // Connecting Claude (mcp.rs): the person, signed in, says yes.
+        (Method::Get, "/mcp/authorize", Some(user)) => crate::server::mcp::authorize_page(&user, &query(&url)),
+        (Method::Post, "/mcp/authorize", Some(user)) if same_origin(&req) => {
+            let f = body_form(&mut req);
+            crate::server::mcp::authorize_decide(&user, &f, &McpHost(ctx))
+        }
         (Method::Get, "/sessions", Some(_)) if !host_kind(&req).direct() => redirect("/"),
         (Method::Get, "/sessions", Some(user)) => home_page_for(ctx, &user, "", host_kind(&req)),
         // New is the rstudio.* front's form; Cove starts its own (latest_or_new).

@@ -268,6 +268,8 @@ pub struct App {
     pinned: Arc<Mutex<Option<(String, String)>>>,
     /// Opened Global Options on its own once, when nothing was chosen yet.
     asked_options: bool,
+    /// Use Cove from Claude: the MCP connector's address and grants (connect.rs).
+    connect: crate::ui::connect::Connect,
     /// On a phone (compact): the one window showing, picked from the bottom bar.
     compact_cell: usize,
     /// A tab being dragged between windows.
@@ -545,6 +547,7 @@ impl App {
             restart_after_save: Default::default(),
             pinned: Default::default(),
             asked_options: false,
+            connect: Default::default(),
             compact_cell: 0,
             drag: Drag::default(),
             splitting: false,
@@ -1408,6 +1411,10 @@ impl App {
                 crate::ui::kit::theme::menu_sep(ui);
                 if item(ui, "Settings…", "") {
                     self.open_options(ctx);
+                    ui.close();
+                }
+                if item(ui, "Use Cove from Claude…", "") {
+                    self.connect.open = true;
                     ui.close();
                 }
                 if item(ui, "Help…", "F1") {
@@ -4680,6 +4687,7 @@ impl eframe::App for App {
         }
 
         self.options_dialog(ctx);
+        self.connect.show(ctx, &self.backend);
         self.about_dialog(ctx);
         self.request_dialog(ctx);
         // Chat saves files into the domain open here, and shares my sites.

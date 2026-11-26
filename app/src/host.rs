@@ -115,6 +115,9 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::GitDiff { host, sha, path, old, area, full } => serde_json::to_value(git::diff_at(Path::new(&app_dir(host)?), sha, path, old, area, *full)?),
         Query::GitStatus { host } => serde_json::to_value(git::status_at(Path::new(&app_dir(host)?))?),
         Query::GitPatch { host, action, patch } => serde_json::to_value(git::patch_at(Path::new(&app_dir(host)?), action, patch)?),
+        Query::RunCommand { dir, command, timeout_secs } => Ok(crate::host::runner::run_command(&resolve(dir)?.display().to_string(), command, *timeout_secs)?),
+        // Connectors live on the multi-person server, which answers these itself.
+        Query::McpGrants | Query::McpRevoke { .. } => return Err("Claude connectors are kept by cove.ndexr.io's server".into()),
         Query::Easyconfig { name, version } => serde_json::to_value(easyconfig(name, version)?),
         Query::DmFile { id } => serde_json::to_value(crate::host::messages::dm_file(&session_owner(), *id)?),
         Query::Serving { apexes, targets } => {

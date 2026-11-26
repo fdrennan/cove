@@ -140,3 +140,57 @@ mod tests {
     }
 }
 
+
+/// `command` in `dir`, in a login shell as whoever runs this (the person, in
+/// their session): its exit code, stdout and stderr, each cut at 200 KB, or
+/// ended after `secs` (most 600). The MCP connector's run_command.
+pub fn run_command(dir: &str, command: &str, secs: u64) -> Result<serde_json::Value, String> {
+    if !std::path::Path::new(dir).is_dir() {
+        return Err(format!("{dir}: no such folder"));
+    }
+    let mut c = Command::new(login_shell());
+    forget_loaded_modules(&mut c);
+    c.args(["-lc", &with_path(command)]).current_dir(dir).env("NO_COLOR", "1").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0);
+    }
+    let mut child = c.spawn().map_err(|e| format!("could not start a shell: {e}"))?;
+    let take = |r: Option<Box<dyn std::io::Read + Send>>| {
+        thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut r) = r {
+                let _ = r.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = take(child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>));
+    let err = take(child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>));
+    let deadline = Instant::now() + Duration::from_secs(secs.clamp(1, 600));
+    let (code, timed_out) = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break (s.code(), false),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            _ => {
+                let _ = Command::new("kill").args(["-KILL", &format!("-{}", child.id())]).status();
+                let _ = child.wait();
+                break (None, true);
+            }
+        }
+    };
+    let cut = |b: Vec<u8>| {
+        let t = String::from_utf8_lossy(&b).into_owned();
+        if t.len() > 200_000 {
+            let mut at = t.len() - 200_000;
+            while !t.is_char_boundary(at) {
+                at += 1;
+            }
+            format!("[first {} bytes cut]\n{}", at, &t[at..])
+        } else {
+            t
+        }
+    };
+    Ok(serde_json::json!({ "exit_code": code, "timed_out": timed_out, "stdout": cut(out.join().unwrap_or_default()), "stderr": cut(err.join().unwrap_or_default()) }))
+}

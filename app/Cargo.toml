@@ -45,6 +45,8 @@ rusqlite = { version = "0.37", features = ["bundled", "hooks", "column_decltype"
 # initgroups/setgid/setuid for each person's session; serve's SIGTERM.
 [target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
 libc = "0.2"
+# The MCP connector's PKCE check (server/mcp.rs): SHA-256, already in the tree.
+sha2 = "0.10"
 
 # The browser build: WebGL through glow, persistence in localStorage.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
