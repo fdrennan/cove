@@ -114,7 +114,8 @@ impl AccountPane {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             // Every row fits the page's width or wraps: one row wider than a
             // phone widened the whole column once (IMG_8746, 2026-11-14).
-            ui.set_width(ui.available_width());
+            // A gutter for the scroll bar, which drew over the cards' edge.
+            ui.set_width(ui.available_width() - 14.0);
             if let Some(n) = &note {
                 banner(ui, n, theme::alt());
             }
@@ -552,7 +553,7 @@ fn tiles(ui: &mut egui::Ui, v: &AccountView) {
     let (claude, claude_sub) = match &v.claude {
         Some(c) => (
             match c.kind.as_str() {
-                "own" => "Your account".to_owned(),
+                "own" => "Yours".to_owned(),
                 "operator" => "Operator".to_owned(),
                 "plan" => "ndexr plan".to_owned(),
                 "none" => "Not connected".to_owned(),
