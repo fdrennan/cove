@@ -40,7 +40,7 @@ SETTLE="${SETTLE:-120}"
 log() { echo "$(date -u +%FT%TZ) $*" >> "$state/$host.log"; }
 
 status() {
-  for h in laptop neo cell; do
+  for h in laptop neo cell feed; do
     if [[ -f "$state/$h.json" ]]; then cat "$state/$h.json"; echo; else echo "{\"host\":\"$h\",\"state\":\"never built\"}"; fi
   done
 }
@@ -52,7 +52,7 @@ mark() {
     mv -f "$state/$host.json.part" "$state/$host.json"
 }
 
-reachable() { [[ "$host" == cell ]] || ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" true 2>/dev/null; }
+reachable() { [[ "$host" == cell || "$host" == feed ]] || ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" true 2>/dev/null; }
 
 # Build on this host, in a clean env: build_linux [then-command].
 build_linux() {
@@ -71,9 +71,29 @@ build_linux() {
     (( $(awk '/MemAvailable/ {print int($2/1048576)}' /proc/meminfo) >= 8 )) && break
     sleep 30
   done
-  ( cd "$app" && env -i WEBVIEW="${WEBVIEW:-1}" HOME="$HOME" USER="$USER" TMPDIR="$HOME/tmp" RUSTUP_HOME="$tc/rustup" CARGO_HOME="$tc/cargo" \
+  ( cd "$app" && env -i WEBVIEW="${WEBVIEW:-1}" ARCH="${ARCH:-}" HOME="$HOME" USER="$USER" TMPDIR="$HOME/tmp" RUSTUP_HOME="$tc/rustup" CARGO_HOME="$tc/cargo" \
       CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_BUILD_JOBS=4 \
       PATH="$tc/cargo/bin:/usr/local/bin:/usr/bin:/bin" bash -c "nice -n 10 ./build-linux.sh${1:+ && $1}" ) >> "$state/$host.log" 2>&1
+}
+
+# The installer's download - repo.ndexr.io/ndexr/cove, what
+# `curl … install.sh | sh` and the updater read on every new box (operator,
+# 2026-11-26: "make sure that everything is updated through cvmfs and ndexr.io
+# installer, everywhere"; a new server got 0.1.31 and its settings window, a
+# day after the guided setup had replaced it). Every Linux arch, published
+# when Cargo.toml's version is not on the feed yet: bumping the version is
+# the whole of shipping to the installer.
+feed() {
+  local v on
+  v="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$app/Cargo.toml" | head -1)"
+  on="$(curl -fsS "https://repo.ndexr.io/ndexr/cove/linux-x86_64/latest/release.json" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+  [[ "$v" == "$on" ]] && { echo "the feed has $v"; return 0; }
+  build_linux || { echo "the x86_64 build of $v failed"; return 1; }
+  ARCH=aarch64 build_linux || { echo "the aarch64 build of $v failed"; return 1; }
+  # build_linux holds the build lock on fd 8, and publish.sh takes it too.
+  exec 8>&-
+  ( cd "$app" && PATH="$HOME/.local/bin:$PATH" ./publish.sh linux-x86_64 linux-aarch64 ) >> "$state/$host.log" 2>&1 || { echo "publishing $v failed"; return 1; }
+  echo "published $v to the feed (linux-x86_64, linux-aarch64)"
 }
 
 cell() {
@@ -146,18 +166,18 @@ run_one() {
 
 case "${1:-}" in
   status) status ;;
-  laptop|neo|cell) SETTLE="${SETTLE_ONE:-0}" run_one "$1" "${2:-}" ;;
+  laptop|neo|cell|feed) SETTLE="${SETTLE_ONE:-0}" run_one "$1" "${2:-}" ;;
   all)
     # Each in a transient unit of its own: started from run.sh, a plain child
     # would die with cove-onprem on its next restart, mid-build.
     # Not the laptop (operator, 2026-11-20: "you cant touch the laptop outside
     # of me updating it"): it takes each release from the published feed
     # (src/host/update.rs), like anyone's. `desktop-push.sh laptop` by hand still works.
-    for h in neo cell; do
+    for h in neo cell feed; do
       systemd-run --user --quiet --collect --unit="cove-desktop-$h-$(date +%s%N)" \
         --setenv=SETTLE="$SETTLE" "$0" "$h-queued" "${2:-}" 2>/dev/null ||
         setsid "$0" "$h-queued" "${2:-}" < /dev/null > /dev/null 2>&1 &
     done ;;
-  laptop-queued|neo-queued|cell-queued) run_one "${1%-queued}" "${2:-}" ;;
-  *) echo "usage: desktop-push.sh all <release> | laptop|neo|cell [release] | status" >&2; exit 2 ;;
+  laptop-queued|neo-queued|cell-queued|feed-queued) run_one "${1%-queued}" "${2:-}" ;;
+  *) echo "usage: desktop-push.sh all <release> | laptop|neo|cell|feed [release] | status" >&2; exit 2 ;;
 esac

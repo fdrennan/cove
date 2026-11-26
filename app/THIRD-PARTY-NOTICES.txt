@@ -7,7 +7,7 @@ the most permissive one it offers. Their copyright and licence notices
 follow, each once, with the crates it covers.
 
 dependencies-sha256: 9e2f1007cc847a956d23bad746897966d563ae1b7d93360434529f4af2f33617
-crates: 469
+crates: 476
 
 crate                                  version          relied on
 -------------------------------------- ---------------- ------------------------------
@@ -57,6 +57,7 @@ bit-set                                0.10.0           MIT
 bit-vec                                0.9.1            MIT
 bitflags                               1.3.2            MIT
 bitflags                               2.13.2           MIT
+block-buffer                           0.10.4           MIT
 block2                                 0.5.1            MIT
 block2                                 0.6.2            MIT
 blocking                               1.7.0            MIT
@@ -84,10 +85,13 @@ core-foundation                        0.9.4            MIT
 core-foundation-sys                    0.8.7            MIT
 core-graphics                          0.23.2           MIT
 core-graphics-types                    0.1.3            MIT
+cpufeatures                            0.2.17           MIT
 crc32fast                              1.5.2            MIT
 crossbeam-utils                        0.8.23           MIT
 crunchy                                0.2.4            MIT
+crypto-common                          0.1.7            MIT
 cursor-icon                            1.2.0            MIT
+digest                                 0.10.7           MIT
 dispatch                               0.2.0            MIT
 dispatch2                              0.3.1            MIT
 displaydoc                             0.2.7            MIT
@@ -138,6 +142,7 @@ futures-lite                           2.6.1            MIT
 futures-macro                          0.3.34           MIT
 futures-task                           0.3.34           MIT
 futures-util                           0.3.34           MIT
+generic-array                          0.14.7           MIT
 gethostname                            1.1.0            Apache-2.0
 getrandom                              0.2.17           MIT
 getrandom                              0.3.4            MIT
@@ -316,6 +321,7 @@ serde_core                             1.0.229          MIT
 serde_derive                           1.0.229          MIT
 serde_json                             1.0.154          MIT
 serde_repr                             0.1.21           MIT
+sha2                                   0.10.9           MIT
 shlex                                  2.0.1            MIT
 signal-hook-registry                   1.4.8            MIT
 simd-adler32                           0.3.10           MIT
@@ -359,6 +365,7 @@ tracing-core                           0.1.36           MIT
 ttf-parser                             0.25.1           MIT
 type-map                               0.5.1            MIT
 typeid                                 1.0.3            MIT
+typenum                                1.20.1           MIT
 uds_windows                            1.2.1            MIT
 unicode-general-category               1.1.0            Apache-2.0
 unicode-ident                          1.0.26           MIT AND Unicode-3.0
@@ -2713,7 +2720,214 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 23 - applies to: memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11
+Notice 23 - applies to: block-buffer 0.10.4, cpufeatures 0.2.17, crypto-common 0.1.7, digest 0.10.7, sha2 0.10.9
+------------------------------------------------------------------------------
+
+Apache License
+                        Version 2.0, January 2004
+                     http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by Sections 1 through 9 of this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity. For the purposes of this definition,
+   "control" means (i) the power, direct or indirect, to cause the
+   direction or management of such entity, whether by contract or
+   otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   outstanding shares, or (iii) beneficial ownership of such entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under the License, as indicated by a
+   copyright notice that is included in or attached to the work
+   (an example is provided in the Appendix below).
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship. For the purposes
+   of this License, Derivative Works shall not include works that remain
+   separable from, or merely link (or bind by name) to the interfaces of,
+   the Work and Derivative Works thereof.
+
+   "Contribution" shall mean any work of authorship, including
+   the original version of the Work and any modifications or additions
+   to that Work or Derivative Works thereof, that is intentionally
+   submitted to Licensor for inclusion in the Work by the copyright owner
+   or by an individual or Legal Entity authorized to submit on behalf of
+   the copyright owner. For the purposes of this definition, "submitted"
+   means any form of electronic, verbal, or written communication sent
+   to the Licensor or its representatives, including but not limited to
+   communication on electronic mailing lists, source code control systems,
+   and issue tracking systems that are managed by, or on behalf of, the
+   Licensor for the purpose of discussing and improving the Work, but
+   excluding communication that is conspicuously marked or otherwise
+   designated in writing by the copyright owner as "Not a Contribution."
+
+   "Contributor" shall mean Licensor and any individual or Legal Entity
+   on behalf of whom a Contribution has been received by Licensor and
+   subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   copyright license to reproduce, prepare Derivative Works of,
+   publicly display, publicly perform, sublicense, and distribute the
+   Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   (except as stated in this section) patent license to make, have made,
+   use, offer to sell, sell, import, and otherwise transfer the Work,
+   where such license applies only to those patent claims licensable
+   by such Contributor that are necessarily infringed by their
+   Contribution(s) alone or by combination of their Contribution(s)
+   with the Work to which such Contribution(s) was submitted. If You
+   institute patent litigation against any entity (including a
+   cross-claim or counterclaim in a lawsuit) alleging that the Work
+   or a Contribution incorporated within the Work constitutes direct
+   or contributory patent infringement, then any patent licenses
+   granted to You under this License for that Work shall terminate
+   as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the
+   Work or Derivative Works thereof in any medium, with or without
+   modifications, and in Source or Object form, provided that You
+   meet the following conditions:
+
+   (a) You must give any other recipients of the Work or
+       Derivative Works a copy of this License; and
+
+   (b) You must cause any modified files to carry prominent notices
+       stating that You changed the files; and
+
+   (c) You must retain, in the Source form of any Derivative Works
+       that You distribute, all copyright, patent, trademark, and
+       attribution notices from the Source form of the Work,
+       excluding those notices that do not pertain to any part of
+       the Derivative Works; and
+
+   (d) If the Work includes a "NOTICE" text file as part of its
+       distribution, then any Derivative Works that You distribute must
+       include a readable copy of the attribution notices contained
+       within such NOTICE file, excluding those notices that do not
+       pertain to any part of the Derivative Works, in at least one
+       of the following places: within a NOTICE text file distributed
+       as part of the Derivative Works; within the Source form or
+       documentation, if provided along with the Derivative Works; or,
+       within a display generated by the Derivative Works, if and
+       wherever such third-party notices normally appear. The contents
+       of the NOTICE file are for informational purposes only and
+       do not modify the License. You may add Your own attribution
+       notices within Derivative Works that You distribute, alongside
+       or as an addendum to the NOTICE text from the Work, provided
+       that such additional attribution notices cannot be construed
+       as modifying the License.
+
+   You may add Your own copyright statement to Your modifications and
+   may provide additional or different license terms and conditions
+   for use, reproduction, or distribution of Your modifications, or
+   for any such Derivative Works as a whole, provided Your use,
+   reproduction, and distribution of the Work otherwise complies with
+   the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+   any Contribution intentionally submitted for inclusion in the Work
+   by You to the Licensor shall be under the terms and conditions of
+   this License, without any additional terms or conditions.
+   Notwithstanding the above, nothing herein shall supersede or modify
+   the terms of any separate license agreement you may have executed
+   with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+   agreed to in writing, Licensor provides the Work (and each
+   Contributor provides its Contributions) on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied, including, without limitation, any warranties or conditions
+   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+   PARTICULAR PURPOSE. You are solely responsible for determining the
+   appropriateness of using or redistributing the Work and assume any
+   risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory,
+   whether in tort (including negligence), contract, or otherwise,
+   unless required by applicable law (such as deliberate and grossly
+   negligent acts) or agreed to in writing, shall any Contributor be
+   liable to You for damages, including any direct, indirect, special,
+   incidental, or consequential damages of any character arising as a
+   result of this License or out of the use or inability to use the
+   Work (including but not limited to damages for loss of goodwill,
+   work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses), even if such Contributor
+   has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+   the Work or Derivative Works thereof, You may choose to offer,
+   and charge a fee for, acceptance of support, warranty, indemnity,
+   or other liability obligations and/or rights consistent with this
+   License. However, in accepting such obligations, You may act only
+   on Your own behalf and on Your sole responsibility, not on behalf
+   of any other Contributor, and only if You agree to indemnify,
+   defend, and hold each Contributor harmless for any liability
+   incurred by, or claims asserted against, such Contributor by reason
+   of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work.
+
+   To apply the Apache License to your work, attach the following
+   boilerplate notice, with the fields enclosed by brackets "[]"
+   replaced with your own identifying information. (Don't include
+   the brackets!)  The text should be enclosed in the appropriate
+   comment syntax for the file format. We also recommend that a
+   file or class name and description of purpose be included on the
+   same "printed page" as the copyright notice for easier
+   identification within third-party archives.
+
+Copyright [yyyy] [name of copyright owner]
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+------------------------------------------------------------------------------
+Notice 24 - applies to: memchr 2.8.3, same-file 1.0.6, termcolor 1.4.1, walkdir 2.5.0, winapi-util 0.1.11
 ------------------------------------------------------------------------------
 
 This project is dual-licensed under the Unlicense and MIT licenses.
@@ -2722,7 +2936,7 @@ You may use this code under the terms of either license.
 
 
 ------------------------------------------------------------------------------
-Notice 24 - applies to: block2 0.6.2, objc-sys 0.3.5, objc2 0.6.5, objc2-encode 4.1.0
+Notice 25 - applies to: block2 0.6.2, objc-sys 0.3.5, objc2 0.6.5, objc2-encode 4.1.0
 ------------------------------------------------------------------------------
 
 MIT License
@@ -2750,7 +2964,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 25 - applies to: byteorder-lite 0.1.0, memchr 2.8.3, termcolor 1.4.1, walkdir 2.5.0
+Notice 26 - applies to: byteorder-lite 0.1.0, memchr 2.8.3, termcolor 1.4.1, walkdir 2.5.0
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -2777,7 +2991,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 26 - applies to: calloop 0.13.0, calloop 0.14.5, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0
+Notice 27 - applies to: calloop 0.13.0, calloop 0.14.5, smithay-client-toolkit 0.19.2, smithay-client-toolkit 0.20.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Victor Berger
@@ -2802,7 +3016,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 27 - applies to: fearless_simd 0.4.1, kurbo 0.13.1, peniko 0.6.1, polycool 0.4.0
+Notice 28 - applies to: fearless_simd 0.4.1, kurbo 0.13.1, peniko 0.6.1, polycool 0.4.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Raph Levien
@@ -2833,7 +3047,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 28 - applies to: glutin 0.32.3, glutin_egl_sys 0.7.1, glutin_glx_sys 0.6.1, glutin_wgl_sys 0.6.1
+Notice 29 - applies to: glutin 0.32.3, glutin_egl_sys 0.7.1, glutin_glx_sys 0.6.1, glutin_wgl_sys 0.6.1
 ------------------------------------------------------------------------------
 
 Apache License
@@ -3040,7 +3254,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 29 - applies to: lock_api 0.4.14, parking_lot 0.12.5, parking_lot_core 0.9.12, rustc_version 0.4.1
+Notice 30 - applies to: lock_api 0.4.14, parking_lot 0.12.5, parking_lot_core 0.9.12, rustc_version 0.4.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 The Rust Project Developers
@@ -3071,7 +3285,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 30 - applies to: phf 0.13.1, phf_generator 0.13.1, phf_macros 0.13.1, phf_shared 0.13.1
+Notice 31 - applies to: phf 0.13.1, phf_generator 0.13.1, phf_macros 0.13.1, phf_shared 0.13.1
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -3097,7 +3311,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 31 - applies to: atspi 0.29.0, atspi-common 0.13.0, atspi-proxies 0.13.0
+Notice 32 - applies to: atspi 0.29.0, atspi-common 0.13.0, atspi-proxies 0.13.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2022 Tait Hoyem <tait@tait.tech>
@@ -3122,7 +3336,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 32 - applies to: cgl 0.3.2, core-graphics 0.23.2, euclid 0.22.14
+Notice 33 - applies to: cgl 0.3.2, core-graphics 0.23.2, euclid 0.22.14
 ------------------------------------------------------------------------------
 
 Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
@@ -3133,7 +3347,7 @@ copied, modified, or distributed except according to those terms.
 
 
 ------------------------------------------------------------------------------
-Notice 33 - applies to: fdeflate 0.3.7, image 0.25.10, image-webp 0.2.4
+Notice 34 - applies to: fdeflate 0.3.7, image 0.25.10, image-webp 0.2.4
 ------------------------------------------------------------------------------
 
 MIT License
@@ -3164,7 +3378,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 34 - applies to: font-types 0.12.6, read-fonts 0.41.0, skrifa 0.44.0
+Notice 35 - applies to: font-types 0.12.6, read-fonts 0.41.0, skrifa 0.44.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -3237,7 +3451,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 35 - applies to: font-types 0.12.6, read-fonts 0.41.0, skrifa 0.44.0
+Notice 36 - applies to: font-types 0.12.6, read-fonts 0.41.0, skrifa 0.44.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2019 Fontations Developers
@@ -3268,7 +3482,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 36 - applies to: foreign-types 0.5.0, foreign-types-macros 0.2.4, foreign-types-shared 0.3.1
+Notice 37 - applies to: foreign-types 0.5.0, foreign-types-macros 0.2.4, foreign-types-shared 0.3.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 The foreign-types Developers
@@ -3293,7 +3507,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 37 - applies to: getrandom 0.2.17, getrandom 0.3.4, getrandom 0.4.3
+Notice 38 - applies to: getrandom 0.2.17, getrandom 0.3.4, getrandom 0.4.3
 ------------------------------------------------------------------------------
 
 Apache License
@@ -3500,7 +3714,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 38 - applies to: hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1
+Notice 39 - applies to: hashbrown 0.15.5, hashbrown 0.16.1, hashbrown 0.17.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 Amanieu d'Antras
@@ -3531,7 +3745,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 39 - applies to: idna 1.1.0, percent-encoding 2.3.2, url 2.5.8
+Notice 40 - applies to: idna 1.1.0, percent-encoding 2.3.2, url 2.5.8
 ------------------------------------------------------------------------------
 
 Copyright (c) 2013-2025 The rust-url developers
@@ -3562,7 +3776,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 40 - applies to: rand 0.9.5, rand_chacha 0.9.0, rand_core 0.9.5
+Notice 41 - applies to: rand 0.9.5, rand_chacha 0.9.0, rand_core 0.9.5
 ------------------------------------------------------------------------------
 
 Copyrights in the Rand project are retained by their contributors. No
@@ -3580,7 +3794,7 @@ published under these same licenses.
 
 
 ------------------------------------------------------------------------------
-Notice 41 - applies to: rand 0.9.5, rand_chacha 0.9.0, rand_core 0.9.5
+Notice 42 - applies to: rand 0.9.5, rand_chacha 0.9.0, rand_core 0.9.5
 ------------------------------------------------------------------------------
 
 Copyright 2018 Developers of the Rand project
@@ -3612,7 +3826,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 42 - applies to: redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4
+Notice 43 - applies to: redox_syscall 0.4.1, redox_syscall 0.5.18, redox_syscall 0.9.4
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 Redox OS Developers
@@ -3640,7 +3854,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 43 - applies to: toml_datetime 1.1.2+spec-1.1.0, toml_edit 0.25.17+spec-1.1.0, toml_parser 1.1.5+spec-1.1.0
+Notice 44 - applies to: toml_datetime 1.1.2+spec-1.1.0, toml_edit 0.25.17+spec-1.1.0, toml_parser 1.1.5+spec-1.1.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -3847,7 +4061,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 44 - applies to: toml_datetime 1.1.2+spec-1.1.0, toml_edit 0.25.17+spec-1.1.0, toml_parser 1.1.5+spec-1.1.0
+Notice 45 - applies to: toml_datetime 1.1.2+spec-1.1.0, toml_edit 0.25.17+spec-1.1.0, toml_parser 1.1.5+spec-1.1.0
 ------------------------------------------------------------------------------
 
 Copyright (c) Individual contributors
@@ -3872,7 +4086,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 45 - applies to: tracing 0.1.44, tracing-attributes 0.1.31, tracing-core 0.1.36
+Notice 46 - applies to: tracing 0.1.44, tracing-attributes 0.1.31, tracing-core 0.1.36
 ------------------------------------------------------------------------------
 
 Copyright (c) 2019 Tokio Contributors
@@ -3903,7 +4117,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 46 - applies to: adler2 2.0.1, proc-macro-crate 3.5.0
+Notice 47 - applies to: adler2 2.0.1, proc-macro-crate 3.5.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -4110,7 +4324,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 47 - applies to: atomic-waker 1.1.2, futures-lite 2.6.1
+Notice 48 - applies to: atomic-waker 1.1.2, futures-lite 2.6.1
 ------------------------------------------------------------------------------
 
 ===============================================================================
@@ -4161,7 +4375,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 48 - applies to: block2 0.5.1, objc2 0.5.3
+Notice 49 - applies to: block2 0.5.1, objc2 0.5.3
 ------------------------------------------------------------------------------
 
 MIT License
@@ -4189,7 +4403,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 49 - applies to: bytemuck 1.25.2, bytemuck_derive 1.12.1
+Notice 50 - applies to: bytemuck 1.25.2, bytemuck_derive 1.12.1
 ------------------------------------------------------------------------------
 
 Apache License
@@ -4256,7 +4470,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 50 - applies to: bytemuck 1.25.2, bytemuck_derive 1.12.1
+Notice 51 - applies to: bytemuck 1.25.2, bytemuck_derive 1.12.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -4271,7 +4485,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ------------------------------------------------------------------------------
-Notice 51 - applies to: bytemuck 1.25.2, bytemuck_derive 1.12.1
+Notice 52 - applies to: bytemuck 1.25.2, bytemuck_derive 1.12.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2019 Daniel "Lokathor" Gee.
@@ -4288,7 +4502,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 
 ------------------------------------------------------------------------------
-Notice 52 - applies to: calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1
+Notice 53 - applies to: calloop-wayland-source 0.3.0, calloop-wayland-source 0.4.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2023 Kirill Chibisov
@@ -4313,7 +4527,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 53 - applies to: cursor-icon 1.2.0, wayland-csd-frame 0.3.0
+Notice 54 - applies to: cursor-icon 1.2.0, wayland-csd-frame 0.3.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2023 Kirill Chibisov
@@ -4338,7 +4552,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 54 - applies to: either 1.19.0, itertools 0.15.0
+Notice 55 - applies to: either 1.19.0, itertools 0.15.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015
@@ -4369,7 +4583,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 55 - applies to: foldhash 0.1.5, foldhash 0.2.0
+Notice 56 - applies to: foldhash 0.1.5, foldhash 0.2.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2024 Orson Peters
@@ -4394,7 +4608,7 @@ the following restrictions:
 
 
 ------------------------------------------------------------------------------
-Notice 56 - applies to: jni-sys 0.3.1, jni-sys 0.4.1
+Notice 57 - applies to: jni-sys 0.3.1, jni-sys 0.4.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 The rust-jni-sys Developers
@@ -4419,7 +4633,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 57 - applies to: libsqlite3-sys 0.35.0, rusqlite 0.37.0
+Notice 58 - applies to: libsqlite3-sys 0.35.0, rusqlite 0.37.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014 The rusqlite developers
@@ -4444,7 +4658,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 58 - applies to: linux-raw-sys 0.12.1, linux-raw-sys 0.4.15
+Notice 59 - applies to: linux-raw-sys 0.12.1, linux-raw-sys 0.4.15
 ------------------------------------------------------------------------------
 
 Short version for non-lawyers:
@@ -4479,37 +4693,6 @@ at your option.
 
 
 ------------------------------------------------------------------------------
-Notice 59 - applies to: miniz_oxide 0.8.9, miniz_oxide 0.9.1
-------------------------------------------------------------------------------
-
-MIT License
-
-Copyright 2013-2014 RAD Game Tools and Valve Software
-Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
-Copyright (c) 2017 Frommi
-Copyright (c) 2017-2024 oyvindln
-
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-------------------------------------------------------------------------------
 Notice 60 - applies to: miniz_oxide 0.8.9, miniz_oxide 0.9.1
 ------------------------------------------------------------------------------
 
@@ -4519,6 +4702,7 @@ Copyright 2013-2014 RAD Game Tools and Valve Software
 Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
 Copyright (c) 2017 Frommi
 Copyright (c) 2017-2024 oyvindln
+
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -4543,6 +4727,36 @@ SOFTWARE.
 Notice 61 - applies to: miniz_oxide 0.8.9, miniz_oxide 0.9.1
 ------------------------------------------------------------------------------
 
+MIT License
+
+Copyright 2013-2014 RAD Game Tools and Valve Software
+Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+Copyright (c) 2017 Frommi
+Copyright (c) 2017-2024 oyvindln
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 62 - applies to: miniz_oxide 0.8.9, miniz_oxide 0.9.1
+------------------------------------------------------------------------------
+
 Copyright 2013-2014 RAD Game Tools and Valve Software
 Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
 Copyright (c) 2020 Frommi
@@ -4560,7 +4774,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 
 ------------------------------------------------------------------------------
-Notice 62 - applies to: moxcms 0.8.1, pxfm 0.1.30
+Notice 63 - applies to: moxcms 0.8.1, pxfm 0.1.30
 ------------------------------------------------------------------------------
 
 Apache License
@@ -4767,7 +4981,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 63 - applies to: moxcms 0.8.1, pxfm 0.1.30
+Notice 64 - applies to: moxcms 0.8.1, pxfm 0.1.30
 ------------------------------------------------------------------------------
 
 Copyright (c) Radzivon Bartoshyk. All rights reserved.
@@ -4799,7 +5013,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 64 - applies to: num_enum 0.7.6, num_enum_derive 0.7.6
+Notice 65 - applies to: num_enum 0.7.6, num_enum_derive 0.7.6
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018, Daniel Wagner-Hall
@@ -4832,7 +5046,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 65 - applies to: objc2-app-kit 0.2.2, objc2-app-kit 0.3.2
+Notice 66 - applies to: objc2-app-kit 0.2.2, objc2-app-kit 0.3.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -4860,7 +5074,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 66 - applies to: objc2-metal 0.2.2, objc2-metal 0.3.2
+Notice 67 - applies to: objc2-metal 0.2.2, objc2-metal 0.3.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -4888,7 +5102,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 67 - applies to: objc2-quartz-core 0.2.2, objc2-quartz-core 0.3.2
+Notice 68 - applies to: objc2-quartz-core 0.2.2, objc2-quartz-core 0.3.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -4916,7 +5130,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 68 - applies to: objc2-ui-kit 0.2.2, objc2-ui-kit 0.3.2
+Notice 69 - applies to: objc2-ui-kit 0.2.2, objc2-ui-kit 0.3.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -4944,7 +5158,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 69 - applies to: pollster 0.4.0, pollster 1.0.1
+Notice 70 - applies to: pollster 0.4.0, pollster 1.0.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2020-2021 Joshua Barretto
@@ -4975,7 +5189,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 70 - applies to: r-efi 5.3.0, r-efi 6.0.0
+Notice 71 - applies to: r-efi 5.3.0, r-efi 6.0.0
 ------------------------------------------------------------------------------
 
 MIT License
@@ -5003,7 +5217,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 71 - applies to: rand 0.9.5, rand_chacha 0.9.0
+Notice 72 - applies to: rand 0.9.5, rand_chacha 0.9.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -5185,7 +5399,7 @@ END OF TERMS AND CONDITIONS
 
 
 ------------------------------------------------------------------------------
-Notice 72 - applies to: raw-window-metal 1.1.0, siphasher 1.0.4
+Notice 73 - applies to: raw-window-metal 1.1.0, siphasher 1.0.4
 ------------------------------------------------------------------------------
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -5208,7 +5422,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 73 - applies to: rfd 0.15.4, sctk-adwaita 0.10.1
+Notice 74 - applies to: rfd 0.15.4, sctk-adwaita 0.10.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -5235,7 +5449,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 74 - applies to: rustix 0.38.44, rustix 1.1.5
+Notice 75 - applies to: rustix 0.38.44, rustix 1.1.5
 ------------------------------------------------------------------------------
 
 Short version for non-lawyers:
@@ -5270,7 +5484,7 @@ at your option.
 
 
 ------------------------------------------------------------------------------
-Notice 75 - applies to: same-file 1.0.6, winapi-util 0.1.11
+Notice 76 - applies to: same-file 1.0.6, winapi-util 0.1.11
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -5297,7 +5511,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 76 - applies to: tiny-skia 0.11.4, tiny-skia-path 0.11.4
+Notice 77 - applies to: tiny-skia 0.11.4, tiny-skia-path 0.11.4
 ------------------------------------------------------------------------------
 
 Copyright (c) 2011 Google Inc. All rights reserved.
@@ -5333,7 +5547,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 77 - applies to: unicode-segmentation 1.13.3, unicode-width 0.2.2
+Notice 78 - applies to: unicode-segmentation 1.13.3, unicode-width 0.2.2
 ------------------------------------------------------------------------------
 
 Licensed under the Apache License, Version 2.0
@@ -5346,7 +5560,7 @@ according to those terms.
 
 
 ------------------------------------------------------------------------------
-Notice 78 - applies to: unicode-segmentation 1.13.3, unicode-width 0.2.2
+Notice 79 - applies to: unicode-segmentation 1.13.3, unicode-width 0.2.2
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 The Rust Project Developers
@@ -5377,7 +5591,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 79 - applies to: vello_common 0.1.0, vello_cpu 0.1.0
+Notice 80 - applies to: vello_common 0.1.0, vello_cpu 0.1.0
 ------------------------------------------------------------------------------
 
 Copyright 2020 the Vello Authors
@@ -5408,7 +5622,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 80 - applies to: x11rb 0.13.2, x11rb-protocol 0.13.2
+Notice 81 - applies to: x11rb 0.13.2, x11rb-protocol 0.13.2
 ------------------------------------------------------------------------------
 
 Copyright 2019 x11rb Contributers
@@ -5439,7 +5653,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 81 - applies to: zerocopy 0.8.62, zerocopy-derive 0.8.62
+Notice 82 - applies to: zerocopy 0.8.62, zerocopy-derive 0.8.62
 ------------------------------------------------------------------------------
 
 Apache License
@@ -5646,7 +5860,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 82 - applies to: zerocopy 0.8.62, zerocopy-derive 0.8.62
+Notice 83 - applies to: zerocopy 0.8.62, zerocopy-derive 0.8.62
 ------------------------------------------------------------------------------
 
 Copyright 2019 The Fuchsia Authors.
@@ -5676,7 +5890,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 83 - applies to: zerocopy 0.8.62, zerocopy-derive 0.8.62
+Notice 84 - applies to: zerocopy 0.8.62, zerocopy-derive 0.8.62
 ------------------------------------------------------------------------------
 
 Copyright 2023 The Fuchsia Authors
@@ -5707,7 +5921,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 84 - applies to: zune-core 0.5.3, zune-jpeg 0.5.15
+Notice 85 - applies to: zune-core 0.5.3, zune-jpeg 0.5.15
 ------------------------------------------------------------------------------
 
 MIT License
@@ -5734,7 +5948,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 85 - applies to: zune-core 0.5.3, zune-jpeg 0.5.15
+Notice 86 - applies to: zune-core 0.5.3, zune-jpeg 0.5.15
 ------------------------------------------------------------------------------
 
 zlib License
@@ -5759,7 +5973,7 @@ freely, subject to the following restrictions:
 
 
 ------------------------------------------------------------------------------
-Notice 86 - applies to: accesskit_winit 0.32.2
+Notice 87 - applies to: accesskit_winit 0.32.2
 ------------------------------------------------------------------------------
 
 accesskit_winit: Copyright (c) The AccessKit contributors (https://github.com/AccessKit/accesskit)
@@ -5969,7 +6183,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 87 - applies to: adler2 2.0.1
+Notice 88 - applies to: adler2 2.0.1
 ------------------------------------------------------------------------------
 
 Copyright (C) Jonas Schievink <jonasschievink@gmail.com>
@@ -5987,7 +6201,7 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 88 - applies to: ahash 0.8.12
+Notice 89 - applies to: ahash 0.8.12
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Tom Kaitchuck
@@ -6018,7 +6232,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 89 - applies to: android-activity 0.6.1
+Notice 90 - applies to: android-activity 0.6.1
 ------------------------------------------------------------------------------
 
 # License
@@ -6048,7 +6262,7 @@ at your option.
 
 
 ------------------------------------------------------------------------------
-Notice 90 - applies to: android-properties 0.2.2
+Notice 91 - applies to: android-properties 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -6075,7 +6289,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 91 - applies to: android_system_properties 0.1.6
+Notice 92 - applies to: android_system_properties 0.1.6
 ------------------------------------------------------------------------------
 
 Copyright 2016 Nicolas Silva
@@ -6094,7 +6308,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 92 - applies to: android_system_properties 0.1.6
+Notice 93 - applies to: android_system_properties 0.1.6
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -6120,7 +6334,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 93 - applies to: arboard 3.6.1
+Notice 94 - applies to: arboard 3.6.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -6147,7 +6361,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 94 - applies to: arrayref 0.3.9
+Notice 95 - applies to: arrayref 0.3.9
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 David Roundy <roundyd@physics.oregonstate.edu>
@@ -6179,7 +6393,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 95 - applies to: arrayvec 0.7.8
+Notice 96 - applies to: arrayvec 0.7.8
 ------------------------------------------------------------------------------
 
 Copyright (c) Ulrik Sverdrup "bluss" 2015-2023
@@ -6210,7 +6424,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 96 - applies to: as-raw-xcb-connection 1.0.1
+Notice 97 - applies to: as-raw-xcb-connection 1.0.1
 ------------------------------------------------------------------------------
 
 Copyright 2019 as-raw-xcb-connection Contributers
@@ -6241,7 +6455,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 97 - applies to: ascii 1.1.0
+Notice 98 - applies to: ascii 1.1.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -6448,7 +6662,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 98 - applies to: ascii 1.1.0
+Notice 99 - applies to: ascii 1.1.0
 ------------------------------------------------------------------------------
 
 MIT License
@@ -6476,7 +6690,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 99 - applies to: ash 0.38.0+1.3.281
+Notice 100 - applies to: ash 0.38.0+1.3.281
 ------------------------------------------------------------------------------
 
 Apache License
@@ -6549,7 +6763,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 100 - applies to: ash 0.38.0+1.3.281
+Notice 101 - applies to: ash 0.38.0+1.3.281
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 ASH
@@ -6580,7 +6794,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 101 - applies to: ashpd 0.11.1
+Notice 102 - applies to: ashpd 0.11.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -6607,7 +6821,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 102 - applies to: async-broadcast 0.7.2
+Notice 103 - applies to: async-broadcast 0.7.2
 ------------------------------------------------------------------------------
 
 Apache License
@@ -6803,7 +7017,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 103 - applies to: async-broadcast 0.7.2
+Notice 104 - applies to: async-broadcast 0.7.2
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -6830,7 +7044,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 104 - applies to: autocfg 1.5.1
+Notice 105 - applies to: autocfg 1.5.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Josh Stone
@@ -6861,7 +7075,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 105 - applies to: base64 0.23.1
+Notice 106 - applies to: base64 0.23.1
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -6888,7 +7102,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 106 - applies to: bit-set 0.10.0
+Notice 107 - applies to: bit-set 0.10.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2026 The Rust Project Developers
@@ -6919,7 +7133,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 107 - applies to: bit-vec 0.9.1
+Notice 108 - applies to: bit-vec 0.9.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2023 The Rust Project Developers
@@ -6950,7 +7164,38 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 108 - applies to: bumpalo 3.20.3
+Notice 109 - applies to: block-buffer 0.10.4
+------------------------------------------------------------------------------
+
+Copyright (c) 2018-2019 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 110 - applies to: bumpalo 3.20.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2019 Nick Fitzgerald
@@ -6981,7 +7226,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 109 - applies to: bytes 1.12.1
+Notice 111 - applies to: bytes 1.12.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Carl Lerche
@@ -7012,7 +7257,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 110 - applies to: cfg_aliases 0.2.2
+Notice 112 - applies to: cfg_aliases 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7027,7 +7272,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ------------------------------------------------------------------------------
-Notice 111 - applies to: cfg_aliases 0.2.2
+Notice 113 - applies to: cfg_aliases 0.2.2
 ------------------------------------------------------------------------------
 
 # 3rd Party Notices
@@ -7059,7 +7304,7 @@ The `cfg_aliases!` macro uses a lot of the code from [`tectonic_cfg_support::tar
 
 
 ------------------------------------------------------------------------------
-Notice 112 - applies to: chunked_transfer 1.5.0
+Notice 114 - applies to: chunked_transfer 1.5.0
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -7087,7 +7332,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 113 - applies to: clipboard-win 5.4.1
+Notice 115 - applies to: clipboard-win 5.4.1
 ------------------------------------------------------------------------------
 
 Copyright (c) Douman (https://github.com/DoumanAsh/clipboard-win)
@@ -7119,7 +7364,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 114 - applies to: color_quant 1.1.0
+Notice 116 - applies to: color_quant 1.1.0
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -7146,7 +7391,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 115 - applies to: combine 4.6.8
+Notice 117 - applies to: combine 4.6.8
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -7173,7 +7418,38 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 116 - applies to: crc32fast 1.5.2
+Notice 118 - applies to: cpufeatures 0.2.17
+------------------------------------------------------------------------------
+
+Copyright (c) 2020-2025 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 119 - applies to: crc32fast 1.5.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7200,7 +7476,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 117 - applies to: crossbeam-utils 0.8.23
+Notice 120 - applies to: crossbeam-utils 0.8.23
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -7233,7 +7509,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 118 - applies to: crunchy 0.2.4
+Notice 121 - applies to: crunchy 0.2.4
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -7260,7 +7536,38 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 119 - applies to: cursor-icon 1.2.0
+Notice 122 - applies to: crypto-common 0.1.7
+------------------------------------------------------------------------------
+
+Copyright (c) 2021 RustCrypto Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 123 - applies to: cursor-icon 1.2.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -7467,7 +7774,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 120 - applies to: cursor-icon 1.2.0
+Notice 124 - applies to: cursor-icon 1.2.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2023 Kirill Chibisov
@@ -7484,7 +7791,38 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 
 ------------------------------------------------------------------------------
-Notice 121 - applies to: dispatch 0.2.0
+Notice 125 - applies to: digest 0.10.7
+------------------------------------------------------------------------------
+
+Copyright (c) 2017 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 126 - applies to: dispatch 0.2.0
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7512,7 +7850,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 122 - applies to: dispatch2 0.3.1
+Notice 127 - applies to: dispatch2 0.3.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7540,7 +7878,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 123 - applies to: dlib 0.5.3
+Notice 128 - applies to: dlib 0.5.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 Victor Berger
@@ -7565,7 +7903,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 124 - applies to: document-features 0.2.12
+Notice 129 - applies to: document-features 0.2.12
 ------------------------------------------------------------------------------
 
 Apache License
@@ -7644,7 +7982,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 125 - applies to: document-features 0.2.12
+Notice 130 - applies to: document-features 0.2.12
 ------------------------------------------------------------------------------
 
 Copyright (c) 2020 Olivier Goffart <ogoffart@sixtyfps.io>
@@ -7669,7 +8007,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 126 - applies to: downcast-rs 1.2.1
+Notice 131 - applies to: downcast-rs 1.2.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2020 Ashish Myles and contributors
@@ -7700,7 +8038,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 127 - applies to: dpi 0.1.2
+Notice 132 - applies to: dpi 0.1.2
 ------------------------------------------------------------------------------
 
 rust-lang/libm as a whole is available for use under the MIT license:
@@ -7757,7 +8095,7 @@ have been licensed under extremely permissive terms.
 
 
 ------------------------------------------------------------------------------
-Notice 128 - applies to: ecolor 0.36.2
+Notice 133 - applies to: ecolor 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7785,7 +8123,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 129 - applies to: eframe 0.36.2
+Notice 134 - applies to: eframe 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7813,7 +8151,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 130 - applies to: egui 0.36.2
+Notice 135 - applies to: egui 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7841,7 +8179,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 131 - applies to: egui-wgpu 0.36.2
+Notice 136 - applies to: egui-wgpu 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7869,7 +8207,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 132 - applies to: egui-winit 0.36.2
+Notice 137 - applies to: egui-winit 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7897,7 +8235,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 133 - applies to: egui_glow 0.36.2
+Notice 138 - applies to: egui_glow 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7925,7 +8263,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 134 - applies to: ehttp 0.7.1
+Notice 139 - applies to: ehttp 0.7.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7953,7 +8291,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 135 - applies to: emath 0.36.2
+Notice 140 - applies to: emath 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -7981,7 +8319,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 136 - applies to: enumflags2 0.7.12
+Notice 141 - applies to: enumflags2 0.7.12
 ------------------------------------------------------------------------------
 
 Apache License
@@ -8055,7 +8393,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 137 - applies to: enumflags2 0.7.12
+Notice 142 - applies to: enumflags2 0.7.12
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017-2023 Maik Klein, Maja Kądziołka
@@ -8086,7 +8424,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 138 - applies to: enumflags2_derive 0.7.12
+Notice 143 - applies to: enumflags2_derive 0.7.12
 ------------------------------------------------------------------------------
 
 Apache License
@@ -8160,7 +8498,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 139 - applies to: enumflags2_derive 0.7.12
+Notice 144 - applies to: enumflags2_derive 0.7.12
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 Maik Klein
@@ -8191,7 +8529,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 140 - applies to: epaint 0.36.2
+Notice 145 - applies to: epaint 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -8219,7 +8557,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 141 - applies to: epaint_default_fonts 0.36.2
+Notice 146 - applies to: epaint_default_fonts 0.36.2
 ------------------------------------------------------------------------------
 
 The work in the Hack project is Copyright 2018 Source Foundry Authors and licensed under the MIT License
@@ -8256,7 +8594,7 @@ Except as contained in this notice, the names of Gnome, the Gnome Foundation, an
 
 
 ------------------------------------------------------------------------------
-Notice 142 - applies to: epaint_default_fonts 0.36.2
+Notice 147 - applies to: epaint_default_fonts 0.36.2
 ------------------------------------------------------------------------------
 
 This Font Software is licensed under the SIL Open Font License,
@@ -8354,7 +8692,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 143 - applies to: epaint_default_fonts 0.36.2
+Notice 148 - applies to: epaint_default_fonts 0.36.2
 ------------------------------------------------------------------------------
 
 -------------------------------
@@ -8456,7 +8794,7 @@ DEALINGS IN THE FONT SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 144 - applies to: epaint_default_fonts 0.36.2
+Notice 149 - applies to: epaint_default_fonts 0.36.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -8471,7 +8809,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ------------------------------------------------------------------------------
-Notice 145 - applies to: equivalent 1.0.2
+Notice 150 - applies to: equivalent 1.0.2
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016--2023
@@ -8502,7 +8840,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 146 - applies to: errno 0.3.14
+Notice 151 - applies to: errno 0.3.14
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014 Chris Wong
@@ -8533,7 +8871,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 147 - applies to: error-code 3.4.0
+Notice 152 - applies to: error-code 3.4.0
 ------------------------------------------------------------------------------
 
 Boost Software License - Version 1.0 - August 17th, 2003
@@ -8562,7 +8900,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 148 - applies to: fallible-iterator 0.3.0
+Notice 153 - applies to: fallible-iterator 0.3.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 The rust-openssl-verify Developers
@@ -8587,7 +8925,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 149 - applies to: fallible-streaming-iterator 0.1.9
+Notice 154 - applies to: fallible-streaming-iterator 0.1.9
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 The fallible-streaming-iterator Developers
@@ -8612,7 +8950,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 150 - applies to: fax 0.2.7
+Notice 155 - applies to: fax 0.2.7
 ------------------------------------------------------------------------------
 
 Copyright © 2021 The pdf-rs contributers.
@@ -8625,7 +8963,7 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 
 
 ------------------------------------------------------------------------------
-Notice 151 - applies to: flate2 1.1.10
+Notice 156 - applies to: flate2 1.1.10
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014-2026 Alex Crichton
@@ -8656,7 +8994,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 152 - applies to: form_urlencoded 1.2.2
+Notice 157 - applies to: form_urlencoded 1.2.2
 ------------------------------------------------------------------------------
 
 Copyright (c) 2013-2016 The rust-url developers
@@ -8687,7 +9025,34 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 153 - applies to: getrandom 0.2.17
+Notice 158 - applies to: generic-array 0.14.7
+------------------------------------------------------------------------------
+
+The MIT License (MIT)
+
+Copyright (c) 2015 Bartłomiej Kamiński
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 159 - applies to: getrandom 0.2.17
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018-2024 The rust-random Project Developers
@@ -8719,7 +9084,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 154 - applies to: getrandom 0.3.4
+Notice 160 - applies to: getrandom 0.3.4
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018-2025 The rust-random Project Developers
@@ -8751,7 +9116,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 155 - applies to: getrandom 0.4.3
+Notice 161 - applies to: getrandom 0.4.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018-2026 The rust-random Project Developers
@@ -8783,7 +9148,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 156 - applies to: gif 0.14.2
+Notice 162 - applies to: gif 0.14.2
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -8810,7 +9175,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 157 - applies to: gl_generator 0.14.0
+Notice 163 - applies to: gl_generator 0.14.0
 ------------------------------------------------------------------------------
 
 gl_generator: Copyright (c) Brendan Zabarauskas, Corey Richardson, Arseny Kapoulkine (https://github.com/brendanzab/gl-rs/)
@@ -9020,7 +9385,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 158 - applies to: glifo 0.2.0
+Notice 164 - applies to: glifo 0.2.0
 ------------------------------------------------------------------------------
 
 Copyright 2025 the Vello Authors
@@ -9051,7 +9416,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 159 - applies to: glow 0.17.0
+Notice 165 - applies to: glow 0.17.0
 ------------------------------------------------------------------------------
 
 This software is provided 'as-is', without any express or implied
@@ -9072,7 +9437,7 @@ freely, subject to the following restrictions:
 
 
 ------------------------------------------------------------------------------
-Notice 160 - applies to: glutin-winit 0.5.0
+Notice 166 - applies to: glutin-winit 0.5.0
 ------------------------------------------------------------------------------
 
 Copyright © 2022 Kirill Chibisov
@@ -9097,7 +9462,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 161 - applies to: gpu-allocator 0.28.0
+Notice 167 - applies to: gpu-allocator 0.28.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -9304,7 +9669,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 162 - applies to: gpu-allocator 0.28.0
+Notice 168 - applies to: gpu-allocator 0.28.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2021 Traverse Research B.V.
@@ -9317,7 +9682,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ------------------------------------------------------------------------------
-Notice 163 - applies to: guillotiere 0.7.0
+Notice 169 - applies to: guillotiere 0.7.0
 ------------------------------------------------------------------------------
 
 Copyright 2019 Nicolas Silva
@@ -9336,7 +9701,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 164 - applies to: guillotiere 0.7.0
+Notice 170 - applies to: guillotiere 0.7.0
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -9362,7 +9727,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 165 - applies to: harfrust 0.12.0
+Notice 171 - applies to: harfrust 0.12.0
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -9390,7 +9755,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 166 - applies to: hashlink 0.10.0
+Notice 172 - applies to: hashlink 0.10.0
 ------------------------------------------------------------------------------
 
 This work is derived in part from the `linked-hash-map` crate, Copyright (c)
@@ -9422,7 +9787,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 167 - applies to: hex 0.4.3
+Notice 173 - applies to: hex 0.4.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2013-2014 The Rust Project Developers.
@@ -9448,7 +9813,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 168 - applies to: http 1.5.0
+Notice 174 - applies to: http 1.5.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -9655,7 +10020,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 169 - applies to: http 1.5.0
+Notice 175 - applies to: http 1.5.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 http-rs authors
@@ -9686,7 +10051,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 170 - applies to: httparse 1.10.1
+Notice 176 - applies to: httparse 1.10.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015-2025 Sean McArthur
@@ -9711,7 +10076,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 171 - applies to: httpdate 1.0.3
+Notice 177 - applies to: httpdate 1.0.3
 ------------------------------------------------------------------------------
 
 Apache License
@@ -9918,7 +10283,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 172 - applies to: httpdate 1.0.3
+Notice 178 - applies to: httpdate 1.0.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 Pyfisch
@@ -9943,7 +10308,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 173 - applies to: idna_adapter 1.2.2
+Notice 179 - applies to: idna_adapter 1.2.2
 ------------------------------------------------------------------------------
 
 Copyright (c) The rust-url developers
@@ -9974,7 +10339,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 174 - applies to: indexmap 2.14.2
+Notice 180 - applies to: indexmap 2.14.2
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016--2017
@@ -10005,7 +10370,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 175 - applies to: jni 0.22.4
+Notice 181 - applies to: jni 0.22.4
 ------------------------------------------------------------------------------
 
 MIT License
@@ -10033,7 +10398,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 176 - applies to: jni-macros 0.22.4
+Notice 182 - applies to: jni-macros 0.22.4
 ------------------------------------------------------------------------------
 
 MIT License
@@ -10061,7 +10426,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 177 - applies to: jni-sys-macros 0.4.1
+Notice 183 - applies to: jni-sys-macros 0.4.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -10089,7 +10454,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 178 - applies to: khronos_api 3.1.0
+Notice 184 - applies to: khronos_api 3.1.0
 ------------------------------------------------------------------------------
 
 khronos_api: Copyright (c) Brendan Zabarauskas, Corey Richardson, Arseny Kapoulkine, Pierre Krieger (https://github.com/brendanzab/gl-rs/)
@@ -10299,7 +10664,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 179 - applies to: libc 0.2.190
+Notice 185 - applies to: libc 0.2.190
 ------------------------------------------------------------------------------
 
 Copyright (c) The Rust Project Developers
@@ -10330,7 +10695,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 180 - applies to: libloading 0.8.9
+Notice 186 - applies to: libloading 0.8.9
 ------------------------------------------------------------------------------
 
 Copyright © 2015, Simonas Kazlauskas
@@ -10348,7 +10713,7 @@ THIS SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 181 - applies to: libm 0.2.16
+Notice 187 - applies to: libm 0.2.16
 ------------------------------------------------------------------------------
 
 rust-lang/libm as a whole is available for use under the MIT license:
@@ -10612,7 +10977,7 @@ Copyright notices are retained in src/* files where relevant.
 
 
 ------------------------------------------------------------------------------
-Notice 182 - applies to: libredox 0.1.25
+Notice 188 - applies to: libredox 0.1.25
 ------------------------------------------------------------------------------
 
 MIT License
@@ -10639,7 +11004,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 183 - applies to: libsqlite3-sys 0.35.0
+Notice 189 - applies to: libsqlite3-sys 0.35.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2008-2020 Zetetic LLC
@@ -10669,7 +11034,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 184 - applies to: litrs 1.0.0
+Notice 190 - applies to: litrs 1.0.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2020 Project Developers
@@ -10700,7 +11065,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 185 - applies to: memmap2 0.9.11
+Notice 191 - applies to: memmap2 0.9.11
 ------------------------------------------------------------------------------
 
 Apache License
@@ -10907,7 +11272,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 186 - applies to: memmap2 0.9.11
+Notice 192 - applies to: memmap2 0.9.11
 ------------------------------------------------------------------------------
 
 Copyright (c) 2020 Yevhenii Reizner
@@ -10939,7 +11304,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 187 - applies to: memoffset 0.9.1
+Notice 193 - applies to: memoffset 0.9.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 Gilad Naaman
@@ -10964,7 +11329,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 188 - applies to: ndk 0.9.0
+Notice 194 - applies to: ndk 0.9.0
 ------------------------------------------------------------------------------
 
 MIT License
@@ -10992,7 +11357,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 189 - applies to: ndk-context 0.1.1
+Notice 195 - applies to: ndk-context 0.1.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11020,7 +11385,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 190 - applies to: ndk-sys 0.6.0+11769913
+Notice 196 - applies to: ndk-sys 0.6.0+11769913
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11048,7 +11413,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 191 - applies to: nohash-hasher 0.2.0
+Notice 197 - applies to: nohash-hasher 0.2.0
 ------------------------------------------------------------------------------
 
 Copyright 2018 Parity Technologies (UK) Ltd.
@@ -11072,7 +11437,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 192 - applies to: objc2-cloud-kit 0.2.2
+Notice 198 - applies to: objc2-cloud-kit 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11100,7 +11465,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 193 - applies to: objc2-contacts 0.2.2
+Notice 199 - applies to: objc2-contacts 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11128,7 +11493,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 194 - applies to: objc2-core-data 0.2.2
+Notice 200 - applies to: objc2-core-data 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11156,7 +11521,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 195 - applies to: objc2-core-foundation 0.3.2
+Notice 201 - applies to: objc2-core-foundation 0.3.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11184,7 +11549,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 196 - applies to: objc2-core-graphics 0.3.2
+Notice 202 - applies to: objc2-core-graphics 0.3.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11212,7 +11577,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 197 - applies to: objc2-core-image 0.2.2
+Notice 203 - applies to: objc2-core-image 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11240,7 +11605,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 198 - applies to: objc2-core-location 0.2.2
+Notice 204 - applies to: objc2-core-location 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11268,7 +11633,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 199 - applies to: objc2-foundation 0.2.2
+Notice 205 - applies to: objc2-foundation 0.2.2
 ------------------------------------------------------------------------------
 
 use objc2::mutability::CounterpartOrSelf;
@@ -11360,7 +11725,7 @@ extern_protocol!(
 
 
 ------------------------------------------------------------------------------
-Notice 200 - applies to: objc2-foundation 0.3.2
+Notice 206 - applies to: objc2-foundation 0.3.2
 ------------------------------------------------------------------------------
 
 use objc2::extern_protocol;
@@ -11607,7 +11972,7 @@ extern_protocol!(
 
 
 ------------------------------------------------------------------------------
-Notice 201 - applies to: objc2-io-surface 0.3.2
+Notice 207 - applies to: objc2-io-surface 0.3.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11635,7 +12000,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 202 - applies to: objc2-link-presentation 0.2.2
+Notice 208 - applies to: objc2-link-presentation 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11663,7 +12028,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 203 - applies to: objc2-symbols 0.2.2
+Notice 209 - applies to: objc2-symbols 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11691,7 +12056,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 204 - applies to: objc2-uniform-type-identifiers 0.2.2
+Notice 210 - applies to: objc2-uniform-type-identifiers 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11719,7 +12084,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 205 - applies to: objc2-user-notifications 0.2.2
+Notice 211 - applies to: objc2-user-notifications 0.2.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -11747,7 +12112,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 206 - applies to: orbclient 0.3.55
+Notice 212 - applies to: orbclient 0.3.55
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -11774,7 +12139,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 207 - applies to: ordered-float 5.5.0
+Notice 213 - applies to: ordered-float 5.5.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 Jonathan Reem
@@ -11805,7 +12170,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 208 - applies to: parking 2.2.1
+Notice 214 - applies to: parking 2.2.1
 ------------------------------------------------------------------------------
 
 ===============================================================================
@@ -11820,7 +12185,7 @@ copied, modified, or distributed except according to those terms.
 
 
 ------------------------------------------------------------------------------
-Notice 209 - applies to: plain 0.2.3
+Notice 215 - applies to: plain 0.2.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 Plain contributors
@@ -11851,7 +12216,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 210 - applies to: png 0.18.1
+Notice 216 - applies to: png 0.18.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 nwin
@@ -11882,7 +12247,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 211 - applies to: ppv-lite86 0.2.21
+Notice 217 - applies to: ppv-lite86 0.2.21
 ------------------------------------------------------------------------------
 
 Apache License
@@ -12089,7 +12454,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 212 - applies to: ppv-lite86 0.2.21
+Notice 218 - applies to: ppv-lite86 0.2.21
 ------------------------------------------------------------------------------
 
 Copyright (c) 2019 The CryptoCorrosion Contributors
@@ -12120,7 +12485,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 213 - applies to: presser 0.3.1
+Notice 219 - applies to: presser 0.3.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2019 Embark Studios
@@ -12151,7 +12516,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 214 - applies to: profiling 1.0.18
+Notice 220 - applies to: profiling 1.0.18
 ------------------------------------------------------------------------------
 
 MIT License
@@ -12179,7 +12544,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 215 - applies to: quick-error 2.0.1
+Notice 221 - applies to: quick-error 2.0.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 The quick-error Developers
@@ -12204,7 +12569,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 216 - applies to: quick-xml 0.41.0
+Notice 222 - applies to: quick-xml 0.41.0
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -12233,7 +12598,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 217 - applies to: rand_core 0.9.5
+Notice 223 - applies to: rand_core 0.9.5
 ------------------------------------------------------------------------------
 
 Apache License
@@ -12426,7 +12791,7 @@ APPENDIX: How to apply the Apache License to your work.
 
 
 ------------------------------------------------------------------------------
-Notice 218 - applies to: range-alloc 0.1.5
+Notice 224 - applies to: range-alloc 0.1.5
 ------------------------------------------------------------------------------
 
 MIT License
@@ -12453,7 +12818,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 219 - applies to: raw-window-handle 0.6.2
+Notice 225 - applies to: raw-window-handle 0.6.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -12480,7 +12845,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 220 - applies to: raw-window-handle 0.6.2
+Notice 226 - applies to: raw-window-handle 0.6.2
 ------------------------------------------------------------------------------
 
 Copyright (c) 2020 Osspial
@@ -12497,7 +12862,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 
 ------------------------------------------------------------------------------
-Notice 221 - applies to: renderdoc-sys 1.1.0
+Notice 227 - applies to: renderdoc-sys 1.1.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2022 Eyal Kalderon
@@ -12528,7 +12893,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 222 - applies to: ring 0.17.14
+Notice 228 - applies to: ring 0.17.14
 ------------------------------------------------------------------------------
 
 *ring* uses an "ISC" license, like BoringSSL used to use, for new code
@@ -12543,7 +12908,7 @@ for the license to code that was sourced from the once_cell project.
 
 
 ------------------------------------------------------------------------------
-Notice 223 - applies to: ring 0.17.14
+Notice 229 - applies to: ring 0.17.14
 ------------------------------------------------------------------------------
 
 Apache License
@@ -12820,7 +13185,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 224 - applies to: ring 0.17.14
+Notice 230 - applies to: ring 0.17.14
 ------------------------------------------------------------------------------
 
 Copyright 2015-2025 Brian Smith.
@@ -12839,7 +13204,7 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 225 - applies to: ron 0.12.2
+Notice 231 - applies to: ron 0.12.2
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 RON developers
@@ -12870,7 +13235,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 226 - applies to: rustls 0.23.45
+Notice 232 - applies to: rustls 0.23.45
 ------------------------------------------------------------------------------
 
 ISC License (ISC)
@@ -12891,7 +13256,7 @@ THIS SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 227 - applies to: rustls 0.23.45
+Notice 233 - applies to: rustls 0.23.45
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
@@ -12922,7 +13287,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 228 - applies to: rustls-pki-types 1.15.1
+Notice 234 - applies to: rustls-pki-types 1.15.1
 ------------------------------------------------------------------------------
 
 Apache License
@@ -13129,7 +13494,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 229 - applies to: rustls-pki-types 1.15.1
+Notice 235 - applies to: rustls-pki-types 1.15.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2023 Dirkjan Ochtman <dirkjan@ochtman.nl>
@@ -13160,7 +13525,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 230 - applies to: rustls-webpki 0.103.15
+Notice 236 - applies to: rustls-webpki 0.103.15
 ------------------------------------------------------------------------------
 
 Except as otherwise noted, this project is licensed under the following
@@ -13185,7 +13550,7 @@ third-party/chromium/LICENSE.
 
 
 ------------------------------------------------------------------------------
-Notice 231 - applies to: scopeguard 1.2.0
+Notice 237 - applies to: scopeguard 1.2.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016-2019 Ulrik Sverdrup "bluss" and scopeguard developers
@@ -13216,7 +13581,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 232 - applies to: self_cell 1.3.0
+Notice 238 - applies to: self_cell 1.3.0
 ------------------------------------------------------------------------------
 
 GNU GENERAL PUBLIC LICENSE
@@ -13561,7 +13926,40 @@ Public License instead of this License.
 
 
 ------------------------------------------------------------------------------
-Notice 233 - applies to: shlex 2.0.1
+Notice 239 - applies to: sha2 0.10.9
+------------------------------------------------------------------------------
+
+Copyright (c) 2006-2009 Graydon Hoare
+Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2016 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 240 - applies to: shlex 2.0.1
 ------------------------------------------------------------------------------
 
 Copyright 2015 Nicholas Allegra (comex).
@@ -13580,7 +13978,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 234 - applies to: shlex 2.0.1
+Notice 241 - applies to: shlex 2.0.1
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -13607,7 +14005,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 235 - applies to: signal-hook-registry 1.4.8
+Notice 242 - applies to: signal-hook-registry 1.4.8
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 tokio-jsonrpc developers
@@ -13638,7 +14036,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 236 - applies to: simd-adler32 0.3.10
+Notice 243 - applies to: simd-adler32 0.3.10
 ------------------------------------------------------------------------------
 
 MIT License
@@ -13665,7 +14063,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 237 - applies to: siphasher 1.0.4
+Notice 244 - applies to: siphasher 1.0.4
 ------------------------------------------------------------------------------
 
 Copyright 2012-2016 The Rust Project Developers.
@@ -13678,7 +14076,7 @@ option.
 
 
 ------------------------------------------------------------------------------
-Notice 238 - applies to: slab 0.4.12
+Notice 245 - applies to: slab 0.4.12
 ------------------------------------------------------------------------------
 
 Copyright (c) 2019 Carl Lerche
@@ -13709,7 +14107,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 239 - applies to: slotmap 1.1.1
+Notice 246 - applies to: slotmap 1.1.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2021 Orson Peters <orsonpeters@gmail.com>
@@ -13734,7 +14132,7 @@ the following restrictions:
 
 
 ------------------------------------------------------------------------------
-Notice 240 - applies to: smallvec 1.16.3
+Notice 247 - applies to: smallvec 1.16.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 The Servo Project Developers
@@ -13765,7 +14163,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 241 - applies to: smithay-clipboard 0.7.3
+Notice 248 - applies to: smithay-clipboard 0.7.3
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Lucas Timmins & Victor Berger
@@ -13790,7 +14188,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 242 - applies to: spirv 0.4.0+sdk-1.4.341.0
+Notice 249 - applies to: spirv 0.4.0+sdk-1.4.341.0
 ------------------------------------------------------------------------------
 
 spirv: Copyright (c) Lei Zhang (https://github.com/gfx-rs/rspirv)
@@ -14000,7 +14398,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 243 - applies to: stable_deref_trait 1.2.1
+Notice 250 - applies to: stable_deref_trait 1.2.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 Robert Grosse
@@ -14031,7 +14429,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 244 - applies to: static_assertions 1.1.0
+Notice 251 - applies to: static_assertions 1.1.0
 ------------------------------------------------------------------------------
 
 MIT License
@@ -14058,7 +14456,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 245 - applies to: strict-num 0.1.1
+Notice 252 - applies to: strict-num 0.1.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2022 Yevhenii Reizner
@@ -14083,7 +14481,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 246 - applies to: subtle 2.6.1
+Notice 253 - applies to: subtle 2.6.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.
@@ -14118,7 +14516,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ------------------------------------------------------------------------------
-Notice 247 - applies to: synstructure 0.14.0
+Notice 254 - applies to: synstructure 0.14.0
 ------------------------------------------------------------------------------
 
 Copyright 2016 Nika Layzell
@@ -14131,7 +14529,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ------------------------------------------------------------------------------
-Notice 248 - applies to: tempfile 3.27.0
+Notice 255 - applies to: tempfile 3.27.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 Steven Allen
@@ -14162,7 +14560,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 249 - applies to: tiff 0.11.3
+Notice 256 - applies to: tiff 0.11.3
 ------------------------------------------------------------------------------
 
 MIT License
@@ -14189,7 +14587,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 250 - applies to: tiff 0.11.3
+Notice 257 - applies to: tiff 0.11.3
 ------------------------------------------------------------------------------
 
 subsubifd.tif:
@@ -14203,7 +14601,7 @@ usda/*.tif
 
 
 ------------------------------------------------------------------------------
-Notice 251 - applies to: tiny_http 0.12.0
+Notice 258 - applies to: tiny_http 0.12.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014-2019 The tiny-http contributors
@@ -14234,7 +14632,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 252 - applies to: tokio 1.53.2
+Notice 259 - applies to: tokio 1.53.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -14261,7 +14659,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 253 - applies to: ttf-parser 0.25.1
+Notice 260 - applies to: ttf-parser 0.25.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018 Yevhenii Reizner
@@ -14286,7 +14684,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 254 - applies to: type-map 0.5.1
+Notice 261 - applies to: type-map 0.5.1
 ------------------------------------------------------------------------------
 
 Apache License
@@ -14697,7 +15095,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 255 - applies to: type-map 0.5.1
+Notice 262 - applies to: type-map 0.5.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2022 Jacob Brown
@@ -14782,7 +15180,248 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 256 - applies to: uds_windows 1.2.1
+Notice 263 - applies to: typenum 1.20.1
+------------------------------------------------------------------------------
+
+MIT OR Apache-2.0
+
+
+------------------------------------------------------------------------------
+Notice 264 - applies to: typenum 1.20.1
+------------------------------------------------------------------------------
+
+Apache License
+                        Version 2.0, January 2004
+                     http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by Sections 1 through 9 of this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity. For the purposes of this definition,
+   "control" means (i) the power, direct or indirect, to cause the
+   direction or management of such entity, whether by contract or
+   otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   outstanding shares, or (iii) beneficial ownership of such entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under the License, as indicated by a
+   copyright notice that is included in or attached to the work
+   (an example is provided in the Appendix below).
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship. For the purposes
+   of this License, Derivative Works shall not include works that remain
+   separable from, or merely link (or bind by name) to the interfaces of,
+   the Work and Derivative Works thereof.
+
+   "Contribution" shall mean any work of authorship, including
+   the original version of the Work and any modifications or additions
+   to that Work or Derivative Works thereof, that is intentionally
+   submitted to Licensor for inclusion in the Work by the copyright owner
+   or by an individual or Legal Entity authorized to submit on behalf of
+   the copyright owner. For the purposes of this definition, "submitted"
+   means any form of electronic, verbal, or written communication sent
+   to the Licensor or its representatives, including but not limited to
+   communication on electronic mailing lists, source code control systems,
+   and issue tracking systems that are managed by, or on behalf of, the
+   Licensor for the purpose of discussing and improving the Work, but
+   excluding communication that is conspicuously marked or otherwise
+   designated in writing by the copyright owner as "Not a Contribution."
+
+   "Contributor" shall mean Licensor and any individual or Legal Entity
+   on behalf of whom a Contribution has been received by Licensor and
+   subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   copyright license to reproduce, prepare Derivative Works of,
+   publicly display, publicly perform, sublicense, and distribute the
+   Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   (except as stated in this section) patent license to make, have made,
+   use, offer to sell, sell, import, and otherwise transfer the Work,
+   where such license applies only to those patent claims licensable
+   by such Contributor that are necessarily infringed by their
+   Contribution(s) alone or by combination of their Contribution(s)
+   with the Work to which such Contribution(s) was submitted. If You
+   institute patent litigation against any entity (including a
+   cross-claim or counterclaim in a lawsuit) alleging that the Work
+   or a Contribution incorporated within the Work constitutes direct
+   or contributory patent infringement, then any patent licenses
+   granted to You under this License for that Work shall terminate
+   as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the
+   Work or Derivative Works thereof in any medium, with or without
+   modifications, and in Source or Object form, provided that You
+   meet the following conditions:
+
+   (a) You must give any other recipients of the Work or
+       Derivative Works a copy of this License; and
+
+   (b) You must cause any modified files to carry prominent notices
+       stating that You changed the files; and
+
+   (c) You must retain, in the Source form of any Derivative Works
+       that You distribute, all copyright, patent, trademark, and
+       attribution notices from the Source form of the Work,
+       excluding those notices that do not pertain to any part of
+       the Derivative Works; and
+
+   (d) If the Work includes a "NOTICE" text file as part of its
+       distribution, then any Derivative Works that You distribute must
+       include a readable copy of the attribution notices contained
+       within such NOTICE file, excluding those notices that do not
+       pertain to any part of the Derivative Works, in at least one
+       of the following places: within a NOTICE text file distributed
+       as part of the Derivative Works; within the Source form or
+       documentation, if provided along with the Derivative Works; or,
+       within a display generated by the Derivative Works, if and
+       wherever such third-party notices normally appear. The contents
+       of the NOTICE file are for informational purposes only and
+       do not modify the License. You may add Your own attribution
+       notices within Derivative Works that You distribute, alongside
+       or as an addendum to the NOTICE text from the Work, provided
+       that such additional attribution notices cannot be construed
+       as modifying the License.
+
+   You may add Your own copyright statement to Your modifications and
+   may provide additional or different license terms and conditions
+   for use, reproduction, or distribution of Your modifications, or
+   for any such Derivative Works as a whole, provided Your use,
+   reproduction, and distribution of the Work otherwise complies with
+   the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+   any Contribution intentionally submitted for inclusion in the Work
+   by You to the Licensor shall be under the terms and conditions of
+   this License, without any additional terms or conditions.
+   Notwithstanding the above, nothing herein shall supersede or modify
+   the terms of any separate license agreement you may have executed
+   with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+   agreed to in writing, Licensor provides the Work (and each
+   Contributor provides its Contributions) on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied, including, without limitation, any warranties or conditions
+   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+   PARTICULAR PURPOSE. You are solely responsible for determining the
+   appropriateness of using or redistributing the Work and assume any
+   risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory,
+   whether in tort (including negligence), contract, or otherwise,
+   unless required by applicable law (such as deliberate and grossly
+   negligent acts) or agreed to in writing, shall any Contributor be
+   liable to You for damages, including any direct, indirect, special,
+   incidental, or consequential damages of any character arising as a
+   result of this License or out of the use or inability to use the
+   Work (including but not limited to damages for loss of goodwill,
+   work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses), even if such Contributor
+   has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+   the Work or Derivative Works thereof, You may choose to offer,
+   and charge a fee for, acceptance of support, warranty, indemnity,
+   or other liability obligations and/or rights consistent with this
+   License. However, in accepting such obligations, You may act only
+   on Your own behalf and on Your sole responsibility, not on behalf
+   of any other Contributor, and only if You agree to indemnify,
+   defend, and hold each Contributor harmless for any liability
+   incurred by, or claims asserted against, such Contributor by reason
+   of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work.
+
+   To apply the Apache License to your work, attach the following
+   boilerplate notice, with the fields enclosed by brackets "[]"
+   replaced with your own identifying information. (Don't include
+   the brackets!)  The text should be enclosed in the appropriate
+   comment syntax for the file format. We also recommend that a
+   file or class name and description of purpose be included on the
+   same "printed page" as the copyright notice for easier
+   identification within third-party archives.
+
+Copyright 2014 Paho Lurie-Gregg
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+------------------------------------------------------------------------------
+Notice 265 - applies to: typenum 1.20.1
+------------------------------------------------------------------------------
+
+The MIT License (MIT)
+
+Copyright (c) 2014 Paho Lurie-Gregg
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+------------------------------------------------------------------------------
+Notice 266 - applies to: uds_windows 1.2.1
 ------------------------------------------------------------------------------
 
 MIT License
@@ -14809,7 +15448,7 @@ MIT License
 
 
 ------------------------------------------------------------------------------
-Notice 257 - applies to: unicode-ident 1.0.26
+Notice 267 - applies to: unicode-ident 1.0.26
 ------------------------------------------------------------------------------
 
 UNICODE LICENSE V3
@@ -14854,7 +15493,7 @@ authorization of the copyright holder.
 
 
 ------------------------------------------------------------------------------
-Notice 258 - applies to: untrusted 0.9.0
+Notice 268 - applies to: untrusted 0.9.0
 ------------------------------------------------------------------------------
 
 // Copyright 2015-2016 Brian Smith.
@@ -14873,7 +15512,7 @@ Notice 258 - applies to: untrusted 0.9.0
 
 
 ------------------------------------------------------------------------------
-Notice 259 - applies to: ureq 3.4.2
+Notice 269 - applies to: ureq 3.4.2
 ------------------------------------------------------------------------------
 
 MIT License
@@ -14900,7 +15539,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 260 - applies to: ureq-proto 0.6.4
+Notice 270 - applies to: ureq-proto 0.6.4
 ------------------------------------------------------------------------------
 
 Copyright 2022 Martin Algesten
@@ -14913,7 +15552,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 
 ------------------------------------------------------------------------------
-Notice 261 - applies to: urlencoding 2.1.3
+Notice 271 - applies to: urlencoding 2.1.3
 ------------------------------------------------------------------------------
 
 © 2016 Bertram Truong
@@ -14939,7 +15578,7 @@ THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 262 - applies to: utf8_iter 1.0.4
+Notice 272 - applies to: utf8_iter 1.0.4
 ------------------------------------------------------------------------------
 
 Copyright Mozilla Foundation
@@ -14987,7 +15626,7 @@ licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
 
 
 ------------------------------------------------------------------------------
-Notice 263 - applies to: utf8_iter 1.0.4
+Notice 273 - applies to: utf8_iter 1.0.4
 ------------------------------------------------------------------------------
 
 Copyright Mozilla Foundation
@@ -15018,7 +15657,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 264 - applies to: uuid 1.28.0
+Notice 274 - applies to: uuid 1.28.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2014 The Rust Project Developers
@@ -15050,7 +15689,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 265 - applies to: vcpkg 0.2.15
+Notice 275 - applies to: vcpkg 0.2.15
 ------------------------------------------------------------------------------
 
 Copyright (c) 2017 Jim McGrath
@@ -15081,7 +15720,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 266 - applies to: version_check 0.9.5
+Notice 276 - applies to: version_check 0.9.5
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -15106,7 +15745,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 267 - applies to: vt100 0.16.2
+Notice 277 - applies to: vt100 0.16.2
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -15133,7 +15772,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 268 - applies to: vte 0.15.0
+Notice 278 - applies to: vte 0.15.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016 Joe Wilm
@@ -15164,7 +15803,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 269 - applies to: wayland-protocols 0.32.13
+Notice 279 - applies to: wayland-protocols 0.32.13
 ------------------------------------------------------------------------------
 
 Copyright © 2008-2013 Kristian Høgsberg
@@ -15203,7 +15842,7 @@ The above is the version of the MIT "Expat" License used by X.org:
 
 
 ------------------------------------------------------------------------------
-Notice 270 - applies to: wayland-protocols-plasma 0.3.12
+Notice 280 - applies to: wayland-protocols-plasma 0.3.12
 ------------------------------------------------------------------------------
 
 GNU LESSER GENERAL PUBLIC LICENSE
@@ -15716,7 +16355,7 @@ That's all there is to it!
 
 
 ------------------------------------------------------------------------------
-Notice 271 - applies to: web-time 1.1.0
+Notice 281 - applies to: web-time 1.1.0
 ------------------------------------------------------------------------------
 
 Apache License
@@ -15923,7 +16562,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 272 - applies to: web-time 1.1.0
+Notice 282 - applies to: web-time 1.1.0
 ------------------------------------------------------------------------------
 
 MIT License
@@ -15950,7 +16589,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 273 - applies to: webbrowser 1.2.4
+Notice 283 - applies to: webbrowser 1.2.4
 ------------------------------------------------------------------------------
 
 Apache License
@@ -16146,7 +16785,7 @@ limitations under the License.
 
 
 ------------------------------------------------------------------------------
-Notice 274 - applies to: webbrowser 1.2.4
+Notice 284 - applies to: webbrowser 1.2.4
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -16179,7 +16818,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 275 - applies to: webpki-roots 1.0.11
+Notice 285 - applies to: webpki-roots 1.0.11
 ------------------------------------------------------------------------------
 
 # Community Data License Agreement - Permissive - Version 2.0
@@ -16246,7 +16885,7 @@ insights.
 
 
 ------------------------------------------------------------------------------
-Notice 276 - applies to: weezl 0.1.12
+Notice 286 - applies to: weezl 0.1.12
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -16273,7 +16912,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 277 - applies to: winnow 1.0.4
+Notice 287 - applies to: winnow 1.0.4
 ------------------------------------------------------------------------------
 
 Permission is hereby granted, free of charge, to any person obtaining
@@ -16297,7 +16936,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 278 - applies to: xcursor 0.3.11
+Notice 288 - applies to: xcursor 0.3.11
 ------------------------------------------------------------------------------
 
 MIT License
@@ -16324,7 +16963,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 279 - applies to: xkbcommon-dl 0.4.2
+Notice 289 - applies to: xkbcommon-dl 0.4.2
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -16351,7 +16990,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 280 - applies to: xkeysym 0.2.1
+Notice 290 - applies to: xkeysym 0.2.1
 ------------------------------------------------------------------------------
 
 Apache License
@@ -16558,7 +17197,7 @@ Apache License
 
 
 ------------------------------------------------------------------------------
-Notice 281 - applies to: xkeysym 0.2.1
+Notice 291 - applies to: xkeysym 0.2.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2022-2023 John Nunley
@@ -16583,7 +17222,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 282 - applies to: xkeysym 0.2.1
+Notice 292 - applies to: xkeysym 0.2.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2022-2023 John Nunley
@@ -16600,7 +17239,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 
 ------------------------------------------------------------------------------
-Notice 283 - applies to: xml-rs 0.8.29
+Notice 293 - applies to: xml-rs 0.8.29
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -16627,7 +17266,7 @@ SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 284 - applies to: zcheapstr 1.1.0
+Notice 294 - applies to: zcheapstr 1.1.0
 ------------------------------------------------------------------------------
 
 Copyright (c) 2026 Zeeshan Ali Khan & zcheapstr contributors
@@ -16658,7 +17297,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 285 - applies to: zeroize 1.9.1
+Notice 295 - applies to: zeroize 1.9.1
 ------------------------------------------------------------------------------
 
 Copyright (c) 2018-2026 The RustCrypto Project Developers
@@ -16689,7 +17328,7 @@ DEALINGS IN THE SOFTWARE.
 
 
 ------------------------------------------------------------------------------
-Notice 286 - applies to: zlib-rs 0.6.8
+Notice 296 - applies to: zlib-rs 0.6.8
 ------------------------------------------------------------------------------
 
 (C) 2024 Trifecta Tech Foundation 

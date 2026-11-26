@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-26T10:30Z · Use Cove from Claude: add https://cove.ndexr.io/mcp as a custom connector in Claude.ai, Claude Desktop or Claude Code, and Claude works in your Cove - your projects, files, search, git changes and environments, and, if you allow it, patches, commands and deploys, as you. The Cove menu has the steps and your connectors, with Revoke.
 - 2026-11-25T21:40Z · A new site shows in App within seconds: its app starts at once and App shows it from where it runs, while its address, DNS and certificate are made in the background - a one-line note in the corner says so, and App moves to https://<name>/ when that answers.
 - 2026-11-25T21:40Z · A new site shows in App within seconds: its app starts at once and App shows it from where it runs, while its address, DNS and certificate are made in the background - a one-line note in the corner says so, and App moves to https://<name>/ when that answers.
 - 2026-11-25T18:20Z · A new box starts with the guided setup, not a settings window: look, the ndexr stack and, on the desktop, your account, then one next step - Build something opens the starters. What it sets is saved, so nothing asks again.

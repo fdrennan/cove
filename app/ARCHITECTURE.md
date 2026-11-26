@@ -23,7 +23,8 @@ src/
                    pkgflow boxes recap brief messages lsp boxcomplete zippack
                    vitals localagent account shares update git
   server.rs      `cove serve`: the UI and /api over HTTP (Unix)
-  server/          what builds on it: multiuser (a serve per person), localserve
+  server/          what builds on it: multiuser (a serve per person), localserve,
+                   mcp (Cove as a remote MCP server for Claude, docs/mcp.md)
   desktop/       the desktop window's native pieces: webview, desk (hand-over)
   project/       what a project is, both sides: dotcove (.cove/), starters, find
     diff/          its diffs as data: patch (parse, write), words, model (rows,

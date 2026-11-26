@@ -213,7 +213,7 @@ prune_releases() {
 # server/multiuser.rs adopt) - a few seconds of failed polls, nobody signed out.
 server_changed() {
   [[ ! -f "$state/server.stamp" ]] && return 0
-  [[ -n "$(find "$app/src/server/multiuser.rs" "$app/src/server.rs" "$app/src/host.rs" "$app/src/api.rs" "$app/src/host/storage.rs" "$app/src/host/kernel.rs" "$app/src/host/envs.rs" "$app/assets" "$app/templates" "$app/assets/route-app.sh" "$app/Cargo.toml" "$app/Cargo.lock" "$app/THIRD-PARTY-NOTICES.txt" -newer "$state/server.stamp" -print -quit 2>/dev/null)" ]]
+  [[ -n "$(find "$app/src/server/multiuser.rs" "$app/src/server/mcp.rs" "$app/src/server.rs" "$app/src/host.rs" "$app/src/api.rs" "$app/src/host/storage.rs" "$app/src/host/kernel.rs" "$app/src/host/envs.rs" "$app/assets" "$app/templates" "$app/assets/route-app.sh" "$app/Cargo.toml" "$app/Cargo.lock" "$app/THIRD-PARTY-NOTICES.txt" -newer "$state/server.stamp" -print -quit 2>/dev/null)" ]]
 }
 # Claude Code for every account's Terminal (operator, 2026-10-16: "not working
 # claude" - fdrennan got "claude: command not found"; the only copy was in

@@ -194,3 +194,18 @@ pub fn run_command(dir: &str, command: &str, secs: u64) -> Result<serde_json::Va
     };
     Ok(serde_json::json!({ "exit_code": code, "timed_out": timed_out, "stdout": cut(out.join().unwrap_or_default()), "stderr": cut(err.join().unwrap_or_default()) }))
 }
+
+#[cfg(test)]
+mod run_command_tests {
+    #[test]
+    fn a_command_reports_its_code_output_and_timeout() {
+        let d = std::env::temp_dir();
+        let v = super::run_command(&d.display().to_string(), "echo out; echo err >&2; exit 3", 30).unwrap();
+        assert_eq!((v["exit_code"].as_i64(), v["timed_out"].as_bool()), (Some(3), Some(false)), "{v}");
+        assert_eq!(v["stdout"].as_str().unwrap().trim(), "out");
+        assert_eq!(v["stderr"].as_str().unwrap().trim(), "err");
+        let slow = super::run_command(&d.display().to_string(), "sleep 5", 1).unwrap();
+        assert_eq!(slow["timed_out"], true);
+        assert!(super::run_command("/no/such/dir", "true", 5).is_err());
+    }
+}
