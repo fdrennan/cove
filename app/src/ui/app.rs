@@ -4058,8 +4058,10 @@ impl App {
     /// Account mode: the account pane in one centred column, as Connect lays out.
     fn account_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
         let pad: i8 = if compact(ctx) { 8 } else { 16 };
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.92)).inner_margin(egui::Margin::symmetric(pad, pad.min(12)))).show(root, |ui| {
-            let col = ui.available_width().min(1120.0);
+        // The ground behind white-on-ground cards, as a cloud console's
+        // (operator, 2026-11-26: "think amazon, anthropic, openai, google").
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::ground()).inner_margin(egui::Margin::symmetric(pad, pad.min(12) + 4))).show(root, |ui| {
+            let col = ui.available_width().min(1080.0);
             let side = ((ui.available_width() - col) / 2.0).max(0.0);
             ui.horizontal_top(|ui| {
                 ui.add_space(side);

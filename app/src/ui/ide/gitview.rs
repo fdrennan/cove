@@ -131,6 +131,8 @@ impl GitView {
             }
             Some(Ok(v)) => v,
         };
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&format!("DIAG avail={:?} clip={:?} max={:?}", ui.available_rect_before_wrap(), ui.clip_rect(), ui.max_rect()).into());
         let narrow = ui.available_width() < 760.0;
         if narrow {
             match self.step {
