@@ -215,6 +215,28 @@ cargo test --release           # tests; the live ones are #[ignore] and need a d
 | `onprem/` | the on-prem service: build-on-save (`run.sh`), systemd units, session launchers |
 | `docs/` | the stack's model against the literature, targets, compliance notes |
 
+## Why not EESSI or Compute Canada's stack?
+
+Asked on r/HPC on 2026-11-26. This stack follows their model, and §6 lists
+where it falls short of them: generic binaries where EESSI builds per CPU
+microarchitecture, no staging repository, no layer-wide test suite. If what you
+need is the scientific software on a cluster, EESSI is the more mature choice
+and is run across many sites.
+
+What ndexr adds on top of that model:
+
+- **Language sets.** R, Python, Julia and Rust package libraries, each pinned in
+  its own manifest and loaded by one module (on 2026-11-14: R 819, Python 579,
+  Julia 791, Rust 1,003), so `install.packages()` and `pip install` are rarely
+  needed.
+- **The work, not only the software.** Cove is the workspace over the stack:
+  projects that run as applications at their own address, saved every 30
+  minutes, restorable, and buildable into container images that mount the same
+  stack read-only under Slurm.
+
+Cove reads its stack from `/opt/ndexr/stack`. Running it over EESSI's
+`/cvmfs/software.eessi.io` instead is not supported yet.
+
 ## Cove, RStudio and Positron
 
 ### Why Cove and not Positron?
