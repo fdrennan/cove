@@ -131,6 +131,10 @@ impl GitView {
             }
             Some(Ok(v)) => v,
         };
+        // The panes fill what shows of the window and no more: its size runs
+        // past the visible body, and their bottoms were cut off square.
+        let mut body = ui.new_child(egui::UiBuilder::new().max_rect(ui.available_rect_before_wrap().intersect(ui.clip_rect())));
+        let ui = &mut body;
         let narrow = ui.available_width() < 760.0;
         if narrow {
             match self.step {
@@ -155,11 +159,11 @@ impl GitView {
         // own bar, a gap between (operator, 2026-11-26: "the git window
         // should be more beautiful ... how the bars look").
         let gap = (theme::WIN_GAP / 2) as i8;
-        let side = egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: gap, top: 0, bottom: 0 });
+        let side = egui::Frame::NONE.inner_margin(egui::Margin { left: 0, right: gap, top: 0, bottom: 2 });
         egui::Panel::left("git-log").resizable(true).show_separator_line(false).frame(side).default_size((w * 0.22).clamp(220.0, 340.0)).show(ui, |ui| theme::pane(ui, |ui| self.log_pane(ui, list, backend, &ctx, &mut act)));
-        let mid = egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: gap, top: 0, bottom: 0 });
+        let mid = egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: gap, top: 0, bottom: 2 });
         egui::Panel::left("git-files").resizable(true).show_separator_line(false).frame(mid).default_size((w * 0.2).clamp(210.0, 320.0)).show(ui, |ui| theme::pane(ui, |ui| self.files_pane(ui, list, backend, &ctx, &mut act)));
-        let last = egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: 0, top: 0, bottom: 0 });
+        let last = egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: 0, top: 0, bottom: 2 });
         egui::CentralPanel::default().frame(last).show(ui, |ui| theme::pane(ui, |ui| self.diff_pane(ui, backend, &ctx, false)));
         act
     }
@@ -290,7 +294,7 @@ impl GitView {
                 let top = if i == 0 { rect.center().y } else { rect.top() };
                 let bottom = if i + 1 == rows { rect.center().y } else { rect.bottom() };
                 if rows > 1 {
-                    p.line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], egui::Stroke::new(1.5, theme::moss()));
+                    p.line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], egui::Stroke::new(1.5, theme::lift(theme::moss(), 0.12)));
                 }
                 let c = egui::pos2(x, rect.center().y);
                 if i == 0 {
