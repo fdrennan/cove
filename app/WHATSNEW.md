@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-26T19:15Z · Cove takes its software from the stack you already have: the ndexr stack, EESSI or Compute Canada's, picked under Tools › Global Options › Stack (Automatic takes the first one mounted). Projects load R, Python, Node, Julia and Rust from it through `ml`, at that stack's own versions, and the Terminal enters it. Packages a project needs that the stack lacks come from CRAN or PyPI into your own library for that stack. The R and Python consoles still run on the ndexr stack.
 - 2026-11-26T18:20Z · ndexr.io links to the public answers: every question asked about Cove on Reddit and LinkedIn, answered in full, at drennanfreddy.ndexr.io.
 - 2026-11-26T17:30Z · Account is laid out as a cloud console: a page title, section cards with their counts, tables with column headers for domains, API keys and activity, status badges, and Show all for long domain lists. Columns that do not fit a phone are left out instead of squeezed.
 - 2026-11-26T17:00Z · Cove opens on home each time it starts: your own site, <username>.ndexr.io. To open on the project you were last in instead, pick Last opened under Tools › Global Options › General › Open on start. Without a site of your own, it opens on the last project as before.
