@@ -385,4 +385,5 @@ pub mod ctl {
     pub const EXPORT_PATCH: Ctl = Ctl::new(Glyph::Download, "Export patch", "save the patch as a file");
     pub const APPLY_PATCH: Ctl = Ctl::new(Glyph::Upload, "Apply a patch", "paste or open a patch and apply it to the project's files");
     pub const NEW_TAB: Ctl = Ctl::new(Glyph::Plus, "New tab", "go to a project, or create one (Projects)");
+    pub const VERSIONS: Ctl = Ctl::new(Glyph::Undo, "Versions", "every saved version of this project: see what changed, restore one");
 }

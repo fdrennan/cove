@@ -6,7 +6,15 @@
 #
 #   onprem/public-push.sh [release id]
 #
-# At most once an hour (a release can land every few minutes). The export is
+# Every release (operator, 2026-11-26: "cove builds going forward must a)
+# always be updated in github repo b) github repo branch must always equal
+# current version of software for ALL platforms"): `main` and the version's
+# own branch, v<Cargo.toml version>, both move to the source of the release
+# just published - the source cove.ndexr.io serves and the feed's installers
+# were built from (onprem/platforms.sh checks they agree). Until 2026-11-26 it
+# ran at most once an hour, so the newest releases of an hour never reached
+# GitHub. Releases queue on the lock rather than skip: each carries the one
+# before it, and the last one is always pushed. The export is
 # public-export.sh's, into a clone of the public repo kept here, so the public
 # history is one commit per push. Nothing is pushed when the new commit adds a
 # credential-shaped line or a file the export should have left out: that is
@@ -23,9 +31,10 @@ remote="${COVE_PUBLIC_REMOTE:-git@github.com:fdrennan/cove.git}"
 mkdir -p "$state"
 say() { echo "$(date -u +%FT%TZ) $*" >>"$log"; }
 
-[[ -n "$(find "$stamp" -mmin -60 2>/dev/null)" ]] && exit 0
+version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$here/app/Cargo.toml" | head -1)"
+branch="v$version"
 exec 9>"$state/public.lock"
-flock -n 9 || exit 0
+flock -w 1800 9 || { say "waited 30 min for the push before $id - skipped"; exit 1; }
 
 if [[ ! -d "$dest/.git" ]]; then
   git clone -q "$remote" "$dest" || { say "clone of $remote failed"; exit 1; }
@@ -33,8 +42,10 @@ fi
 git -C "$dest" fetch -q origin main && git -C "$dest" reset -q --hard origin/main ||
   { say "fetch from $remote failed"; exit 1; }
 before="$(git -C "$dest" rev-parse HEAD)"
-"$here/onprem/public-export.sh" "$dest" "Cove: release $id" >>"$log" 2>&1
+"$here/onprem/public-export.sh" "$dest" "Cove $version: release $id" >>"$log" 2>&1
 if [[ "$(git -C "$dest" rev-parse HEAD)" == "$before" ]]; then
+  # Same source as main: the version's branch still has to point at it.
+  git -C "$dest" push -q origin "HEAD:refs/heads/$branch" || { say "push of $branch failed"; exit 1; }
   touch "$stamp"
   exit 0
 fi
@@ -49,6 +60,6 @@ if [[ "$hits" != 0 || "$private" != 0 ]]; then
   git -C "$dest" reset -q --hard "$before"
   exit 1
 fi
-git -C "$dest" push -q origin HEAD:main || { say "push of $id failed"; exit 1; }
+git -C "$dest" push -q origin HEAD:main "HEAD:refs/heads/$branch" || { say "push of $id failed"; exit 1; }
 touch "$stamp"
-say "pushed $id as $(git -C "$dest" rev-parse --short HEAD)"
+say "pushed $id as $(git -C "$dest" rev-parse --short HEAD) to main and $branch"

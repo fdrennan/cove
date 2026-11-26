@@ -1308,7 +1308,7 @@ impl App {
                             self.ask_modules(ctx);
                             ui.close();
                         }
-                        if item(ui, "History (Git)…", "") {
+                        if item(ui, "Versions…", "") {
                             self.ide.open_versions(ctx);
                             ui.close();
                         }
@@ -1544,6 +1544,13 @@ impl App {
                     }
                     if self.mode == Mode::Ide {
                         self.ide.push_button(ui, ctx, "Save");
+                        // Every save is a version, and going back to one sits
+                        // beside Save (operator, 2026-11-26: "we have a save
+                        // button in cove but nowhere to go to prior versions";
+                        // it was the Project menu's History (Git)…).
+                        if self.ide.domain.is_some() && crate::ui::kit::bar::button(ui, &crate::ui::kit::icons::ctl::VERSIONS, crate::ui::kit::bar::Weight::Secondary).clicked() {
+                            self.ide.open_versions(ctx);
+                        }
                     }
                     ui.separator();
                     self.vitals_chip(ui, ctx);

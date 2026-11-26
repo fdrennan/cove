@@ -84,16 +84,43 @@ build_linux() {
 # when Cargo.toml's version is not on the feed yet: bumping the version is
 # the whole of shipping to the installer.
 feed() {
-  local v on
+  # Every platform built here, each published when it is behind Cargo.toml's
+  # version (operator, 2026-11-26: "github repo branch must always equal
+  # current version of software for ALL platforms across NDEXR"). Windows was
+  # left out until then and sat a version behind (0.1.31 beside 0.1.32).
+  local v p on behind=()
   v="$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$app/Cargo.toml" | head -1)"
-  on="$(curl -fsS "https://repo.ndexr.io/ndexr/cove/linux-x86_64/latest/release.json" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
-  [[ "$v" == "$on" ]] && { echo "the feed has $v"; return 0; }
-  build_linux || { echo "the x86_64 build of $v failed"; return 1; }
-  ARCH=aarch64 build_linux || { echo "the aarch64 build of $v failed"; return 1; }
-  # build_linux holds the build lock on fd 8, and publish.sh takes it too.
+  for p in linux-x86_64 linux-aarch64 windows-x86_64; do
+    on="$(curl -fsS "https://repo.ndexr.io/ndexr/cove/$p/latest/release.json" 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+    [[ "$on" == "$v" ]] || behind+=("$p")
+  done
+  [[ ${#behind[@]} -eq 0 ]] && { echo "the feed has $v on every platform built here"; return 0; }
+  for p in "${behind[@]}"; do
+    case $p in
+      linux-x86_64) build_linux || { echo "the x86_64 build of $v failed"; return 1; } ;;
+      linux-aarch64) ARCH=aarch64 build_linux || { echo "the aarch64 build of $v failed"; return 1; } ;;
+      windows-x86_64) build_windows || { echo "the Windows build of $v failed"; return 1; } ;;
+    esac
+  done
+  # The builds hold the build lock on fd 8, and publish.sh takes it too.
   exec 8>&-
-  ( cd "$app" && PATH="$HOME/.local/bin:$PATH" ./publish.sh linux-x86_64 linux-aarch64 ) >> "$state/$host.log" 2>&1 || { echo "publishing $v failed"; return 1; }
-  echo "published $v to the feed (linux-x86_64, linux-aarch64)"
+  ( cd "$app" && PATH="$HOME/.local/bin:$PATH" ./publish.sh "${behind[@]}" ) >> "$state/$host.log" 2>&1 || { echo "publishing $v failed"; return 1; }
+  echo "published $v to the feed (${behind[*]})"
+}
+
+# Windows, cross-compiled here (build-windows.sh), on Cove's toolchain, which
+# carries the x86_64-pc-windows-gnu target; under the same lock and memory
+# wait as build_linux.
+build_windows() {
+  local tc="${APP_RUST:-$HOME/.local/share/cove-rust}" i
+  exec 8> "$state/build.lock"; flock 8
+  for i in $(seq 1 60); do
+    (( $(awk '/MemAvailable/ {print int($2/1048576)}' /proc/meminfo) >= 8 )) && break
+    sleep 30
+  done
+  ( cd "$app" && env -i HOME="$HOME" USER="$USER" TMPDIR="$HOME/tmp" RUSTUP_HOME="$tc/rustup" CARGO_HOME="$tc/cargo" \
+      CARGO_PROFILE_RELEASE_LTO=thin CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_BUILD_JOBS=4 \
+      PATH="$tc/cargo/bin:/usr/local/bin:/usr/bin:/bin" bash -c "nice -n 10 ./build-windows.sh" ) >> "$state/$host.log" 2>&1
 }
 
 cell() {
