@@ -354,7 +354,7 @@ mod pam {
     /// its path is enough; it reads the host's /etc/pam.d and loads modules
     /// from its own lib/security.
     fn open_libpam() -> Result<*mut c_void, String> {
-        let mut tried = vec!["libpam.so.0".to_owned()];
+        let mut tried = vec![];
         if let Ok(root) = std::env::var("EBROOTLINUXMINPAM") {
             tried.push(format!("{root}/lib/libpam.so.0"));
         }
@@ -387,10 +387,114 @@ mod pam {
         Ok(unsafe { std::mem::transmute_copy(&p) })
     }
 
+    /// This machine's own libpam, loaded in this process: a Cove built for
+    /// the system's loader (the repo.ndexr.io tarball, a desktop).
+    fn open_system() -> Option<*mut c_void> {
+        let lib = unsafe { libc::dlopen(c"libpam.so.0".as_ptr(), libc::RTLD_NOW) };
+        (!lib.is_null()).then_some(lib)
+    }
+
+    /// The machine's PAM run by the machine's own loader, in a helper: its
+    /// python3 calling its libpam. `cove multiuser` from the ndexr stack runs
+    /// under the stack's loader, and the stack's own Linux-PAM cannot sign
+    /// anyone in on Ubuntu or Debian (measured 2026-11-26, exec.ndexr.io): it
+    /// is upstream PAM, which reads `@include` in /etc/pam.d as an "illegal
+    /// module type", and its pam_unix asks the stack's glibc for the shadow
+    /// entry, which reads the Prefix's own etc/shadow, not /etc/shadow
+    /// (authenticate of a real account: 9, "cannot retrieve authentication
+    /// info"). None = no system python3 or no system libpam here.
+    const HELPER: &str = r#"
+import ctypes, sys
+try:
+    pam = ctypes.CDLL("libpam.so.0")
+except OSError:
+    sys.exit(2)
+libc = ctypes.CDLL(None)
+libc.calloc.restype = ctypes.c_void_p
+libc.strdup.restype = ctypes.c_void_p
+libc.strdup.argtypes = [ctypes.c_char_p]
+class Msg(ctypes.Structure):
+    _fields_ = [("style", ctypes.c_int), ("msg", ctypes.c_char_p)]
+class Reply(ctypes.Structure):
+    _fields_ = [("resp", ctypes.c_void_p), ("retcode", ctypes.c_int)]
+CONV = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.POINTER(Msg)), ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p)
+service, user = sys.argv[1].encode(), sys.argv[2].encode()
+password = sys.stdin.buffer.read()
+def converse(n, msgs, out, data):
+    a = libc.calloc(n, ctypes.sizeof(Reply))
+    if not a:
+        return 5
+    r = ctypes.cast(a, ctypes.POINTER(Reply))
+    for i in range(n):
+        style = msgs[i].contents.style
+        if style == 1:
+            r[i].resp = libc.strdup(password)
+        elif style == 2:
+            r[i].resp = libc.strdup(user)
+    out[0] = a
+    return 0
+class Conv(ctypes.Structure):
+    _fields_ = [("conv", CONV), ("data", ctypes.c_void_p)]
+conv = Conv(CONV(converse), None)
+h = ctypes.c_void_p()
+pam.pam_strerror.restype = ctypes.c_char_p
+pam.pam_strerror.argtypes = [ctypes.c_void_p, ctypes.c_int]
+rc = pam.pam_start(service, user, ctypes.byref(conv), ctypes.byref(h))
+if rc or not h.value:
+    print("pam_start failed (%d)" % rc)
+    sys.exit(1)
+rc = pam.pam_authenticate(h, 0x8001)
+if rc == 0:
+    rc = pam.pam_acct_mgmt(h, 0x8001)
+why = "" if rc == 0 else pam.pam_strerror(h, rc).decode(errors="replace")
+pam.pam_end(h, rc)
+print(why)
+sys.exit(0 if rc == 0 else 1)
+"#;
+
+    fn check_by_helper(service: &str, user: &str, pass: &str) -> Option<Result<(), String>> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        // The machine's python, by its own path: never one from the stack.
+        let py = ["/usr/bin/python3", "/usr/libexec/platform-python", "/bin/python3"].into_iter().find(|p| std::path::Path::new(p).is_file())?;
+        let mut child = Command::new(py)
+            .args(["-I", "-c", HELPER, service, user])
+            .env_clear()
+            .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+            .env("LANG", "C.UTF-8")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        // The password on stdin, never in argv or the environment.
+        let wrote = child.stdin.take().map(|mut i| i.write_all(pass.as_bytes()).is_ok()).unwrap_or(false);
+        let out = child.wait_with_output().ok()?;
+        match out.status.code() {
+            Some(0) if wrote => Some(Ok(())),
+            Some(1) => {
+                let why = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+                Some(Err(if why.is_empty() { "Authentication failure".to_owned() } else { why }))
+            }
+            _ => None,
+        }
+    }
+
     /// Authenticate `user` with `pass` through `service`, then its account
-    /// rules (expired, locked). The error is PAM's own word for why.
+    /// rules (expired, locked). The error is PAM's own word for why. The
+    /// machine's PAM always, in this process when its loader can reach it,
+    /// else through the helper; the stack's Linux-PAM only on a machine that
+    /// has no PAM of its own (and then only a plain-syntax /etc/pam.d/cove).
     pub fn check(service: &str, user: &str, pass: &str) -> Result<(), String> {
-        let lib = open_libpam()?;
+        if open_system().is_none() {
+            if let Some(r) = check_by_helper(service, user, pass) {
+                return r;
+            }
+        }
+        let lib = match open_system() {
+            Some(l) => l,
+            None => open_libpam()?,
+        };
         let start: Start = sym(lib, "pam_start")?;
         let authenticate: Step = sym(lib, "pam_authenticate")?;
         let acct: Step = sym(lib, "pam_acct_mgmt")?;

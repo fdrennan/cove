@@ -131,10 +131,6 @@ impl GitView {
             }
             Some(Ok(v)) => v,
         };
-        // The panes fill what shows of the window and no more: its size runs
-        // past the visible body, and their bottoms were cut off square.
-        let mut body = ui.new_child(egui::UiBuilder::new().max_rect(ui.available_rect_before_wrap().intersect(ui.clip_rect())));
-        let ui = &mut body;
         let narrow = ui.available_width() < 760.0;
         if narrow {
             match self.step {

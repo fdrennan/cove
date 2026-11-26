@@ -213,6 +213,12 @@ struct Saved {
     /// Sites with live refresh off (ide.rs `live_off`).
     #[serde(default)]
     live_off: std::collections::BTreeSet<String>,
+    /// Open on the project last opened instead of home, the person's own
+    /// <username>.ndexr.io (operator, 2026-11-26: home "is where we go each
+    /// time we start back up OR in settings user can choose to go to last
+    /// opened domain"). Off: home.
+    #[serde(default)]
+    start_last: bool,
     /// Speak beside Listen (voice.rs `speak`).
     #[serde(default)]
     speak: bool,
@@ -516,6 +522,7 @@ impl App {
                 let mut ide = Ide::new(backend.clone(), &cc.egui_ctx);
                 ide.first_site = first_visit;
                 ide.restore = saved.domain.clone();
+                ide.home_first = !saved.start_last;
                 ide.agents_layout = saved.agents_layout;
                 ide.agents_frac = saved.agents_frac.unwrap_or(0.5);
                 // ?agent=all in the address opens on Exec; otherwise every
@@ -2366,6 +2373,7 @@ impl App {
         // all fit, however short the screen.
         let h = (screen.height() * 0.80).min(760.0).max(300.0).min(screen.height() - 32.0);
         let mut page = self.options_page.min(OPTION_PAGES.len() - 1);
+        let mut start_last = self.saved.start_last;
         egui::Modal::new("global-options".into()).show(ctx, |ui| {
             ui.set_width(w);
             ui.heading("Global Options");
@@ -2414,6 +2422,13 @@ impl App {
                                 ui.label(RichText::new("Where R, Python and the shell start, and where Files opens.").size(12.0).color(theme::muted()));
                                 ui.add_space(4.0);
                                 egui::Grid::new("options-project").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                    // Where Cove opens each start: home, or the last project.
+                                    ui.label("Open on start");
+                                    ui.horizontal(|ui| {
+                                        ui.selectable_value(&mut start_last, false, "Home").on_hover_text("your own site, <username>.ndexr.io - or the last project where you have none");
+                                        ui.selectable_value(&mut start_last, true, "Last opened").on_hover_text("the project you were in when Cove last closed");
+                                    });
+                                    ui.end_row();
                                     ui.label("Project folder");
                                     ui.add(egui::TextEdit::singleline(&mut draft.project_dir).font(egui::TextStyle::Monospace).hint_text("/absolute/path — empty: home").desired_width(field_w));
                                     ui.end_row();
@@ -2496,6 +2511,8 @@ impl App {
             });
         });
         self.options_page = page;
+        self.saved.start_last = start_last;
+        self.ide.home_first = !start_last;
         if setup {
             crate::ui::setup::ask_cvmfs("app");
         }

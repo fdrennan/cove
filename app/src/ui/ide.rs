@@ -1435,6 +1435,9 @@ pub struct Ide {
     debug_seen: Option<(String, usize)>,
     /// The person's own domain has been opened for a first visit (once).
     own_opened: bool,
+    /// Each start opens on home, the person's own domain, before the last
+    /// one opened (app.rs `start_last` off). Without a home: the last.
+    pub home_first: bool,
     /// A first visit in a browser (app.rs): when the person's own site opens
     /// and still holds the page signup laid, it becomes a React site.
     pub first_site: bool,
@@ -1921,6 +1924,7 @@ impl Ide {
             debug_mark: None,
             debug_seen: None,
             own_opened: false,
+            home_first: true,
             first_site: false,
             own_new_asked: false,
             start_fresh: None,
@@ -2558,10 +2562,12 @@ impl Ide {
                 }
             }
         }
-        // Nothing to go back to (a first visit): the person's own domain,
-        // <username>.ndexr.io, open at once (operator, 2026-10-19: "their
-        // domain should open up immediately").
-        if self.own_new_done && self.restore.is_none() && self.domain.is_none() && !self.own_opened {
+        // Home: the person's own domain, <username>.ndexr.io, open at once -
+        // on a first visit (operator, 2026-10-19: "their domain should open
+        // up immediately") and on every start unless they chose the last
+        // project (2026-11-26: "should be a home domain where its where we
+        // go each time we start back up"). Without one, the last project.
+        if self.own_new_done && (self.restore.is_none() || self.home_first) && self.domain.is_none() && !self.own_opened {
             self.ask_domains(ctx);
             let own = match self.domains.lock().unwrap().as_ref() {
                 Some(Ok(v)) => Some(own_domain(v)),
@@ -2571,6 +2577,7 @@ impl Ide {
             if let Some(d) = own {
                 self.own_opened = true;
                 if let Some(d) = d {
+                    self.restore = None;
                     self.open_domain(d, ctx);
                 }
             }
@@ -6733,9 +6740,11 @@ impl Ide {
         let mut open = true;
         let mut act = crate::ui::ide::gitview::GitAct::None;
         // As big as the screen allows: three panes need the room. On a phone
-        // it is the screen.
+        // it is the screen. The height leaves room for the title bar: at
+        // screen - 90 the window ran past the bottom, egui pulled it back on
+        // screen, and the panes' lower edges were cut off (2026-11-26).
         let screen = ctx.content_rect().size();
-        let size = egui::vec2((screen.x - 24.0).clamp(300.0, 1320.0), (screen.y - 90.0).clamp(300.0, 800.0));
+        let size = egui::vec2((screen.x - 24.0).clamp(300.0, 1320.0), (screen.y - 130.0).clamp(300.0, 800.0));
         // In front: app.rs hides the App pane's page (an HTML layer over the
         // canvas) for any large foreground area, and a window in the middle
         // layer had the page drawn over its diff.
