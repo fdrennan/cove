@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-26T17:30Z · Account is laid out as a cloud console: a page title, section cards with their counts, tables with column headers for domains, API keys and activity, status badges, and Show all for long domain lists. Columns that do not fit a phone are left out instead of squeezed.
 - 2026-11-26T17:00Z · Cove opens on home each time it starts: your own site, <username>.ndexr.io. To open on the project you were last in instead, pick Last opened under Tools › Global Options › General › Open on start. Without a site of your own, it opens on the last project as before.
 - 2026-11-26T16:30Z · Connections is now Sites, and first start explains what a site is: a new step, How it fits, draws one site - you ask its agent, the agent writes its app, the app answers at its address - and says which tab holds each: Workspace, Sites and Account.
 - 2026-11-26T16:30Z · The Git window sits in three rounded panes like the rest of Cove, each headed by its own bar: History with its count, the version or Changes with Restore or Apply patch, and the diff's controls. A picked version is marked by an accent edge rather than a block of colour.

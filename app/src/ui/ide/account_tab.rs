@@ -79,7 +79,7 @@ impl AccountPane {
         // its name large, what it is about beside, one control at the right.
         let mut refresh = false;
         ui.add_space(6.0);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 36.0), Layout::right_to_left(Align::Center), |ui| {
             refresh = bar::glyph(ui, Glyph::Refresh, "read your account again", !busy).clicked();
             if busy {
                 ui.spinner();
@@ -309,8 +309,7 @@ fn section(ui: &mut egui::Ui, title: &str, count: &str, actions: impl FnOnce(&mu
         ui.set_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = 0.0;
         egui::Frame::NONE.inner_margin(egui::Margin { left: PAD as i8, right: 14, top: 14, bottom: 14 }).show(ui, |ui| {
-            ui.set_min_height(28.0);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 28.0), Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 actions(ui);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -428,14 +427,12 @@ fn badge(ui: &mut egui::Ui, text: &str, c: Color32) {
     if text.is_empty() {
         return;
     }
-    egui::Frame::new()
-        .fill(c.gamma_multiply(0.12))
-        .stroke(egui::Stroke::new(1.0, c.gamma_multiply(0.35)))
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(7, 2))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(11.5).color(c));
-        });
+    // Drawn at its own size: a framed label in a table cell stretched to
+    // the row's height.
+    let g = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.5), c);
+    let (r, _) = ui.allocate_exact_size(g.size() + egui::vec2(14.0, 6.0), Sense::hover());
+    ui.painter().rect(r, 4.0, c.gamma_multiply(0.12), egui::Stroke::new(1.0, c.gamma_multiply(0.35)), egui::StrokeKind::Inside);
+    ui.painter().galley(r.center() - g.size() / 2.0, g, c);
 }
 
 /// A light and its word.
@@ -592,14 +589,18 @@ fn tiles(ui: &mut egui::Ui, v: &AccountView) {
 /// A key-value row of a description list, ruled under.
 fn row(ui: &mut egui::Ui, k: &str, add: impl FnOnce(&mut egui::Ui)) {
     let w = ui.available_width();
-    ui.horizontal(|ui| {
-        ui.set_min_height(36.0);
-        ui.add_sized([120.0, 20.0], egui::Label::new(RichText::new(k).size(12.5).color(theme::muted())).truncate());
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(egui::vec2(120.0, 18.0), Layout::left_to_right(Align::Center), |ui| {
+            ui.set_min_width(120.0);
+            ui.add(egui::Label::new(RichText::new(k).size(12.5).color(theme::muted())).truncate());
+        });
         ui.vertical(|ui| {
             ui.set_max_width((w - 130.0).max(120.0));
+            ui.spacing_mut().item_spacing.y = 4.0;
             add(ui);
         });
     });
+    ui.add_space(10.0);
 }
 
 fn cell_card(ui: &mut egui::Ui, v: &AccountView) {

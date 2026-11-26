@@ -217,6 +217,36 @@ cargo test --release           # tests; the live ones are #[ignore] and need a d
 
 ## Cove, RStudio and Positron
 
+### Why Cove and not Positron?
+
+Asked on r/rstats on 2026-11-26, and the first question anyone should ask.
+
+Positron is an editor: you install R and Python yourself, then point it at
+them. Cove carries the software. Its stack holds 3,922 programs built from
+source for x86-64 and Arm, every R from 4.0 to 4.6 and Python from 3.8 to 3.14,
+Julia and Rust, each loaded with `ml` and nothing compiled on your machine. The
+same tree mounts on a laptop, a server or a cluster, so a project opens with
+the same versions everywhere it goes.
+
+- **A project is a running application,** not a folder: it starts at its own
+  address, is saved every 30 minutes, and any saved version can be restored or
+  built into a container image.
+- **A server for many people** under the MIT licence: each person signs in with
+  their own Linux account and their sessions run as them. Positron's Elastic
+  License does not allow offering it to others as a hosted service without
+  Posit's agreement.
+- **What sits under the code is visible:** the atlas traces every package down
+  through its toolchain to the kernel, and shows each binary that was
+  downloaded rather than built.
+
+Where Positron is ahead: it is a mature editor with VS Code's extensions,
+debugger and polish, and Cove's editor is its own and younger. For an editor
+over the R and Python already on your machine, Positron is the better choice.
+Cove is for when the software stack, the running app and its history are the
+problem.
+
+### Licences and code
+
 Cove is its own program and contains no RStudio or Positron code. Its IDE
 borrows RStudio's layout (four panes, Global Options) as a model, drawn in its
 own Rust, and talks to R through its own kernel. On 2026-10-28 every string
