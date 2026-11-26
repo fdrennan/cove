@@ -201,7 +201,10 @@ fi
         let rc = dir.join("term.bashrc");
         std::fs::write(&rc, RC).map_err(|e| format!("{}: {e}", rc.display()))?;
         let mods = st.module(crate::api::Lang::Shell).to_owned();
-        let mods = if mods.split_whitespace().all(crate::host::kernel::valid_module) { mods } else { String::new() };
+        // On EESSI or Compute Canada's stack the Terminal enters that stack
+        // and loads nothing: the picked modules are the ndexr stack's names.
+        let stack = crate::host::stacks::chosen(&st.stack_source);
+        let mods = if stack.key == "ndexr" && mods.split_whitespace().all(crate::host::kernel::valid_module) { mods } else { String::new() };
         // Resolved once and replayed (envs.rs); "" = the rc file loads it itself.
         let script = if mods.trim().is_empty() { String::new() } else { crate::host::envs::resolve(&mods).map(|r| r.script.display().to_string()).unwrap_or_default() };
         let (claude, label) = crate::host::claude_env();
@@ -213,7 +216,8 @@ fi
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
             .env("COVE", "1")
-            .env("COVE_USE_SH", crate::host::use_sh().map(|p| p.display().to_string()).unwrap_or_default())
+            .env("COVE_USE_SH", crate::host::stacks::enter_script(&st.stack_source, &dir).map(|p| p.display().to_string()).unwrap_or_default())
+            .env("COVE_STACK", stack.key)
             .env("COVE_MODULES", &mods)
             .env("COVE_ENV_SCRIPT", &script)
             .env("COVE_CWD", &cwd)

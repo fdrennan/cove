@@ -3,31 +3,17 @@
 # from the stack's R set, built on the n-boxes; see APP_NEEDS below.
 . ./app.env
 
-# The app runs in its stack environment or not at all - never on whatever the
-# host happens to have (operator, 2026-11-19: "the application must absolutely
-# run with its proper ml environment"). stack_ml loads the first of its
-# modules that loads and says what is loaded, in the log's own format.
-stack_here() {
-  [ -r /opt/ndexr/stack/use.sh ] || { echo "env: the ndexr stack is not mounted at /opt/ndexr/stack - set it up in Cove (Stack in the status bar)" >&2; exit 127; }
-}
-stack_ml() {
-  for m in "$@"; do
-    if ml "$m" >/dev/null 2>&1; then
-      printf '%s INFO    [env] %s from the ndexr stack\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$(ml -t list 2>&1 | grep "^${m%%/*}/" | tail -1)"
-      return 0
-    fi
-  done
-  echo "env: none of $* loads from the ndexr stack - try: ml spider ${1%%/*}" >&2
-  exit 127
-}
+# The stack this project's modules come from - the ndexr stack, EESSI or
+# Compute Canada's - and stack_here, stack_enter and stack_ml (.cove/stack.sh).
+. ./stack.sh
 
 if stack_here; then
   set +u
-  . /opt/ndexr/stack/use.sh >/dev/null 2>&1
+  stack_enter
   stack_ml env/r4.6_py3.13-release
   set -u
 fi
-command -v Rscript >/dev/null || { echo "no Rscript: run where /opt/ndexr/stack is mounted (env/r4.6_py3.13-release)" >&2; exit 127; }
+command -v Rscript >/dev/null || { echo "no Rscript: run where $COVE_STACK_LABEL is mounted (env/r4.6_py3.13-release)" >&2; exit 127; }
 
 # Every package APP_NEEDS names as r:<name>, and nothing more. A box holds
 # only part of the set in its site library (the records marked SiteLibrary);
@@ -42,6 +28,11 @@ cove_repo=""
 if [ -n "$cove_triple" ] && [ -n "${EBVERSIONR:-}" ] && [ -n "${NDEXR_BIOC_VERSION:-}" ]; then
   cove_repo="${NDEXR_PKGS_URL:-https://repo.ndexr.io/env}/$cove_triple/R/$EBVERSIONR-bioc$NDEXR_BIOC_VERSION/R"
 fi
+# On EESSI or Compute Canada's stack the person's packages for it go in a
+# library of their own for that stack and R version (stack.sh stack_enter).
+if [ "${COVE_STACK_NAME:-ndexr}" != ndexr ]; then
+  export R_LIBS_USER="$HOME/R/$COVE_STACK_NAME/$(Rscript -e 'cat(as.character(getRversion()))')"
+fi
 [ -n "${R_LIBS_USER:-}" ] && mkdir -p "$R_LIBS_USER"
 Rscript - "$cove_repo" ${APP_NEEDS:-} <<'R' || exit 127
 a <- commandArgs(TRUE)
@@ -50,8 +41,8 @@ want <- sub("^r:", "", grep("^r:", a[-1], value = TRUE))
 gone <- function() want[!vapply(want, requireNamespace, TRUE, quietly = TRUE)]
 m <- gone()
 lib <- Sys.getenv("R_LIBS_USER")
-if (length(m) && nzchar(repo) && nzchar(lib)) {
-  message("env: ", paste(m, collapse = " "), " not on this box; fetching from ", repo)
+if (length(m) && nzchar(lib)) {
+  message("env: ", paste(m, collapse = " "), " not on this box; fetching from ", if (nzchar(repo)) repo else "CRAN")
   cran <- getOption("repos")[["CRAN"]]
   if (is.null(cran) || !nzchar(cran) || cran == "@CRAN@") cran <- "https://cloud.r-project.org"
   ndexr_first <- function(db) {
@@ -59,7 +50,7 @@ if (length(m) && nzchar(repo) && nzchar(lib)) {
     db[ours | !(db[, "Package"] %in% db[ours, "Package"]), , drop = FALSE]
   }
   options(available_packages_filters = list("R_version", "OS_type", "subarch", ndexr_first, "duplicates"))
-  tryCatch(utils::install.packages(m, lib = lib, repos = c(ndexr = repo, CRAN = cran), type = "source", quiet = TRUE),
+  tryCatch(utils::install.packages(m, lib = lib, repos = if (nzchar(repo)) c(ndexr = repo, CRAN = cran) else c(CRAN = cran), type = "source", quiet = TRUE),
            error = function(e) message("env: could not fetch from ", repo, ": ", conditionMessage(e)))
   m <- gone()
 }

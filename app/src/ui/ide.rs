@@ -8101,7 +8101,7 @@ impl Ide {
                             ui.radio_value(&mut c.equivalent, false, RichText::new("Modification - with changes").size(14.0));
                         });
                         if !c.equivalent {
-                            ui.add(egui::TextEdit::multiline(&mut c.brief).hint_text("what should change - e.g. an explorer of the Riemann zeta function's zeros, built in Rust").desired_rows(2).desired_width(w - 8.0));
+                            ui.add(egui::TextEdit::multiline(&mut c.brief).hint_text("what should change - e.g. a live map of today's earthquakes, built in Rust").desired_rows(2).desired_width(w - 8.0));
                         }
                         ui.add_space(6.0);
                     }

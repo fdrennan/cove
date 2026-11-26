@@ -5,31 +5,17 @@
 # Lines reach .cove/run/app.log as they are printed, not when a buffer fills.
 export PYTHONUNBUFFERED=1
 
-# The app runs in its stack environment or not at all - never on whatever the
-# host happens to have (operator, 2026-11-19: "the application must absolutely
-# run with its proper ml environment"). stack_ml loads the first of its
-# modules that loads and says what is loaded, in the log's own format.
-stack_here() {
-  [ -r /opt/ndexr/stack/use.sh ] || { echo "env: the ndexr stack is not mounted at /opt/ndexr/stack - set it up in Cove (Stack in the status bar)" >&2; exit 127; }
-}
-stack_ml() {
-  for m in "$@"; do
-    if ml "$m" >/dev/null 2>&1; then
-      printf '%s INFO    [env] %s from the ndexr stack\n' "$(date -u '+%Y-%m-%d %H:%M:%S')" "$(ml -t list 2>&1 | grep "^${m%%/*}/" | tail -1)"
-      return 0
-    fi
-  done
-  echo "env: none of $* loads from the ndexr stack - try: ml spider ${1%%/*}" >&2
-  exit 127
-}
+# The stack this project's modules come from - the ndexr stack, EESSI or
+# Compute Canada's - and stack_here, stack_enter and stack_ml (.cove/stack.sh).
+. ./stack.sh
 
 if stack_here; then
   set +u
-  . /opt/ndexr/stack/use.sh >/dev/null 2>&1
+  stack_enter
   stack_ml env/r4.6_py3.13-release env/Python/3.13.15
   set -u
 fi
-command -v python3 >/dev/null || { echo "no python3: run where /opt/ndexr/stack is mounted (env/Python/3.13.15)" >&2; exit 127; }
+command -v python3 >/dev/null || { echo "no python3: run where $COVE_STACK_LABEL is mounted (env/Python/3.13.15)" >&2; exit 127; }
 
 # Every package APP_NEEDS names as python:<name> (its PyPI name). A box holds
 # only part of the set in its site library (the records marked SiteLibrary);
@@ -42,7 +28,7 @@ command -v python3 >/dev/null || { echo "no python3: run where /opt/ndexr/stack 
 # project made before APP_NEEDS was FastAPI's.
 cove_triple="$(printf '%s' "${NDEXR_ENV_SITE_LIBRARY:-}" | sed -n 's|.*/stack/\([^/]*\)/eb/.*|\1|p')"
 cove_set="Python/$(python3 -c 'import sys; print(sys.version.split()[0])')"
-export PYTHONUSERBASE="${XDG_CACHE_HOME:-$HOME/.cache}/ndexr/env/${cove_triple:-$(uname -m)}/$cove_set"
+export PYTHONUSERBASE="${XDG_CACHE_HOME:-$HOME/.cache}/ndexr/env/${cove_triple:-${COVE_STACK_NAME:-ndexr}-$(uname -m)}/$cove_set"
 python3 - "${NDEXR_PKGS_URL:-https://repo.ndexr.io/env}/$cove_triple/$cove_set" "$cove_triple" ${APP_NEEDS:-python:fastapi python:uvicorn} <<'PY' || exit 127
 import importlib, importlib.metadata as m, json, os, subprocess, sys, urllib.request
 
@@ -75,6 +61,15 @@ if gone and triple:
                         "--constraint", pins, *gone], stdout=sys.stderr, check=False)
     except Exception as e:  # no network, no repo: the message below says what is missing
         print(f"env: could not fetch from {repo}: {e}", file=sys.stderr)
+    import site
+    site.addsitedir(site.getusersitepackages())
+    gone = missing()
+elif gone:
+    # Another stack (EESSI, Compute Canada's) or one with no ndexr set: PyPI,
+    # into the person's own library for this stack and Python.
+    print(f"env: {' '.join(gone)} not in this stack; fetching from PyPI", file=sys.stderr)
+    subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--quiet", "--disable-pip-version-check",
+                    "--no-warn-script-location", "--prefer-binary", *gone], stdout=sys.stderr, check=False)
     import site
     site.addsitedir(site.getusersitepackages())
     gone = missing()

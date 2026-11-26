@@ -62,6 +62,7 @@ pub fn rewrite(body: &str, lang: &str) -> String {
     body.replace("\"$(dirname \"$0\")\"", "\"$(dirname \"$0\")/../..\"")
         .replace(". ./app.env", ". .cove/app.env")
         .replace(". ./env.sh", &format!(". .cove/{lang}/env.sh"))
+        .replace(". ./stack.sh", ". .cove/stack.sh")
         .replace("./build-web.sh", &format!(".cove/{lang}/build-web.sh"))
         .replace("./build.sh", ".cove/build.sh")
         .replace("./run.sh", ".cove/run.sh")
@@ -132,7 +133,7 @@ pub fn lay(host: &str, laid: Vec<(String, String)>, files: &dyn Fn(&str) -> Vec<
             out.push((name, body));
         }
     }
-    for verb in ["build.sh", "run.sh", "up.sh", "down.sh"] {
+    for verb in ["build.sh", "run.sh", "up.sh", "down.sh", "stack.sh"] {
         if let Some((_, b)) = files("_cove").into_iter().find(|(n, _)| *n == verb) {
             out.push((format!("{DIR}/{verb}"), b.to_owned()));
         }
@@ -259,6 +260,9 @@ fn refresh_verbs(dir: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static
             }
         }
     }
+    if cove.join("app.env").is_file() {
+        changed |= stack_choice(&cove, files);
+    }
     let gi = dir.join(".gitignore");
     if cove.join("app.env").is_file() {
         let g = std::fs::read_to_string(&gi).unwrap_or_default();
@@ -273,6 +277,57 @@ fn refresh_verbs(dir: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static
         }
     }
     changed
+}
+
+/// The stack a project's modules come from, chosen rather than fixed
+/// (operator, 2026-11-26: the ndexr stack, EESSI or Compute Canada's, through
+/// `ml`). Every project gets `.cove/stack.sh`, and each env.sh Cove wrote with
+/// the ndexr stack's path in it - its own stack_here and stack_ml, word for
+/// word - sources it instead, the old kept beside it as env.sh.prev. On the
+/// ndexr stack nothing it does changes. An env.sh a person rewrote keeps
+/// what they wrote.
+fn stack_choice(cove: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static str)>) -> bool {
+    let Some((_, now)) = files("_cove").into_iter().find(|(p, _)| *p == "stack.sh") else { return false };
+    let mut changed = false;
+    let sh = cove.join("stack.sh");
+    match std::fs::read_to_string(&sh) {
+        Err(_) => changed |= std::fs::write(&sh, now).is_ok(),
+        // Cove's own, older: the current one. A person's (its heading gone) stays.
+        Ok(t) if t != now && t.starts_with(STACK_SH_HEADING) => changed |= std::fs::write(&sh, now).is_ok(),
+        Ok(_) => {}
+    }
+    let Ok(dirs) = std::fs::read_dir(cove) else { return changed };
+    for d in dirs.flatten() {
+        let env = d.path().join("env.sh");
+        let Ok(t) = std::fs::read_to_string(&env) else { continue };
+        if let Some(new) = env_on_stack_sh(&t) {
+            let _ = std::fs::write(d.path().join("env.sh.prev"), &t);
+            changed |= std::fs::write(&env, new).is_ok();
+        }
+    }
+    changed
+}
+
+const STACK_SH_HEADING: &str = "# Sourced by .cove/<language>/env.sh: which software stack";
+
+/// `t` with its ndexr-only stack_here/stack_ml swapped for `.cove/stack.sh`,
+/// when it is exactly what Cove wrote; None for anything else.
+fn env_on_stack_sh(t: &str) -> Option<String> {
+    const HEAD: &str = "# The app runs in its stack environment or not at all";
+    const HERE: &str = "stack_here() {\n  [ -r /opt/ndexr/stack/use.sh ] ||";
+    let start = t.find(HEAD)?;
+    let here = t.find(HERE)?;
+    let ml = t[here..].find("stack_ml() {\n").map(|i| here + i)?;
+    let end = t[ml..].find("\n}\n").map(|i| ml + i + 3)?;
+    if here < start || t[start..here].lines().count() > 6 {
+        return None;
+    }
+    let body = format!(
+        "{}# The stack this project's modules come from - the ndexr stack, EESSI or\n# Compute Canada's - and stack_here, stack_enter and stack_ml (.cove/stack.sh).\n. .cove/stack.sh\n{}",
+        &t[..start],
+        &t[end..]
+    );
+    Some(body.replace(". /opt/ndexr/stack/use.sh >/dev/null 2>&1\n", "stack_enter\n").replace("run where /opt/ndexr/stack is mounted", "run where $COVE_STACK_LABEL is mounted"))
 }
 
 /// A .gitignore line that keeps supporting_docs/ out of git: it lives in S3
@@ -357,6 +412,28 @@ pub fn set_type(dir: &Path, lang: &str, running: bool, port: &dyn Fn() -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An env.sh Cove wrote for the ndexr stack only comes onto
+    /// .cove/stack.sh; on the ndexr stack it loads the same modules.
+    #[test]
+    fn an_old_env_comes_onto_the_stack_choice() {
+        let d = std::env::temp_dir().join(format!("cove-stack-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(".cove/r")).unwrap();
+        std::fs::write(d.join(".cove/app.env"), "APP_LANGUAGE=r\nAPP_KIND=port\n").unwrap();
+        let old = "# Sourced by run.sh\n. .cove/app.env\n\n# The app runs in its stack environment or not at all - never on whatever the\n# host happens to have.\nstack_here() {\n  [ -r /opt/ndexr/stack/use.sh ] || { echo nope >&2; exit 127; }\n}\nstack_ml() {\n  for m in \"$@\"; do\n    ml \"$m\" && return 0\n  done\n  exit 127\n}\n\nif stack_here; then\n  set +u\n  . /opt/ndexr/stack/use.sh >/dev/null 2>&1\n  stack_ml env/r4.6_py3.13-release\n  set -u\nfi\ncommand -v Rscript >/dev/null || { echo \"no Rscript: run where /opt/ndexr/stack is mounted\" >&2; exit 127; }\n";
+        std::fs::write(d.join(".cove/r/env.sh"), old).unwrap();
+        assert!(refresh_verbs(&d, &crate::host::starter_files));
+        let now = std::fs::read_to_string(d.join(".cove/r/env.sh")).unwrap();
+        assert!(now.starts_with("# Sourced by run.sh\n. .cove/app.env\n"), "{now}");
+        assert!(now.contains(". .cove/stack.sh\n") && now.contains("  stack_enter\n  stack_ml env/r4.6_py3.13-release\n"), "{now}");
+        assert!(!now.contains("/opt/ndexr/stack") && !now.contains("stack_here() {"), "{now}");
+        assert!(std::process::Command::new("bash").arg("-n").arg(d.join(".cove/r/env.sh")).status().unwrap().success());
+        assert_eq!(std::fs::read_to_string(d.join(".cove/r/env.sh.prev")).unwrap(), old);
+        assert!(d.join(".cove/stack.sh").is_file());
+        assert!(!refresh_verbs(&d, &crate::host::starter_files), "a second look changes nothing");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     /// Request #197: an env.sh Cove wrote before julia_set() is replaced (the
     /// old kept as env.sh.prev); one the person wrote is left alone.

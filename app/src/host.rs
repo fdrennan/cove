@@ -25,6 +25,7 @@ pub(crate) mod runner;
 #[cfg(unix)]
 pub(crate) mod shares;
 pub(crate) mod stack;
+pub(crate) mod stacks;
 pub(crate) mod storage;
 pub(crate) mod update;
 pub(crate) mod vitals;
@@ -1573,7 +1574,10 @@ pub fn stack_view() -> StackView {
 
 fn settings_view() -> SettingsView {
     let saved: Option<Settings> = std::fs::read(settings_file()).ok().and_then(|b| serde_json::from_slice::<Settings>(&b).ok()).map(Settings::one_module);
-    SettingsView { chosen: saved.is_some(), settings: saved.unwrap_or_default(), stack: stack::view(), platform: crate::server::has_platform(), served_as: crate::server::served_as() }
+    let settings = saved.clone().unwrap_or_default();
+    let stacks_here = stacks::PROFILES.iter().filter(|p| stacks::mounted(p)).map(|p| p.key.to_owned()).collect();
+    let stack_in_use = stacks::chosen(&settings.stack_source).key.to_owned();
+    SettingsView { chosen: saved.is_some(), settings, stack: stack::view(), platform: crate::server::has_platform(), served_as: crate::server::served_as(), stacks_here, stack_in_use }
 }
 
 /// A session `cove multiuser` starts arrives with its environment and
@@ -1610,6 +1614,7 @@ fn save_settings(s: &Settings) -> Result<(), String> {
     }
     let s = &s.clone().one_module();
     s.cvmfs.check()?;
+    crate::host::stacks::save_choice(s.stack_source.trim())?;
     crate::host::envs::warm(&s.module);
     let f = settings_file();
     std::fs::create_dir_all(f.parent().unwrap()).map_err(|e| e.to_string())?;

@@ -2470,6 +2470,40 @@ impl App {
                                 ui.label(RichText::new("Where modules come from. Empty: the CVMFS mount at /opt/ndexr/stack, else a local build at ~/.ndexr/stack. With neither, the consoles do not start: they run on the stack only.").size(12.0).color(theme::muted()));
                                 ui.add_space(4.0);
                                 egui::Grid::new("options-stack").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                    // The ndexr stack, EESSI or Compute Canada's (operator,
+                                    // 2026-11-26): projects load their modules from the one
+                                    // picked here, through `ml`; "Automatic" takes the first
+                                    // one this machine has mounted.
+                                    ui.label("Software stack");
+                                    let here: Vec<String> = view.as_ref().map(|v| v.stacks_here.clone()).unwrap_or_default();
+                                    let in_use = view.as_ref().map(|v| v.stack_in_use.clone()).unwrap_or_default();
+                                    let word = |key: &str| {
+                                        let p = crate::api::STACKS.iter().find(|p| p.key == key);
+                                        let name = p.map(|p| p.name).unwrap_or("Automatic");
+                                        if key.is_empty() {
+                                            match crate::api::STACKS.iter().find(|p| p.key == in_use) {
+                                                Some(p) => format!("Automatic · {}", p.name),
+                                                None => "Automatic".to_owned(),
+                                            }
+                                        } else if here.iter().any(|h| h == key) {
+                                            format!("{name} · mounted")
+                                        } else {
+                                            format!("{name} · not mounted")
+                                        }
+                                    };
+                                    egui::ComboBox::from_id_salt("options-stack-source").width(field_w).selected_text(word(draft.stack_source.trim())).show_ui(ui, |ui| {
+                                        for key in std::iter::once("").chain(crate::api::STACKS.iter().map(|p| p.key)) {
+                                            let r = ui.selectable_label(draft.stack_source.trim() == key, word(key));
+                                            let r = match crate::api::STACKS.iter().find(|p| p.key == key) {
+                                                Some(p) => r.on_hover_text(format!("{} - entered by {}{}", p.site, p.init, if p.after.is_empty() { String::new() } else { format!(", then {}", p.after) })),
+                                                None => r.on_hover_text("the first of the ndexr stack, EESSI and Compute Canada's that is mounted here"),
+                                            };
+                                            if r.clicked() {
+                                                draft.stack_source = key.to_owned();
+                                            }
+                                        }
+                                    });
+                                    ui.end_row();
                                     ui.label("Stack folder");
                                     ui.add(egui::TextEdit::singleline(&mut draft.stack_dir).font(egui::TextStyle::Monospace).hint_text("/path/with/use.sh — empty: automatic").desired_width(field_w))
                                         .on_hover_text("a stack built or copied to its own folder (it has use.sh, or <platform>/use.sh)");

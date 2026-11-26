@@ -1127,6 +1127,12 @@ pub struct Settings {
     /// cvmfs build, or a connection to the server").
     #[serde(default)]
     pub stack_dir: String,
+    /// Which stack modules come from (host/stacks.rs): "" the first one
+    /// mounted, else "ndexr", "eessi" or "computecanada" (operator,
+    /// 2026-11-26: consume the ndexr, EESSI or Compute Canada stack through
+    /// `ml`). Mirrored to ~/.config/ndexr/cove-stack for projects' env.sh.
+    #[serde(default)]
+    pub stack_source: String,
     /// Airgap mode (operator, 2026-11-13: "cove.ndexr.io should have airgap
     /// mode"): Cove asks nothing of the network - no update checks, no
     /// software catalog fetch, no ndexr sign-in - and the stack is a copy on
@@ -1259,6 +1265,11 @@ pub struct SettingsView {
     /// address or as localhost.
     #[serde(default)]
     pub served_as: String,
+    /// The STACKS this machine has mounted, by key, and the one in use.
+    #[serde(default)]
+    pub stacks_here: Vec<String>,
+    #[serde(default)]
+    pub stack_in_use: String,
 }
 
 impl SettingsView {
@@ -2941,3 +2952,38 @@ mod with_system_tests {
         assert!(long.chars().count() <= 4000 && long.contains("System information"), "{}", long.chars().count());
     }
 }
+
+/// A software stack Cove can take its modules from (host/stacks.rs, and
+/// templates/starters/_cove/stack.sh for projects' shells): the ndexr stack,
+/// EESSI or Compute Canada's - one model, Lmod over a read-only CernVM-FS
+/// repository, entered differently and spelling programs differently.
+pub struct StackProfile {
+    /// The word saved (`stack_source`) and read by stack.sh.
+    pub key: &'static str,
+    pub name: &'static str,
+    /// What a shell sources to get `ml` and the stack's modules.
+    pub init: &'static str,
+    /// Run after `init`: Compute Canada's modules appear under a standard
+    /// environment that its login profile does not load by itself.
+    pub after: &'static str,
+    /// Where to read about it and mount it.
+    pub site: &'static str,
+}
+
+pub const STACKS: [StackProfile; 3] = [
+    StackProfile { key: "ndexr", name: "ndexr stack", init: "/opt/ndexr/stack/use.sh", after: "", site: "https://stack.ndexr.io/" },
+    StackProfile {
+        key: "eessi",
+        name: "EESSI",
+        init: "/cvmfs/software.eessi.io/versions/2023.06/init/bash",
+        after: "",
+        site: "https://www.eessi.io/docs/getting_access/native_installation/",
+    },
+    StackProfile {
+        key: "computecanada",
+        name: "Compute Canada",
+        init: "/cvmfs/soft.computecanada.ca/config/profile/bash.sh",
+        after: "module load StdEnv/2023",
+        site: "https://docs.alliancecan.ca/wiki/Accessing_CVMFS",
+    },
+];
