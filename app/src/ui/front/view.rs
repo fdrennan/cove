@@ -80,6 +80,8 @@ pub struct ViewApp {
 /// Cove on this computer, in one line: packaging/install.sh, which this
 /// server answers at /view/install.sh (server.rs) and ndexr.io at /install.sh.
 pub const INSTALL: &str = "curl -fsSL https://cove.ndexr.io/view/install.sh | sh";
+/// Public answers to questions asked about Cove (drennanfreddy.ndexr.io).
+pub const ANSWERS_URL: &str = "https://drennanfreddy.ndexr.io/";
 
 /// Where Sign in goes: the platform's sign-in, back to Cove itself.
 const SIGN_IN: &str = "https://console.ndexr.io/?next=https://cove.ndexr.io/";
@@ -279,6 +281,13 @@ impl ViewApp {
                     ui.add_space(8.0);
                     ui.hyperlink_to(RichText::new("Source ↗").size(12.5).color(theme::hush()), crate::ui::app::SOURCE_URL)
                         .on_hover_text(crate::ui::app::SOURCE_URL);
+                    // The questions people ask about Cove in public (Reddit,
+                    // LinkedIn), each answered on its own page (operator,
+                    // 2026-11-26: "connect drennanfreddy.ndexr.io on ndexr.io
+                    // so that people can see all [dialogues] of research").
+                    ui.add_space(8.0);
+                    ui.hyperlink_to(RichText::new("Answers ↗").size(12.5).color(theme::hush()), ANSWERS_URL)
+                        .on_hover_text("questions asked about Cove on Reddit and LinkedIn, answered in full");
                 }
                 ui.add_space(8.0);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
