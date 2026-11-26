@@ -6740,11 +6740,9 @@ impl Ide {
         let mut open = true;
         let mut act = crate::ui::ide::gitview::GitAct::None;
         // As big as the screen allows: three panes need the room. On a phone
-        // it is the screen. The height leaves room for the title bar: at
-        // screen - 90 the window ran past the bottom, egui pulled it back on
-        // screen, and the panes' lower edges were cut off (2026-11-26).
+        // it is the screen.
         let screen = ctx.content_rect().size();
-        let size = egui::vec2((screen.x - 24.0).clamp(300.0, 1320.0), (screen.y - 130.0).clamp(300.0, 800.0));
+        let size = egui::vec2((screen.x - 24.0).clamp(300.0, 1320.0), (screen.y - 90.0).clamp(300.0, 800.0));
         // In front: app.rs hides the App pane's page (an HTML layer over the
         // canvas) for any large foreground area, and a window in the middle
         // layer had the page drawn over its diff.
