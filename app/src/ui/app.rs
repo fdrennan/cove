@@ -228,11 +228,15 @@ struct Saved {
 
 /// The modes, as the top row names them (the review, 2026-11-14: "global
 /// navigation: Workspace · Builds · Atlas · Connections · Account"). IDE was
-/// "IDE" and Connect "Connect" until then.
+/// "IDE" and Connect "Connect" until then; Connections became Sites on
+/// 2026-11-26 (operator: "needs to be properly named into something more
+/// clear and obvious"): each row is a site - its address, the app that
+/// answers there and the agent that builds it - which first start explains
+/// (setup.rs `fit`).
 const MODES: [(Mode, &str, &str); 6] = [
     (Mode::Ide, "Workspace", "your projects: agents, files, consoles and the app"),
     (Mode::Go, "Go", "on the go: the recap, the agent and Exec, a big record button"),
-    (Mode::Connect, "Connections", "every app you may open - yours, shared with you, and public - by what it is built with"),
+    (Mode::Connect, "Sites", "every site you may open - its address, the app that answers there and the agent that builds it - yours, shared with you, and public"),
     (Mode::Builds, "Builds", "the build machines - start and shut them down here - and where every build is, live, with its history"),
     (Mode::Atlas, "Atlas", "the whole stack, kernel to application"),
     (Mode::Account, "Account", "you: your cell, Claude, your domains and API keys"),
@@ -4108,9 +4112,9 @@ impl App {
                         }
                     };
                     ui.add_space(4.0);
-                    ui.add(egui::TextEdit::singleline(&mut self.connect_find).hint_text(if narrow { "Search name, address or owner" } else { "Search for content: name, address or owner" }).desired_width(col).font(egui::FontId::proportional(16.0)).margin(egui::vec2(12.0, 9.0)));
+                    ui.add(egui::TextEdit::singleline(&mut self.connect_find).hint_text(if narrow { "Search name, address or owner" } else { "Search sites: name, address or owner" }).desired_width(col).font(egui::FontId::proportional(16.0)).margin(egui::vec2(12.0, 9.0)));
                     ui.add_space(14.0);
-                    ui.label(RichText::new("Content").size(if narrow { 22.0 } else { 28.0 }).color(theme::text_strong()));
+                    ui.label(RichText::new("Sites").size(if narrow { 22.0 } else { 28.0 }).color(theme::text_strong()));
                     ui.add_space(if narrow { 6.0 } else { 10.0 });
                     let level = |d: &crate::api::DomainInfo| levels.get(&d.host).map_or("", String::as_str);
                     let tab_of = |d: &crate::api::DomainInfo, t: u8| match t {
@@ -4122,10 +4126,10 @@ impl App {
                     let n = |t: u8| all.iter().filter(|d| tab_of(d, t)).count();
                     let word = |long: &str, short: &str, c: usize| if narrow { format!("{short} {c}") } else { format!("{long} ({c})") };
                     let tabs = [
-                        (word("Yours", "Yours", n(1)), "the apps you own".to_owned(), self.connect_whose == 1, true),
-                        (word("Shared with you", "Shared", n(2)), "apps their owners shared with you or a group you are in".to_owned(), self.connect_whose == 2, true),
+                        (word("Yours", "Yours", n(1)), "the sites you own".to_owned(), self.connect_whose == 1, true),
+                        (word("Shared with you", "Shared", n(2)), "sites their owners shared with you or a group you are in".to_owned(), self.connect_whose == 2, true),
                         (word("Public", "Public", n(3)), "open to anyone, signed in or not".to_owned(), self.connect_whose == 3, true),
-                        (word("All", "All", all.len()), "every app you may open".to_owned(), self.connect_whose == 0, true),
+                        (word("All", "All", all.len()), "every site you may open".to_owned(), self.connect_whose == 0, true),
                     ];
                     // In a row: the switch lays its parts out the way its parent
                     // does, and this column is vertical.

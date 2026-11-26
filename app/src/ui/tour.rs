@@ -268,7 +268,7 @@ pub static STEPS: &[Step] = &[
         id: "ws-modes",
         targets: |_| t(&["modes"]),
         title: "Beyond the workspace",
-        body: |_| "Workspace is where your projects are. Connections lists every app you may open - yours, shared with you and public. Builds shows the build machines and every build, live. Atlas maps the whole stack, kernel to application. Account is you: your cell, Claude, your domains and keys.".into(),
+        body: |_| "Workspace is where your projects are. Sites lists every site you may open - yours, shared with you and public - each an address, the app answering there and its agent. Builds shows the build machines and every build, live. Atlas maps the whole stack, kernel to application. Account is you: your cell, Claude, your domains and keys.".into(),
         done: None,
         skip: never,
         find: "The modes are in the top bar; on a phone, along the bottom.",

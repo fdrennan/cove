@@ -15,6 +15,10 @@
 //!
 //!   Look     Dark (ndexr Regolith), Light (ndexr Light) or the system's,
 //!            applied as it is clicked.
+//!   Fit      how a site's parts belong together - you ask its agent, the
+//!            agent writes its app, the app answers at its address - and
+//!            which tab holds which (operator, 2026-11-26: "when cove starts
+//!            up, we have to explain the link between all of those").
 //!   Account  desktop only: sign in to ndexr (account.rs). A browser on
 //!            cove.ndexr.io is signed in already.
 //!   Claude   where the person stands - the site's own verdict and words
@@ -127,6 +131,7 @@ pub fn follow_theme(pref: ThemePref, ctx: &egui::Context) {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Step {
     Look,
+    Fit,
     Stack,
     Account,
     Claude,
@@ -138,14 +143,15 @@ impl Step {
         // No Claude step at first start: the free commands come first, and
         // the step opens on its own when they run out.
         if cfg!(target_arch = "wasm32") {
-            &[Step::Look, Step::Stack, Step::Ready]
+            &[Step::Look, Step::Fit, Step::Stack, Step::Ready]
         } else {
-            &[Step::Look, Step::Stack, Step::Account, Step::Ready]
+            &[Step::Look, Step::Fit, Step::Stack, Step::Account, Step::Ready]
         }
     }
     fn name(self) -> &'static str {
         match self {
             Step::Look => "Look",
+            Step::Fit => "How it fits",
             Step::Stack => "Stack",
             Step::Account => "Account",
             Step::Claude => "Claude",
@@ -462,6 +468,7 @@ impl Setup {
             let room = (ctx.content_rect().height() - 190.0).max(120.0);
             egui::ScrollArea::vertical().id_salt("setup-step").max_height(room).auto_shrink([false, true]).show(ui, |ui| match self.step {
                 Step::Look => self.look(ui, ctx, env.theme),
+                Step::Fit => fit(ui),
                 // The mount ask, when it is open, is this step's content (one dialog).
                 Step::Stack if asking && self.consent_for.is_some() => {
                     let s = self.consent_for.clone().unwrap_or_default();
@@ -1602,5 +1609,141 @@ mod tests {
     fn dates_are_short() {
         assert_eq!(short_date("2026-10-18T05:59:59Z"), "Oct 18");
         assert_eq!(short_date("nonsense"), "nonsense");
+    }
+}
+
+// ── How it fits ─────────────────────────────────────────────────────────────
+
+/// The four on the chain, in the order work moves along it: a name, what it
+/// is in a few words, and the verb that carries it to the next.
+const CHAIN: [(&str, &str, &str); 4] = [
+    ("You", "say what you want, typed or spoken", "ask"),
+    ("Agent", "Claude, working in the site's folder", "writes"),
+    ("App", "the program: Shiny, FastAPI, React, Rust…", "answers at"),
+    ("Address", "name.ndexr.io - where people open it", ""),
+];
+
+/// One site, drawn (operator, 2026-11-26: "explain the link between all of
+/// those to the user"): you ask its agent, the agent writes its app, the app
+/// answers at its address, a pulse running along the chain; the last three
+/// sit in one frame, because they are one site and one folder. Under it,
+/// which tab holds which.
+fn fit(ui: &mut egui::Ui) {
+    Setup::title(ui, "How Cove fits together", "Everything you make here is a site. A site is three things that belong together, and you talk to it.");
+    let w = ui.available_width();
+    let wide = w >= 520.0;
+    let t = ui.input(|i| i.time) as f32;
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+    // Nodes: across when there is room, else down.
+    let (node, gap) = if wide { (egui::vec2(((w - 3.0 * 34.0) / 4.0).floor(), 112.0), 34.0) } else { (egui::vec2(w - 24.0, 56.0), 26.0) };
+    let size = if wide { egui::vec2(w, node.y + 40.0) } else { egui::vec2(w, 4.0 * node.y + 3.0 * gap + 34.0) };
+    let (area, _) = ui.allocate_exact_size(size, Sense::hover());
+    let p = ui.painter_at(area);
+    let top = area.top() + 26.0;
+    let rect_of = |i: usize| {
+        if wide {
+            egui::Rect::from_min_size(egui::pos2(area.left() + i as f32 * (node.x + gap), top), node)
+        } else {
+            egui::Rect::from_min_size(egui::pos2(area.left() + 24.0, top + i as f32 * (node.y + gap)), node)
+        }
+    };
+    // The site's frame round Agent, App and Address.
+    let site = rect_of(1).union(rect_of(3)).expand(8.0);
+    p.rect(site, 14.0, theme::primary().gamma_multiply(0.06), Stroke::new(1.0, theme::primary().gamma_multiply(0.45)), egui::StrokeKind::Inside);
+    p.text(egui::pos2(site.left() + 12.0, site.top() - 4.0), egui::Align2::LEFT_BOTTOM, "ONE SITE · ONE FOLDER", egui::FontId::proportional(10.5), theme::primary());
+    // The links, each with its verb, and the pulse: one dot moving down the
+    // chain every 3 seconds, lighting each node as it passes.
+    let phase = (t / 3.0).fract() * 3.0;
+    for i in 0..3 {
+        let (a, b) = (rect_of(i), rect_of(i + 1));
+        let (from, to) = if wide { (a.right_center(), b.left_center()) } else { (a.center_bottom(), b.center_top()) };
+        p.line_segment([from, to], Stroke::new(1.5, theme::moss()));
+        let tip = to;
+        let back = if wide { egui::vec2(-6.0, 0.0) } else { egui::vec2(0.0, -6.0) };
+        let side = egui::vec2(back.y, -back.x) * 0.6;
+        p.add(egui::Shape::convex_polygon(vec![tip, tip + back + side, tip + back - side], theme::moss(), Stroke::NONE));
+        let mid = from + (to - from) / 2.0;
+        let verb = CHAIN[i].2;
+        if wide {
+            p.text(mid - egui::vec2(0.0, 9.0), egui::Align2::CENTER_BOTTOM, verb, egui::FontId::proportional(11.0), theme::text());
+        } else {
+            p.text(mid + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, verb, egui::FontId::proportional(11.5), theme::text());
+        }
+        let k = phase - i as f32;
+        if (0.0..1.0).contains(&k) {
+            p.circle_filled(from + (to - from) * k, 3.5, theme::amber());
+        }
+    }
+    for (i, (name, what, _)) in CHAIN.iter().enumerate() {
+        let r = rect_of(i);
+        // Lit while the pulse is at it.
+        let lit = (phase - i as f32).abs() < 0.25 || (i == 3 && phase > 2.75);
+        p.rect(r, 10.0, theme::surface_hi(), Stroke::new(if lit { 1.5 } else { 1.0 }, if lit { theme::amber() } else { theme::pane_brd() }), egui::StrokeKind::Inside);
+        let c = if lit { theme::amber() } else { theme::primary() };
+        if wide {
+            let ic = egui::pos2(r.center().x, r.top() + 24.0);
+            mark(&p, i, ic, 11.0, c);
+            p.text(egui::pos2(r.center().x, r.top() + 44.0), egui::Align2::CENTER_TOP, *name, theme::display(15.0), theme::text_strong());
+            let job = egui::text::LayoutJob { halign: Align::Center, ..egui::text::LayoutJob::simple((*what).to_owned(), egui::FontId::proportional(11.5), theme::text(), r.width() - 14.0) };
+            let g = ui.fonts_mut(|f| f.layout_job(job));
+            p.galley(egui::pos2(r.center().x, r.top() + 66.0), g, theme::text());
+        } else {
+            let ic = egui::pos2(r.left() + 26.0, r.center().y);
+            mark(&p, i, ic, 10.0, c);
+            p.text(egui::pos2(r.left() + 50.0, r.top() + 10.0), egui::Align2::LEFT_TOP, *name, theme::display(14.5), theme::text_strong());
+            let job = egui::text::LayoutJob::simple((*what).to_owned(), egui::FontId::proportional(11.5), theme::text(), r.width() - 60.0);
+            let g = ui.fonts_mut(|f| f.layout_job(job));
+            p.galley(egui::pos2(r.left() + 50.0, r.top() + 30.0), g, theme::text());
+        }
+    }
+    ui.add_space(10.0);
+    ui.label(RichText::new("WHERE EACH LIVES IN COVE").size(10.5).color(theme::hush()));
+    for (tab, what) in [
+        ("Workspace", "one site open: talk to its agent, read its files, run its consoles, and see its app live in App"),
+        ("Sites", "every site you may open - yours, shared with you, and public - to open in Workspace or in the browser"),
+        ("Account", "your addresses, your Claude and your keys"),
+    ] {
+        ui.horizontal_top(|ui| {
+            let g = ui.painter().layout_no_wrap(tab.to_owned(), egui::FontId::proportional(12.5), theme::primary());
+            let (r, _) = ui.allocate_exact_size(egui::vec2(92.0, g.size().y + 8.0), Sense::hover());
+            let pill = egui::Rect::from_min_size(r.min, g.size() + egui::vec2(16.0, 8.0));
+            ui.painter().rect_filled(pill, 9.0, theme::primary().gamma_multiply(0.14));
+            ui.painter().galley(pill.center() - g.size() / 2.0, g, theme::primary());
+            ui.add(egui::Label::new(RichText::new(what).size(12.5).color(theme::text())).wrap());
+        });
+    }
+}
+
+/// The chain's marks, drawn at `c` with radius `r`: a person, the agent's
+/// spark, the app's play triangle, the address's globe.
+fn mark(p: &egui::Painter, i: usize, c: egui::Pos2, r: f32, col: Color32) {
+    let st = Stroke::new(1.8, col);
+    match i {
+        0 => {
+            p.circle_stroke(c - egui::vec2(0.0, r * 0.45), r * 0.42, st);
+            let pts: Vec<egui::Pos2> = (0..=12).map(|k| {
+                let a = std::f32::consts::PI * (1.0 + k as f32 / 12.0);
+                c + egui::vec2(a.cos() * r * 0.85, r * 0.95 + a.sin() * r * 0.75)
+            }).collect();
+            p.add(egui::Shape::line(pts, st));
+        }
+        1 => {
+            for k in 0..8 {
+                let a = std::f32::consts::TAU * k as f32 / 8.0;
+                let (r0, r1) = if k % 2 == 0 { (r * 0.35, r) } else { (r * 0.35, r * 0.62) };
+                p.line_segment([c + egui::vec2(a.cos(), a.sin()) * r0, c + egui::vec2(a.cos(), a.sin()) * r1], st);
+            }
+        }
+        2 => crate::ui::kit::icons::paint(p, egui::Rect::from_center_size(c, egui::vec2(r * 2.2, r * 2.2)), crate::ui::kit::icons::Glyph::Play, col),
+        _ => {
+            p.circle_stroke(c, r, st);
+            p.line_segment([c - egui::vec2(r, 0.0), c + egui::vec2(r, 0.0)], st);
+            let pts: Vec<egui::Pos2> = (0..=16).map(|k| {
+                let a = std::f32::consts::PI * (k as f32 / 16.0 - 0.5);
+                c + egui::vec2(a.cos() * r * 0.45, a.sin() * r)
+            }).collect();
+            p.add(egui::Shape::line(pts.clone(), st));
+            p.add(egui::Shape::line(pts.iter().map(|q| egui::pos2(2.0 * c.x - q.x, q.y)).collect(), st));
+        }
     }
 }
