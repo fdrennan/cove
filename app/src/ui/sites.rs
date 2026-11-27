@@ -124,7 +124,7 @@ impl SitesWall {
             if let Some(i) = crate::ui::agent::segmented(ui, false, &views) {
                 self.all = i == 1;
             }
-            let w = (ui.available_width() - 560.0).max(140.0);
+            let w = (ui.available_width() - 720.0).max(140.0);
             ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(8.0, 4.0)));
             let items = [
                 ("Focus".to_owned(), "the selected tab large, the others under it".to_owned(), !self.grid, true),
@@ -133,30 +133,30 @@ impl SitesWall {
             if let Some(i) = crate::ui::agent::segmented(ui, false, &items) {
                 self.grid = i == 1;
             }
-            // The grid's size: how many across, and how tall.
-            let col_word = |c: usize| if c == 0 { "Columns: auto".to_owned() } else { format!("Columns: {c}") };
-            egui::ComboBox::from_id_salt("sites-cols").selected_text(col_word(self.cols)).width(120.0).show_ui(ui, |ui| {
-                for c in [0, 1, 2, 3, 4, 5, 6] {
-                    ui.selectable_value(&mut self.cols, c, col_word(c));
-                }
-            });
+            // The grid's size, each a row of buttons - one click, and nothing
+            // that opens: a dropdown here opened behind the pages (operator,
+            // 2026-11-27: "really hard to get around here, menu is behind screen").
+            let label = |ui: &mut egui::Ui, w: &str| {
+                ui.label(RichText::new(w).size(12.0).color(theme::text()));
+            };
+            label(ui, "Across");
+            let cols: Vec<(String, String, bool, bool)> = [0usize, 1, 2, 3, 4, 5, 6].iter().map(|&c| (if c == 0 { "Auto".to_owned() } else { c.to_string() }, if c == 0 { "as many as the width fits".to_owned() } else { format!("{c} across") }, self.cols == c, true)).collect();
+            if let Some(i) = crate::ui::agent::segmented(ui, false, &cols) {
+                self.cols = i;
+            }
             let zoom = self.zoom.unwrap_or(0.67);
-            egui::ComboBox::from_id_salt("sites-zoom").selected_text(format!("Zoom: {:.0}%", zoom * 100.0)).width(100.0).show_ui(ui, |ui| {
-                for z in [1.0f32, 0.8, 0.67, 0.5, 0.4] {
-                    if ui.selectable_label((zoom - z).abs() < 0.01, format!("{:.0}%", z * 100.0)).on_hover_text("each page drawn at this size, so more of it fits its tile").clicked() {
-                        self.zoom = Some(z);
-                    }
-                }
-            });
-            let sizes = ["Small", "Medium", "Large", "Fit the screen"];
-            let shown = self.size.map_or(if self.grid { "Height: fit" } else { "Height: medium" }.to_owned(), |s| format!("Height: {}", sizes[s as usize].to_lowercase()));
-            egui::ComboBox::from_id_salt("sites-size").selected_text(shown).width(140.0).show_ui(ui, |ui| {
-                for (i, w) in sizes.iter().enumerate() {
-                    if ui.selectable_label(self.size == Some(i as u8), *w).clicked() {
-                        self.size = Some(i as u8);
-                    }
-                }
-            });
+            label(ui, "Zoom");
+            let zs = [1.0f32, 0.8, 0.67, 0.5, 0.4];
+            let zitems: Vec<(String, String, bool, bool)> = zs.iter().map(|z| (format!("{:.0}%", z * 100.0), "each page drawn at this size, so more of it fits its tile".to_owned(), (zoom - z).abs() < 0.01, true)).collect();
+            if let Some(i) = crate::ui::agent::segmented(ui, false, &zitems) {
+                self.zoom = Some(zs[i]);
+            }
+            label(ui, "Height");
+            let now_size = self.size.unwrap_or(if self.grid { 3 } else { 1 });
+            let sitems: Vec<(String, String, bool, bool)> = [("S", "small tiles"), ("M", "medium tiles"), ("L", "large tiles"), ("Fit", "every row in the screen's height")].iter().enumerate().map(|(i, (w, t))| ((*w).to_owned(), (*t).to_owned(), now_size == i as u8, true)).collect();
+            if let Some(i) = crate::ui::agent::segmented(ui, false, &sitems) {
+                self.size = Some(i as u8);
+            }
         });
         let find = self.find.trim().to_lowercase();
         if !find.is_empty() {
@@ -318,7 +318,10 @@ fn ask<T: serde::de::DeserializeOwned + Send + 'static>(t: &mut Tile, key: &'sta
 #[allow(unused_variables)]
 fn site(ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, t: &Tile, body: egui::Rect, clip: egui::Rect, host: &str, zoom: f32) {
     let seen = t.status.lock().unwrap().as_ref().and_then(|s| s.as_ref().ok()).map(|s| s.seen_at.clone()).unwrap_or_default();
-    let url = if seen.is_empty() { format!("https://{host}/") } else { backend.viewer_url(&seen) };
+    // ?pane=1: a platform page drops its navbar, operator bar and footer as a
+    // tile (src/r/shell/shell.r). Without it riemann, linkedin and reddit
+    // spent half their tile on CPU, REQUEST and Deploy (2026-11-27).
+    let url = if seen.is_empty() { format!("https://{host}/?pane=1") } else { backend.viewer_url(&seen) };
     #[cfg(target_arch = "wasm32")]
     {
         // This Cove itself is never framed in itself.
@@ -332,7 +335,10 @@ fn site(ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, t: &Tile, bod
         // once the whole tile was (operator, 2026-11-27: "scrolling shouldnt be
         // required in order to display a page when 95% of it is visible").
         let seen = body.intersect(clip);
-        if seen.height() > 24.0 && seen.width() > 24.0 {
+        // A page never covers a menu, a dropdown or a tooltip, however small:
+        // it steps aside while one lies over its tile.
+        let covered = ctx.memory(|m| m.areas().visible_layer_ids().iter().any(|l| l.order >= egui::Order::Foreground && m.area_rect(l.id).is_some_and(|r| r.intersects(seen))));
+        if seen.height() > 24.0 && seen.width() > 24.0 && !covered {
             frames::place(ctx, host, body, seen, &url, zoom);
         }
     }

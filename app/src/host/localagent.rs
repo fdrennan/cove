@@ -73,8 +73,18 @@ fn is_program(p: &Path) -> bool {
 /// a token or key in the environment. A yes is kept 30 s (the Agents tab
 /// polls); a no is asked again after 3 s, so installing Claude or signing in
 /// shows at once.
+static SEEN: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+
+/// Ask again on the next look, after anything that changes the answer: a
+/// connect, a forget, Claude Code installed. A connect that had just saved a
+/// good token answered "not ready" from a 3 s old "no" (operator, 2026-11-27,
+/// ndexrtesting.com: "we successfully connected claude but it says continue
+/// without?").
+fn forget_seen() {
+    *SEEN.lock().unwrap() = None;
+}
+
 pub fn usable() -> bool {
-    static SEEN: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
     let mut seen = SEEN.lock().unwrap();
     if let Some((at, ok)) = *seen {
         if at.elapsed() < Duration::from_secs(if ok { 30 } else { 3 }) {
@@ -212,6 +222,7 @@ fn install_in_background() {
             Err(format!("Claude Code's installer did not finish: {}", tail.into_iter().rev().collect::<Vec<_>>().join(" / ")))
         };
         *INSTALL.lock().unwrap() = Some(r);
+        forget_seen();
         INSTALLING.store(false, std::sync::atomic::Ordering::SeqCst);
     });
 }
@@ -263,6 +274,7 @@ fn connect(token: &str) -> Result<ClaudeView, String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600));
     }
+    forget_seen();
     Ok(own_status())
 }
 
@@ -271,6 +283,7 @@ fn said_ok(out: &str) -> bool {
 }
 
 fn forget() -> Result<(), String> {
+    forget_seen();
     match std::fs::remove_file(token_file()) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -519,6 +532,15 @@ mod tests {
 #[cfg(test)]
 mod own_server_tests {
     use super::*;
+
+    /// A fresh "no" in the cache must not answer the look right after a
+    /// connect: the connect clears it, so the next look reads the token.
+    #[test]
+    fn a_connect_is_not_answered_by_an_old_no() {
+        *SEEN.lock().unwrap() = Some((Instant::now(), false));
+        forget_seen();
+        assert!(SEEN.lock().unwrap().is_none(), "the next usable() asks again");
+    }
 
     /// A new server's first page asks for Messages and project names: a Cove
     /// on its own answers them empty, never with an error about a platform.

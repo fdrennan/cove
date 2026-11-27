@@ -1066,7 +1066,13 @@ impl AgentPane {
                 }
                 if !loading && s.turns.is_empty() {
                     if self.scope_label.is_some() {
-                        ui.label(RichText::new(format!("Tell {}'s agent what to build. It weaves the stack's scientific software - EasyBuild modules, R and Python packages, the tools in the Terminal - into this app: it reads and edits the domain's files, runs code in the consoles, and shows the result in App. The same agent as the in-app chat.", d.host)).color(theme::hush()));
+                        // One agent across all the person's sites. It named the
+                        // scope's host, which on a server of its own is the
+                        // platform's exec.ndexr.io, in small grey type
+                        // (ndexrtesting.com, 2026-11-27).
+                        ui.add(egui::Label::new(RichText::new("What should we build?").size(26.0).strong().color(theme::text_strong())).wrap());
+                        ui.add_space(4.0);
+                        ui.add(egui::Label::new(RichText::new("One agent across all your sites: it reads and edits their files, runs code in the consoles and shows the result in App.").size(15.0).color(theme::text())).wrap());
                     } else {
                         ui.add(egui::Label::new(RichText::new(format!("What should {} be?", d.host)).size(26.0).strong().color(theme::text_strong())).wrap());
                         ui.add_space(4.0);

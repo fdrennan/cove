@@ -7456,6 +7456,12 @@ impl Ide {
                 if port {
                     let lines: Vec<String> = match &up { Some(Ok(v)) => v.lines.clone(), _ => Vec::new() };
                     match (lines.iter().rev().find(|x| x.contains("[env] ")), lines.iter().rev().find(|x| x.starts_with("env: "))) {
+                        // "not on this box; fetching from repo.ndexr.io/…" is env.sh at
+                        // work, not a failure: it showed a red ✗ while the packages
+                        // downloaded and the build went on (ndexrtesting.com, 2026-11-27).
+                        (_, Some(e)) if e.contains("; fetching from") => {
+                            row(ui, None, "Fetching its packages", e.trim_start_matches("env: "));
+                        }
                         (_, Some(e)) => {
                             row(ui, Some(false), "Its environment did not load", e.trim_start_matches("env: "));
                             // A set's packages missing here: Cove gets them, as root, the way

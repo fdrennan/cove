@@ -4,6 +4,9 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-27T21:20Z · Sites: Across, Zoom and Height are rows of buttons in the bar, one click each, instead of menus that opened behind the pages; and a page now steps aside for any menu, dropdown or tooltip over its tile.
+- 2026-11-27T20:30Z · Sites tiles show the page itself, without the platform's navigation and operator bar. A new app's launch window says "Fetching its packages" while they download, where it showed a red "environment did not load". An empty Exec thread asks "What should we build?" in plain type, and no longer names exec.ndexr.io on a server of your own.
+- 2026-11-27T20:15Z · On a server of your own, connecting Claude shows it connected at once: it had said "Connected - Claude · not ready" and kept offering Continue without, from a check made a moment before the token was saved.
 - 2026-11-27T19:45Z · Sites gives the pages the room: each page is drawn smaller (Zoom, 67% to start; 100% down to 40%) so a tile shows the page and not only its header, every control sits in one row, the wall uses the full width, and the tiles' bars and gaps are slimmer.
 - 2026-11-27T19:10Z · Sites: a page shows whenever its tile is on screen, at its full size with the part scrolled out of view cut away; you no longer scroll a tile fully into view first. The grid's size is yours to set: Columns (auto, or 1 to 6) and Height (small, medium, large, or fit the screen).
 - 2026-11-27T18:40Z · Connecting Claude no longer looks frozen: while your token or key is checked, a spinner shows the seconds so far, and past 20 s it says the check can take up to 45 s. If no answer comes back within 60 s, Cove stops waiting and shows where your Claude stands.
