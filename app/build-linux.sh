@@ -101,6 +101,11 @@ if [[ "${WEBVIEW:-1}" == 0 ]]; then
   echo "▸ WEBVIEW=0 - no App panel builds"
 else
   if [[ -e "$multi/libwebkit2gtk-4.1.so" ]]; then
+    # pkg-config looks only where $multi's GTK is: a shell with stack modules
+    # loaded hands in a PKG_CONFIG_PATH of /opt/ndexr/stack paths and the
+    # stack's pkgconf, which never searches /usr/lib, and the build failed on
+    # "Package 'atk' not found" (2026-11-27, 0.1.35).
+    PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$multi/pkgconfig:/usr/share/pkgconfig}" \
     RUSTFLAGS="${RUSTFLAGS:-} -L native=$multi -C link-arg=-Wl,--allow-shlib-undefined" \
     CARGO_TARGET_DIR="$tdir" cargo zigbuild --release --target "$target.2.28" --manifest-path "$here/Cargo.toml" --features webview
     install -Dm755 "$tdir/$target/release/cove" "$stage/lib/cove/bin/cove-desk"
