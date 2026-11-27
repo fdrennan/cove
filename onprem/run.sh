@@ -252,6 +252,31 @@ publish_rust() {
 # with the stamp of the templates they came from; a new project copies them
 # in. Only a starter whose stamp moved is rebuilt. In the background, one at
 # a time: the Rust app takes 15 min cold on a busy box.
+# A built seed on the install feed too, for every Cove that is not this
+# server: a self-installed server or a desktop fetches it when it makes a
+# project (host.rs seed_fetch; operator, 2026-11-27: "binaries should be
+# precompiled"). Only what Start needs - the binary, the browser build and
+# Cargo.lock, not target/'s gigabytes - at
+# seeds/<starter>/<stamp>/linux-<arch>.tar.gz and its .sha256.
+upload_seed() {
+  local s="$1" stamp="$2" from="$3" plat key tgz parts=()
+  plat="linux-$(uname -m)"
+  key="s3://ndexr/ndexr/cove/seeds/$s/$stamp/$plat.tar.gz"
+  PATH="$HOME/.local/bin:$PATH" aws s3 ls "$key" >/dev/null 2>&1 && return 0
+  [[ -x "$from/target/release/app" ]] || return 0
+  parts=(target/release/app)
+  [[ -d "$from/dist" ]] && parts+=(dist)
+  [[ -f "$from/Cargo.lock" ]] && parts+=(Cargo.lock)
+  tgz="$state/seeds/$s-$plat.tar.gz"
+  sudo -n tar -czf "$tgz" -C "$from" "${parts[@]}" && sudo -n chown "$(id -u)" "$tgz" || { log "seed $s: could not pack it for the feed"; return 0; }
+  if PATH="$HOME/.local/bin:$PATH" aws s3 cp --only-show-errors "$tgz" "$key" &&
+     printf '%s  %s\n' "$(sha256sum "$tgz" | cut -d' ' -f1)" "$plat.tar.gz" | PATH="$HOME/.local/bin:$PATH" aws s3 cp --only-show-errors - "$key.sha256"; then
+    log "seed $s: on the feed ($(du -h "$tgz" | cut -f1), $stamp, $plat)"
+  else
+    log "seed $s: could not upload it to the feed"
+  fi
+  rm -f "$tgz"
+}
 publish_seeds() {
   exec 9>"$state/seeds.lock"
   flock -n 9 || return 0
@@ -259,7 +284,10 @@ publish_seeds() {
   mkdir -p "$state/seeds"
   for s in $("$bin" seed list 2>/dev/null); do
     stamp="$("$bin" seed stamp "$s" 2>/dev/null)" || continue
-    [[ "$(cat "$shared/seeds/$s/.stamp" 2>/dev/null)" == "$stamp" ]] && continue
+    if [[ "$(cat "$shared/seeds/$s/.stamp" 2>/dev/null)" == "$stamp" ]]; then
+      upload_seed "$s" "$stamp" "$shared/seeds/$s"
+      continue
+    fi
     work="$state/seeds/$s"
     rm -rf "$work"
     "$bin" seed lay "$s" "$work" >/dev/null || { log "seed $s: could not lay it out"; continue; }
@@ -278,7 +306,8 @@ publish_seeds() {
     printf '%s\n' "$stamp" | sudo -n tee "$shared/seeds/$s.new/.stamp" >/dev/null &&
       sudo -n chown -R root:root "$shared/seeds/$s.new" && sudo -n chmod -R go+rX,go-w "$shared/seeds/$s.new" &&
       sudo -n rm -rf "$shared/seeds/$s" && sudo -n mv "$shared/seeds/$s.new" "$shared/seeds/$s" &&
-      log "seed $s: built in $((SECONDS - t0))s, published to $shared/seeds/$s ($stamp)"
+      log "seed $s: built in $((SECONDS - t0))s, published to $shared/seeds/$s ($stamp)" &&
+      upload_seed "$s" "$stamp" "$shared/seeds/$s"
   done
 }
 serve() {

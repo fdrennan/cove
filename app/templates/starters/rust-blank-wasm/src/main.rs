@@ -53,6 +53,18 @@ fn serve_file(path: &str) -> Option<(Vec<u8>, &'static str)> {
     Some((bytes, ty))
 }
 
+/// The name this project was laid out with (Cove fills `__HOST__` in when it
+/// makes the project).
+pub const LAID: &str = "__HOST__";
+
+/// This app's name: APP_HOST, which .cove/rust/env.sh sets to the project's
+/// folder, else the name it was laid out with. Read when it runs, so a binary
+/// Cove compiled ahead of time from this starter (a seed) names the project
+/// it runs in, not the one it was built for.
+pub fn host_name() -> String {
+    std::env::var("APP_HOST").ok().filter(|h| !h.trim().is_empty()).unwrap_or_else(|| LAID.to_owned())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let port = match args.as_slice() {
@@ -64,7 +76,7 @@ fn main() {
     };
     let started = secs(SystemTime::now());
     let server = Server::http(("127.0.0.1", port)).expect("bind");
-    log::info!("__HOST__: blank Rust + WebAssembly app serving on 127.0.0.1:{port}");
+    log::info!("{}: blank Rust + WebAssembly app serving on 127.0.0.1:{port}", host_name());
     for req in server.incoming_requests() {
         let t0 = Instant::now();
         let path = req.url().split('?').next().unwrap_or("/").to_owned();

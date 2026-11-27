@@ -131,7 +131,7 @@ impl App {
         egui::Area::new(egui::Id::new("tabs-pill")).anchor(Align2::LEFT_TOP, egui::vec2(16.0, 16.0)).order(egui::Order::Foreground).show(ctx, |ui| {
             glass().corner_radius(22).inner_margin(egui::Margin::symmetric(12, 6)).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("__HOST__").size(14.0).strong().color(Color32::WHITE));
+                    ui.label(RichText::new(host_name()).size(14.0).strong().color(Color32::WHITE));
                     ui.add_space(6.0);
                     for (t, name) in [(Tab::Chaos, "Chaos Lab"), (Tab::Atlas, "Dependency Universe"), (Tab::Media, "Media")] {
                         ui.selectable_value(&mut self.tab, t, RichText::new(name).size(14.0));
@@ -234,7 +234,7 @@ impl eframe::App for App {
         }
         egui::Panel::top("bar").show(root, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("__HOST__");
+                ui.heading(host_name());
                 ui.add_space(12.0);
                 ui.selectable_value(&mut self.tab, Tab::Chaos, "Chaos Lab").on_hover_text("the Lorenz system, solved as you watch");
                 ui.selectable_value(&mut self.tab, Tab::Atlas, "Dependency Universe").on_hover_text("every package of the ndexr stack and what it needs, live");
@@ -350,4 +350,23 @@ fn same_origin(mut req: ehttp::Request) -> ehttp::Request {
         req.credentials = ehttp::Credentials::SameOrigin;
     }
     req
+}
+
+/// The name this project was laid out with (Cove fills `__HOST__` in).
+pub const LAID: &str = "__HOST__";
+
+/// This app's name, read when it runs, so a binary Cove compiled ahead of
+/// time from this template (a seed) names the project it is in: in a browser
+/// the page's title (web/index.html, laid for this project), on a desktop or
+/// a server APP_HOST (.cove/rust/env.sh), else the name it was laid out with.
+pub fn host_name() -> String {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(t) = web_sys::window().and_then(|w| w.document()).map(|d| d.title()).filter(|t| !t.trim().is_empty()) {
+        return t;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(h) = std::env::var("APP_HOST").ok().filter(|h| !h.trim().is_empty()) {
+        return h;
+    }
+    LAID.to_owned()
 }

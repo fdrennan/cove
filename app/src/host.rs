@@ -2729,7 +2729,7 @@ fn seeded_starters() -> Vec<&'static str> {
 /// from nothing, and says so while it does.
 fn seed_into(dir: &Path, starter: &str) -> bool {
     let seed = Path::new(SEEDS).join(starter);
-    let Ok(stamp) = std::fs::read_to_string(seed.join(".stamp")) else { return false };
+    let Ok(stamp) = std::fs::read_to_string(seed.join(".stamp")) else { return seed_fetch(dir, starter) };
     if seed_stamp(starter).ok().as_deref() != Some(stamp.trim()) {
         return false;
     }
@@ -2743,6 +2743,44 @@ fn seed_into(dir: &Path, starter: &str) -> bool {
     // g+w lifts the mask back; the mtimes stay.
     !parts.is_empty()
         && capture_within(&format!("cp -a {} {} && chmod -R g+w {} && echo seeded", parts.join(" "), shell_quote(&dir.display().to_string()), laid.join(" ")), Duration::from_secs(180)).is_some_and(|o| o.trim() == "seeded")
+}
+
+/// Where published seeds are: beside Cove's releases on the install feed,
+/// `seeds/<starter>/<stamp>/<platform>.tar.gz` and its `.sha256` (onprem/run.sh
+/// publish_seeds uploads them).
+fn seed_url(starter: &str, stamp: &str) -> String {
+    let base = std::env::var("COVE_FEED").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "https://repo.ndexr.io/ndexr/cove".into());
+    format!("{}/seeds/{starter}/{stamp}/{}.tar.gz", base.trim_end_matches('/'), crate::host::update::platform())
+}
+
+/// A seed from the install feed, where this machine has none of its own: a
+/// server or desktop of someone's own (operator, 2026-11-27, a new Rust
+/// project on ndexrtesting.com, 556 s and still compiling: "binaries should be
+/// precompiled"). The starter's binary, its browser build and Cargo.lock,
+/// built by ndexr for exactly these templates (the stamp) and checked against
+/// their sha256, so Start runs at once; the project's own build then runs in
+/// the background as with a local seed. Not in airgap mode, and nothing when
+/// the feed has none for this stamp and platform: the project builds as before.
+fn seed_fetch(dir: &Path, starter: &str) -> bool {
+    if saved_settings().airgap {
+        return false;
+    }
+    let Ok(stamp) = seed_stamp(starter) else { return false };
+    let url = seed_url(starter, &stamp);
+    let d = shell_quote(&dir.display().to_string());
+    let u = shell_quote(&url);
+    // The binary keeps the name the project's own build gives it, so the
+    // project's run.sh starts it, and its own build replaces it in place.
+    // A browser build's page is the project's own (laid with its name).
+    let script = format!(
+        "set -e; t=\"$(mktemp -d)\"; trap 'rm -rf \"$t\"' EXIT; \
+         curl -fsSL -m 120 -o \"$t/s.tgz\" {u}; curl -fsSL -m 30 -o \"$t/s.sha\" {u}.sha256; \
+         [ \"$(sha256sum \"$t/s.tgz\" | cut -d' ' -f1)\" = \"$(cut -d' ' -f1 \"$t/s.sha\")\" ]; \
+         tar -xzf \"$t/s.tgz\" -C {d}; \
+         if [ -d {d}/dist/web ] && [ -f {d}/web/index.html ]; then cp {d}/web/index.html {d}/dist/web/index.html; fi; \
+         [ -x {d}/target/release/app ] && echo seeded"
+    );
+    capture_within(&script, Duration::from_secs(180)).is_some_and(|o| o.trim().ends_with("seeded"))
 }
 
 /// `cove seed list | stamp <starter> | lay <starter> <dir>` - for

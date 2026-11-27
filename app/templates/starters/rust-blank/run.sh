@@ -5,7 +5,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ./env.sh
 
-[ -x ./target/release/app ] || { echo "not built yet: run ./build.sh" >&2; exit 1; }
+# Built here when it was not, the first time only: a project made where no
+# prebuilt binary could be fetched (Cove's seeds) compiles once before it
+# starts, rather than refusing to (operator, 2026-11-27: Start answered "not
+# built yet" on a new server).
+if [ ! -x ./target/release/app ]; then
+  printf '%s INFO    [run] not built yet - building it first; this takes minutes the first time\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
+  ./build.sh || { echo "the build failed - its output is above" >&2; exit 1; }
+fi
 # Started again whenever ./build.sh makes a new binary changes.
 stamp() { stat -c %Y target/release/app 2>/dev/null || true; }
 child=

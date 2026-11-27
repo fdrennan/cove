@@ -26,7 +26,7 @@ fn main() -> eframe::Result {
     let base = args.first().cloned().or_else(|| std::env::var("APP_URL").ok()).unwrap_or_else(|| "http://127.0.0.1:8800".into());
     let base = base.trim_end_matches('/').to_owned();
     eframe::run_native(
-        "__HOST__",
+        &app::host_name(),
         eframe::NativeOptions { viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1100.0, 700.0]), ..Default::default() },
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, base)))),
     )

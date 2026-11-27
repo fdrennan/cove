@@ -251,10 +251,10 @@ fn handle(app: &Arc<App>, req: Request) {
             crate::log::request(&method, path, status, t0);
             return;
         }
-        (Method::Get, "/") => Response::from_data(PAGE.as_bytes().to_vec())
+        (Method::Get, "/") => Response::from_data(PAGE.replace(crate::LAID, &crate::host_name()).into_bytes())
             .with_header(header("Content-Type", "text/html; charset=utf-8")),
         (Method::Get, "/health") => json_reply(200, json!({
-            "ok": true, "service": "__HOST__", "version": env!("CARGO_PKG_VERSION"),
+            "ok": true, "service": crate::host_name(), "version": env!("CARGO_PKG_VERSION"),
             "uptime_s": app.started.elapsed().as_secs(),
         })),
         (Method::Get, "/api/env") => json_reply(200, env_json(app)),
@@ -325,7 +325,7 @@ pub fn serve(port: u16) {
     // Workers answer the short requests; a stream moves to its own thread, a
     // blob holds its worker for as long as it downloads.
     let workers = 6;
-    crate::log::info!("__HOST__: Network Observatory serving on 127.0.0.1:{port}");
+    crate::log::info!("{}: Network Observatory serving on 127.0.0.1:{port}", crate::host_name());
     let handles: Vec<_> = (0..workers)
         .map(|_| {
             let (s, app) = (Arc::clone(&server), Arc::clone(&app));

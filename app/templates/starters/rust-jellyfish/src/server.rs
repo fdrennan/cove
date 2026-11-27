@@ -151,7 +151,7 @@ fn handle(mut req: Request, board: &Mutex<Vec<Value>>, started: Instant) {
     let t0 = Instant::now();
     let reply = match (&method, path) {
         (Method::Get, "/" | "/index.html") => file_reply(Path::new("web/index.html")),
-        (Method::Get, "/health") => json_reply(200, json!({ "ok": true, "service": "__HOST__", "uptime_s": started.elapsed().as_secs() })),
+        (Method::Get, "/health") => json_reply(200, json!({ "ok": true, "service": crate::host_name(), "uptime_s": started.elapsed().as_secs() })),
         (Method::Get, "/api/scores") => json_reply(200, json!(board.lock().map_or(vec![], |b| b.iter().take(10).cloned().collect()))),
         (Method::Post, "/api/scores") => match read_body(&mut req).and_then(|b| record(board, &b)) {
             Ok(v) => json_reply(201, v),
@@ -183,7 +183,7 @@ pub fn serve(port: u16) {
     };
     let started = Instant::now();
     let board = Arc::new(Mutex::new(load()));
-    crate::log::info!("__HOST__: Jellyfish Drift serving on 127.0.0.1:{port} ({} runs on the board)", board.lock().map_or(0, |b| b.len()));
+    crate::log::info!("{}: Jellyfish Drift serving on 127.0.0.1:{port} ({} runs on the board)", crate::host_name(), board.lock().map_or(0, |b| b.len()));
     let handles: Vec<_> = (0..4)
         .map(|_| {
             let (s, board) = (Arc::clone(&server), Arc::clone(&board));

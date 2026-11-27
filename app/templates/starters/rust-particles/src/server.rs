@@ -187,10 +187,10 @@ fn handle(req: Request, sim: &Mutex<Sim>, started: Instant, threads: usize) {
         .find(|r| path.ends_with(r))
         .unwrap_or(if path.ends_with('/') || path.ends_with("/index.html") { "/" } else { "" });
     let reply = match (req.method(), route) {
-        (Method::Get, "/") => Response::from_data(PAGE.as_bytes().to_vec()).with_header(header("Content-Type", "text/html; charset=utf-8")),
+        (Method::Get, "/") => Response::from_data(PAGE.replace(crate::LAID, &crate::host_name()).into_bytes()).with_header(header("Content-Type", "text/html; charset=utf-8")),
         (Method::Get, "/health") => json_reply(
             200,
-            json!({ "ok": true, "service": "__HOST__", "version": env!("CARGO_PKG_VERSION"),
+            json!({ "ok": true, "service": crate::host_name(), "version": env!("CARGO_PKG_VERSION"),
                     "uptime_s": started.elapsed().as_secs(), "threads": threads }),
         ),
         (Method::Get | Method::Post, "/reset") => reset(sim, &q).map_or_else(bad, |v| json_reply(200, v)),
@@ -234,7 +234,7 @@ pub fn serve(port: u16) {
     // Few HTTP workers: frames serialise on the one universe anyway, and the
     // cores belong to the force loop.
     let workers = 4;
-    crate::log::info!("__HOST__: Particle Universe serving on 127.0.0.1:{port} ({threads} compute threads)");
+    crate::log::info!("{}: Particle Universe serving on 127.0.0.1:{port} ({threads} compute threads)", crate::host_name());
     let handles: Vec<_> = (0..workers)
         .map(|_| {
             let (s, sim) = (Arc::clone(&server), Arc::clone(&sim));

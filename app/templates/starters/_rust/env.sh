@@ -38,3 +38,7 @@ if [ "${APP_VENDOR:-1}" = 1 ] && [ -d "$vendor" ]; then
   export -f cargo
 fi
 export PORT="${PORT:-$APP_PORT}"
+# The app's name, read when it runs (host_name() in its main.rs or app.rs):
+# the project's folder, which Cove names after it. A binary compiled ahead of
+# time from the starter (a seed, built as seed.ndexr.io) then names this project.
+export APP_HOST="${APP_HOST:-$(basename "$PWD")}"

@@ -175,10 +175,10 @@ fn handle(mut req: Request, started: Instant, threads: usize) {
         .find(|r| path.ends_with(r))
         .unwrap_or(if path.ends_with('/') || path.ends_with("/index.html") { "/" } else { "" });
     let reply = match (req.method(), route) {
-        (Method::Get, "/") => Response::from_data(PAGE.as_bytes().to_vec()).with_header(header("Content-Type", "text/html; charset=utf-8")),
+        (Method::Get, "/") => Response::from_data(PAGE.replace(crate::LAID, &crate::host_name()).into_bytes()).with_header(header("Content-Type", "text/html; charset=utf-8")),
         (Method::Get, "/health") => json_reply(
             200,
-            json!({ "ok": true, "service": "__HOST__", "version": env!("CARGO_PKG_VERSION"),
+            json!({ "ok": true, "service": crate::host_name(), "version": env!("CARGO_PKG_VERSION"),
                     "uptime_s": started.elapsed().as_secs(), "threads": threads }),
         ),
         (Method::Post, "/stats") => match body(&mut req) {
@@ -212,7 +212,7 @@ pub fn serve(port: u16) {
     };
     let started = Instant::now();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
-    crate::log::info!("__HOST__: scientific API serving on 127.0.0.1:{port} ({threads} workers)");
+    crate::log::info!("{}: scientific API serving on 127.0.0.1:{port} ({threads} workers)", crate::host_name());
     let workers: Vec<_> = (0..threads)
         .map(|_| {
             let s = Arc::clone(&server);

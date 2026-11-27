@@ -194,6 +194,12 @@ impl Prefs {
 /// Set from anywhere (an agent turn refused for want of a Claude): app.rs opens
 /// setup at the Claude step on its next frame.
 static WANT_CLAUDE: AtomicBool = AtomicBool::new(false);
+/// Why it was asked for, when an agent's turn was refused for the person's
+/// Claude: Connect Claude opens on that, not on a tick (operator, 2026-11-27:
+/// a turn failed with "Anthropic rejected your Claude credential", and the
+/// window its button opened said the subscription was connected - "helps me
+/// none").
+static WHY_CLAUDE: Mutex<Option<String>> = Mutex::new(None);
 /// The same for signing in to ndexr (backend.rs SIGNED_OUT).
 static WANT_SIGN_IN: AtomicBool = AtomicBool::new(false);
 
@@ -243,6 +249,10 @@ pub fn connect_button(ui: &mut egui::Ui, text: &str, fresh: bool) {
         new
     };
     if (first && fresh) || ui.add(theme::primary_button("Connect your Claude")).clicked() {
+        // The Account tab's own button passes no refusal, only its words.
+        if text != "Connect your Claude" {
+            *WHY_CLAUDE.lock().unwrap() = Some(text.to_owned());
+        }
         WANT_CLAUDE.store(true, Ordering::Relaxed);
     }
 }
@@ -272,6 +282,10 @@ struct Helper {
 }
 
 pub struct Setup {
+    /// What an agent's refused turn said about the person's Claude, when that
+    /// is why Connect Claude is open: shown first, and the ways to connect
+    /// another open beside it. Gone once one connects or it is removed.
+    refused: Option<String>,
     /// Opened at one step on its own (Connect Claude from the chip, Help or
     /// an agent's refusal): that step is the whole of it, and Continue closes.
     alone: bool,
@@ -324,6 +338,7 @@ impl Default for Setup {
     fn default() -> Self {
         session_start();
         Setup {
+            refused: None,
             alone: false,
             provider_open: 0,
             close_to_agent: false,
@@ -440,6 +455,10 @@ impl Setup {
             *self.note.lock().unwrap() = None;
             self.changing.store(true, Ordering::Relaxed);
         }
+        if op != "status" {
+            // A new credential, or none: the old refusal no longer says where things stand.
+            self.refused = None;
+        }
         let (status, busy, note, changing) = (self.status.clone(), self.busy.clone(), self.note.clone(), self.changing.clone());
         let done = move |r: Result<ClaudeView, String>| {
             // The backend puts the HTTP status before a server's words ("500 Anthropic
@@ -484,6 +503,7 @@ impl Setup {
     pub fn show(&mut self, ctx: &egui::Context, env: Env<'_>) -> Done {
         if WANT_CLAUDE.swap(false, Ordering::Relaxed) {
             self.start_claude(ctx);
+            self.refused = WHY_CLAUDE.lock().unwrap().take();
         }
         if WANT_SIGN_IN.swap(false, Ordering::Relaxed) {
             #[cfg(not(target_arch = "wasm32"))]
@@ -1323,7 +1343,7 @@ impl Setup {
         // The ways to connect show in every state, installing and failed
         // included: "Start in the Terminal" installs Claude Code itself
         // (SETUP_TOKEN), and hiding them left a failed install with no way on.
-        let own = status.as_ref().is_some_and(|s| s.as_ref().is_ok_and(ClaudeView::own));
+        let own = status.as_ref().is_some_and(|s| s.as_ref().is_ok_and(ClaudeView::own)) && self.refused.is_none();
         if status.as_ref().is_some_and(|s| s.is_ok()) && !own {
             ui.add_space(4.0);
             self.ways(ui, ctx, env, busy);
@@ -1333,6 +1353,14 @@ impl Setup {
 
     /// Where they stand now, in the site's words.
     fn verdict(&mut self, ui: &mut egui::Ui, v: &ClaudeView, busy: bool, backend: &Backend, ctx: &egui::Context) {
+        if let Some(why) = self.refused.clone() {
+            status_card(ui, theme::warn(), "!", "Anthropic refused this Claude", &refusal_words(&why));
+            ui.label(RichText::new(format!("Saved here: {}. Connect a different one below, or remove it.", if v.label.is_empty() { "a Claude credential" } else { v.label.as_str() })).size(12.5).color(theme::text()));
+            if ui.add_enabled(!busy, egui::Button::new(RichText::new("Remove the saved one").color(theme::alt()))).on_hover_text("forget it - your agent stops using it").clicked() {
+                self.ask("forget", String::new(), backend, ctx);
+            }
+            return;
+        }
         match v.kind.as_str() {
             "own" => {
                 status_card(ui, theme::ok(), "✓", &v.label, "Your agent runs on your own Claude. ndexr doesn't meter or limit it.");
@@ -1964,6 +1992,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_refusal_says_anthropics_reason_not_where_to_go() {
+        let t = "Anthropic rejected your Claude credential (Anthropic: OAuth authentication is currently not allowed for this organization.). If your plan or payment lapsed, update it at claude.ai or console.anthropic.com; otherwise reconnect it in console.ndexr.io (Credentials -> Claude), or remove it to use the free trial.";
+        assert_eq!(refusal_words(t), "Anthropic said: OAuth authentication is currently not allowed for this organization.");
+        assert_eq!(refusal_words("Claude is no longer connected. Connect it again."), "Claude is no longer connected.");
+    }
+
+    #[test]
     fn agent_refusals_about_claude_are_spotted() {
         assert!(about_claude("You're on ndexr's Claude, which is for subscribers. Connect your own Claude in console.ndexr.io (Credentials → Claude), subscribe, or add funds in billing.ndexr.io to keep building."));
         assert!(about_claude("You've used your 25 shared Claude Max commands this week. They reset Sun Oct 18 05:59 UTC."));
@@ -1980,4 +2015,18 @@ mod tests {
 
 // ── How it fits ─────────────────────────────────────────────────────────────
 
-
+/// The words to show of an agent's refusal: Anthropic's own reason when the
+/// message carries one ("(Anthropic: OAuth authentication is currently not
+/// allowed for this organization.)"), else its first sentence - without the
+/// old advice to go to console.ndexr.io, which now leads back here.
+fn refusal_words(text: &str) -> String {
+    if let Some(i) = text.find("(Anthropic:") {
+        let rest = &text[i + "(Anthropic:".len()..];
+        let reason = rest.split(')').next().unwrap_or(rest).trim();
+        if !reason.is_empty() {
+            return format!("Anthropic said: {reason}");
+        }
+    }
+    let first = text.split(". ").next().unwrap_or(text).trim();
+    first.trim_end_matches('.').to_owned() + "."
+}

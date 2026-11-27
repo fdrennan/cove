@@ -2102,7 +2102,14 @@ fn thumb_size(tex: &egui::TextureHandle, w: f32, h: f32) -> egui::Vec2 {
 /// landing page's cards. True when its ■ (stop this run) was clicked.
 /// The prompt as the person typed it: a turn sent with the console's tail
 /// carries that after a rule (with_console) - it is for the agent, not the bubble.
-fn shown_prompt(p: &str) -> &str {
+pub(crate) fn shown_prompt(p: &str) -> &str {
+    // The project's brief Cove puts in front of a turn (host.rs, "[This
+    // project - from Cove, not typed by the person]" ... "\n---\n") is the
+    // agent's, not the bubble's: the Sites wall showed it as every prompt.
+    let p = match p.strip_prefix("[This project - from Cove, not typed by the person]") {
+        Some(rest) => rest.split_once("\n---\n").map_or(p, |(_, typed)| typed),
+        None => p,
+    };
     let p = p.split("\n\n---\nI am working in ").next().unwrap_or(p);
     let p = p.split("\n\nAttached to this message (uploaded into").next().unwrap_or(p).trim();
     // The notes that tell the agent where words came from are for it, not the
@@ -2311,6 +2318,7 @@ mod tests {
     fn a_bubble_shows_what_was_typed_not_the_console() {
         assert_eq!(shown_prompt(&with_console("make it blue", "> x")), "make it blue");
         assert_eq!(shown_prompt("old\n\n---\nI am working in the Cove IDE. The end of"), "old");
+        assert_eq!(shown_prompt("[This project - from Cove, not typed by the person]\nx.ndexr.io's app is the one in this folder. (AGENTS-shared.md 7b).\n---\nmake the plot blue\n\n---\nI am working in Cove"), "make the plot blue");
         assert_eq!(shown_prompt("  plain  "), "plain");
     }
 
