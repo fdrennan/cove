@@ -6326,6 +6326,12 @@ impl Ide {
         self.backend.query(Query::InboxAct { act: api::InboxAct::ShareDecide { id: s.id, accept: true } }, ctx, |_: Result<serde_json::Value, String>| {});
     }
 
+    /// Make `host` the selected tab, opening it as one when it is not: the
+    /// Sites wall's tile names and search (sites.rs).
+    pub fn select_tab(&mut self, host: &str, ctx: &egui::Context) {
+        self.pending_open = Some((host.to_owned(), ctx.input(|i| i.time), 0.0));
+    }
+
     /// A share accepted: open it when it is among my projects; ask for them
     /// again every 2 s until then, for 40 s.
     fn open_pending(&mut self, ctx: &egui::Context) {

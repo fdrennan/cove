@@ -435,7 +435,7 @@ pub fn set_defaults(model: &str, mode: &str) {
     }
 }
 
-fn default_model() -> String {
+pub(crate) fn default_model() -> String {
     let d = DEFAULTS.lock().unwrap();
     if d.0.is_empty() { MODELS[0].0.into() } else { d.0.clone() }
 }

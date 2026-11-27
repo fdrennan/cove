@@ -285,6 +285,8 @@ pub struct App {
     connect: crate::ui::connect::Connect,
     /// Connect OpenAI: the GPT models on the person's own account (openai.rs).
     openai: crate::ui::openai::ConnectOpenAi,
+    /// Sites: the open tabs side by side, each through its own lens (sites.rs).
+    wall: crate::ui::sites::SitesWall,
     /// On a phone (compact): the one window showing, picked from the bottom bar.
     compact_cell: usize,
     /// A tab being dragged between windows.
@@ -571,6 +573,7 @@ impl App {
             asked_options: false,
             connect: Default::default(),
             openai: Default::default(),
+            wall: Default::default(),
             compact_cell: 0,
             drag: Drag::default(),
             splitting: false,
@@ -4140,7 +4143,41 @@ impl App {
         });
     }
 
+    /// Sites › Open tabs: the wall (sites.rs), in the same centred page as
+    /// All sites, wider - tiles want the room.
+    fn wall_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        let pad: i8 = if compact(ctx) { 8 } else { 16 };
+        let list = self.ide.domain_list(ctx);
+        let every: Vec<crate::api::DomainInfo> = match &list {
+            Some(Ok(v)) => v.clone(),
+            _ => Vec::new(),
+        };
+        let open: Vec<(String, Option<crate::api::DomainInfo>)> = self.ide.tabs.open.iter().map(|h| (h.clone(), every.iter().find(|d| d.host == *h).cloned())).collect();
+        let active = self.ide.domain.as_ref().map(|d| d.host.clone());
+        let mut act = None;
+        let backend = self.backend.clone();
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.92)).inner_margin(egui::Margin::symmetric(pad, pad.min(12)))).show(root, |ui| {
+            let col = ui.available_width().min(1800.0);
+            let side = ((ui.available_width() - col) / 2.0).max(0.0);
+            ui.horizontal_top(|ui| {
+                ui.add_space(side);
+                ui.vertical(|ui| {
+                    ui.set_width(col);
+                    self.wall.switch(ui, open.len());
+                    ui.add_space(8.0);
+                    act = self.wall.show(ui, ctx, &backend, &open, active.as_deref(), &every);
+                });
+            });
+        });
+        if let Some(crate::ui::sites::WallAct::Select(h)) = act {
+            self.ide.select_tab(&h, ctx);
+        }
+    }
+
     fn connect_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
+        if !self.wall.all {
+            return self.wall_view(root, ctx);
+        }
         let apps = self.visible_apps(ctx);
         // Who may open each, by host: the registry's level as visible_domains
         // reads it. The person's own rows come from their folders, which do
@@ -4197,7 +4234,9 @@ impl App {
                             return;
                         }
                     };
-                    ui.add_space(4.0);
+                    let open_n = self.ide.tabs.open.len();
+                    self.wall.switch(ui, open_n);
+                    ui.add_space(8.0);
                     ui.add(egui::TextEdit::singleline(&mut self.connect_find).hint_text(if narrow { "Search name, address or owner" } else { "Search sites: name, address or owner" }).desired_width(col).font(egui::FontId::proportional(16.0)).margin(egui::vec2(12.0, 9.0)));
                     ui.add_space(14.0);
                     ui.label(RichText::new("Sites").size(if narrow { 22.0 } else { 28.0 }).color(theme::text_strong()));
@@ -4905,6 +4944,8 @@ impl eframe::App for App {
         });
         let covered = floating || tour_covers || matches!(self.mode, Mode::Atlas | Mode::Builds | Mode::Connect | Mode::Account) || ended || self.setup.covering() || self.drag.tab.is_some() || self.splitting;
         crate::ui::ide::viewer_frame_end(covered);
+        // The Sites wall's pages: only on Sites, and never under a dialog.
+        crate::ui::sites::end_frame(floating || tour_covers || self.mode != Mode::Connect || ended || self.setup.covering() || self.drag.tab.is_some() || self.splitting);
         crate::ui::kit::paste::end_frame();
         #[cfg(not(target_arch = "wasm32"))]
         crate::desktop::webview::end_frame(ctx, frame, covered);
