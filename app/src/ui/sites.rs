@@ -86,6 +86,11 @@ pub struct SitesWall {
     /// Tile height: 0 small, 1 medium, 2 large, 3 fit the screen (Grid's
     /// own size until it is picked).
     size: Option<u8>,
+    /// How small each page is drawn: it lays out as if its tile were 1/zoom
+    /// as big, then is scaled to fit, so a tile shows the page and not only its
+    /// header (operator, 2026-11-27: "we are losing out on so much information
+    /// by depriving the embedded sites a way to show their stuff"). None: 67%.
+    zoom: Option<f32>,
     lens: HashMap<String, Lens>,
     tiles: HashMap<String, Tile>,
     pub find: String,
@@ -109,10 +114,18 @@ impl SitesWall {
     pub fn show(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, open: &[(String, Option<DomainInfo>)], active: Option<&str>, every: &[DomainInfo]) -> Option<WallAct> {
         let mut act = None;
         let now = ctx.input(|i| i.time);
-        // The bar: search every site, then Focus or Grid.
+        // One row for every control - the views, the search, the layout and the
+        // grid's size - so the pages get the height.
         ui.horizontal(|ui| {
-            let w = (ui.available_width() - 420.0).max(160.0);
-            ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(10.0, 7.0)));
+            let views = [
+                (format!("Open tabs · {}", open.len()), "the sites open as tabs, each through its own lens".to_owned(), !self.all, true),
+                ("All sites".to_owned(), "every site you may open: search, access, sharing".to_owned(), self.all, true),
+            ];
+            if let Some(i) = crate::ui::agent::segmented(ui, false, &views) {
+                self.all = i == 1;
+            }
+            let w = (ui.available_width() - 560.0).max(140.0);
+            ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(8.0, 4.0)));
             let items = [
                 ("Focus".to_owned(), "the selected tab large, the others under it".to_owned(), !self.grid, true),
                 ("Grid".to_owned(), "every open tab the same size".to_owned(), self.grid, true),
@@ -125,6 +138,14 @@ impl SitesWall {
             egui::ComboBox::from_id_salt("sites-cols").selected_text(col_word(self.cols)).width(120.0).show_ui(ui, |ui| {
                 for c in [0, 1, 2, 3, 4, 5, 6] {
                     ui.selectable_value(&mut self.cols, c, col_word(c));
+                }
+            });
+            let zoom = self.zoom.unwrap_or(0.67);
+            egui::ComboBox::from_id_salt("sites-zoom").selected_text(format!("Zoom: {:.0}%", zoom * 100.0)).width(100.0).show_ui(ui, |ui| {
+                for z in [1.0f32, 0.8, 0.67, 0.5, 0.4] {
+                    if ui.selectable_label((zoom - z).abs() < 0.01, format!("{:.0}%", z * 100.0)).on_hover_text("each page drawn at this size, so more of it fits its tile").clicked() {
+                        self.zoom = Some(z);
+                    }
                 }
             });
             let sizes = ["Small", "Medium", "Large", "Fit the screen"];
@@ -174,7 +195,7 @@ impl SitesWall {
             order.sort_by_key(|(h, _)| h != a);
         }
         let area = ui.available_rect_before_wrap();
-        let gap = 10.0;
+        let gap = 6.0;
         let phone = area.width() < 700.0;
         let cols = if self.cols > 0 { self.cols } else if phone { 1 } else if self.grid { ((area.width() / 460.0).floor() as usize).clamp(1, 3) } else { ((area.width() / 380.0).floor() as usize).clamp(1, 4) };
         egui::ScrollArea::vertical().id_salt("sites-wall").auto_shrink([false, false]).show(ui, |ui| {
@@ -227,6 +248,7 @@ impl SitesWall {
     fn tile(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, r: egui::Rect, clip: egui::Rect, host: &str, d: Option<&DomainInfo>, selected: bool, now: f64) -> Option<WallAct> {
         let mut act = None;
         let lens = *self.lens.entry(host.to_owned()).or_default();
+        let zoom = self.zoom.unwrap_or(0.67);
         let t = self.tiles.entry(host.to_owned()).or_default();
         // Its state, every 15 s, whatever the lens: the light in its bar.
         if let Some(d) = d {
@@ -234,7 +256,7 @@ impl SitesWall {
         }
         let p = ui.painter().with_clip_rect(clip);
         p.rect(r, 10.0, theme::bg(), egui::Stroke::new(if selected { 1.5 } else { 1.0 }, if selected { theme::primary().gamma_multiply(0.8) } else { theme::pane_brd() }), egui::StrokeKind::Inside);
-        let bar = egui::Rect::from_min_size(r.min, egui::vec2(r.width(), 36.0));
+        let bar = egui::Rect::from_min_size(r.min, egui::vec2(r.width(), 28.0));
         let body = egui::Rect::from_min_max(egui::pos2(r.left() + 1.0, bar.bottom()), r.max - egui::vec2(1.0, 1.0));
         let name_r = egui::Rect::from_min_max(bar.min + egui::vec2(10.0, 4.0), egui::pos2(bar.right() - 200.0f32.min(bar.width() * 0.5) - 8.0, bar.bottom() - 4.0));
         let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(name_r).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(("tile-bar", host)));
@@ -266,7 +288,7 @@ impl SitesWall {
         let mut cui = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink(10.0)).layout(egui::Layout::top_down(egui::Align::Min)).id_salt(("tile-body", host)));
         cui.set_clip_rect(body.intersect(clip));
         match (lens, d) {
-            (Lens::Site, _) => site(&mut cui, ctx, backend, t, body, clip, host),
+            (Lens::Site, _) => site(&mut cui, ctx, backend, t, body, clip, host, zoom),
             (Lens::Agent, Some(d)) => agent(&mut cui, ctx, backend, t, d, now),
             (Lens::Logs, Some(d)) => logs(&mut cui, ctx, backend, t, d, now),
             (_, None) => {
@@ -293,7 +315,7 @@ fn ask<T: serde::de::DeserializeOwned + Send + 'static>(t: &mut Tile, key: &'sta
 /// its own address. In a browser a frame over the tile, kept loaded while
 /// the tile is on screen; the desktop app opens it in the browser.
 #[allow(unused_variables)]
-fn site(ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, t: &Tile, body: egui::Rect, clip: egui::Rect, host: &str) {
+fn site(ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, t: &Tile, body: egui::Rect, clip: egui::Rect, host: &str, zoom: f32) {
     let seen = t.status.lock().unwrap().as_ref().and_then(|s| s.as_ref().ok()).map(|s| s.seen_at.clone()).unwrap_or_default();
     let url = if seen.is_empty() { format!("https://{host}/") } else { backend.viewer_url(&seen) };
     #[cfg(target_arch = "wasm32")]
@@ -310,7 +332,7 @@ fn site(ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, t: &Tile, bod
         // required in order to display a page when 95% of it is visible").
         let seen = body.intersect(clip);
         if seen.height() > 24.0 && seen.width() > 24.0 {
-            frames::place(ctx, host, body, seen, &url);
+            frames::place(ctx, host, body, seen, &url, zoom);
         }
     }
     #[cfg(not(target_arch = "wasm32"))]

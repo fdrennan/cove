@@ -36,18 +36,23 @@ fn element(id: &str) -> Option<web_sys::Element> {
 /// `rect` the page at its full size, `seen` the part of it on screen: what
 /// lies outside is cut away (clip-path), so a tile half scrolled out shows its
 /// page as it is, not squeezed into what is left.
-pub fn place(ctx: &egui::Context, host: &str, rect: egui::Rect, seen: egui::Rect, src: &str) {
+/// `scale`: the page lays out in a frame 1/scale as big as `rect` and is
+/// drawn scaled to fit it - more of the page in the tile.
+pub fn place(ctx: &egui::Context, host: &str, rect: egui::Rect, seen: egui::Rect, src: &str, scale: f32) {
     let id = id_of(host);
     let Some(e) = element(&id) else { return };
     let z = ctx.zoom_factor();
-    let (top, bottom) = ((seen.top() - rect.top()).max(0.0) * z, (rect.bottom() - seen.bottom()).max(0.0) * z);
-    let (left, right) = ((seen.left() - rect.left()).max(0.0) * z, (rect.right() - seen.right()).max(0.0) * z);
+    let k = scale.clamp(0.25, 1.0);
+    // The cut is in the frame's own (unscaled) pixels: clip-path applies
+    // before the transform.
+    let (top, bottom) = ((seen.top() - rect.top()).max(0.0) * z / k, (rect.bottom() - seen.bottom()).max(0.0) * z / k);
+    let (left, right) = ((seen.left() - rect.left()).max(0.0) * z / k, (rect.right() - seen.right()).max(0.0) * z / k);
     let style = format!(
-        "position:absolute;left:{:.1}px;top:{:.1}px;width:{:.1}px;height:{:.1}px;border:0;background:#fff;z-index:2;display:block;clip-path:inset({top:.1}px {right:.1}px {bottom:.1}px {left:.1}px round 0 0 9px 9px)",
+        "position:absolute;left:{:.1}px;top:{:.1}px;width:{:.1}px;height:{:.1}px;transform:scale({k:.3});transform-origin:0 0;border:0;background:#fff;z-index:2;display:block;clip-path:inset({top:.1}px {right:.1}px {bottom:.1}px {left:.1}px round 0 0 9px 9px)",
         rect.left() * z,
         rect.top() * z,
-        rect.width() * z,
-        rect.height() * z
+        rect.width() * z / k,
+        rect.height() * z / k
     );
     if e.get_attribute("style").as_deref() != Some(style.as_str()) {
         let _ = e.set_attribute("style", &style);

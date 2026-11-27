@@ -4146,7 +4146,7 @@ impl App {
     /// Sites › Open tabs: the wall (sites.rs), in the same centred page as
     /// All sites, wider - tiles want the room.
     fn wall_view(&mut self, root: &mut egui::Ui, ctx: &egui::Context) {
-        let pad: i8 = if compact(ctx) { 8 } else { 16 };
+        let pad: i8 = if compact(ctx) { 4 } else { 8 };
         let list = self.ide.domain_list(ctx);
         let every: Vec<crate::api::DomainInfo> = match &list {
             Some(Ok(v)) => v.clone(),
@@ -4156,18 +4156,10 @@ impl App {
         let active = self.ide.domain.as_ref().map(|d| d.host.clone());
         let mut act = None;
         let backend = self.backend.clone();
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.92)).inner_margin(egui::Margin::symmetric(pad, pad.min(12)))).show(root, |ui| {
-            let col = ui.available_width().min(1800.0);
-            let side = ((ui.available_width() - col) / 2.0).max(0.0);
-            ui.horizontal_top(|ui| {
-                ui.add_space(side);
-                ui.vertical(|ui| {
-                    ui.set_width(col);
-                    self.wall.switch(ui, open.len());
-                    ui.add_space(8.0);
-                    act = self.wall.show(ui, ctx, &backend, &open, active.as_deref(), &every);
-                });
-            });
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::bg().gamma_multiply(0.92)).inner_margin(egui::Margin::symmetric(pad, pad))).show(root, |ui| {
+            // Every pixel to the pages: no centred column, the switch in the
+            // wall's own row of controls.
+            act = self.wall.show(ui, ctx, &backend, &open, active.as_deref(), &every);
         });
         if let Some(crate::ui::sites::WallAct::Select(h)) = act {
             self.ide.select_tab(&h, ctx);
