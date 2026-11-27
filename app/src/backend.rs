@@ -439,7 +439,9 @@ impl Backend {
 /// own and through its cell: the account and the admin views refuse the
 /// same way, worded differently.
 #[cfg(not(target_arch = "wasm32"))]
-const PLATFORM_ONLY: [&str; 6] = [
+const PLATFORM_ONLY: [&str; 7] = [
+    // host.rs platform_r_as since 2026-11-27 (localagent.rs ON_ITS_OWN).
+    "runs on its own, without ndexr's servers",
     "no platform checkout on this machine",
     "no build database here",
     "no build logs on this machine",

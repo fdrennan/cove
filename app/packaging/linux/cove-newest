@@ -1,0 +1,30 @@
+#!/bin/bash
+# cove-newest <args>: the newest Cove on this server - the ndexr stack's
+# (`ml cove`) or the copy cove-feed-update keeps from the install feed under
+# /var/lib/cove/feed - run with <args> (`multiuser`, `serve`). Written by
+# `cove setup-server`; its units start this, never `ml cove` directly.
+#
+# Why (operator, 2026-11-27, a new server's first login: "awful landing
+# experience"): the stack's module trails the feed - cove/0.1.30 in the stack
+# while the feed had 0.1.33 - and a server running it showed fixed bugs to
+# every new person. The stack is still where Cove comes from when it is the
+# newest; the feed covers the gap until the stack catches up.
+set +u
+. /opt/ndexr/stack/use.sh >/dev/null 2>&1
+ml cove >/dev/null 2>&1
+# The stack's PAM for sign-in where the machine has none it can load.
+ml Linux-PAM >/dev/null 2>&1 || true
+ver() { "$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
+stack="$(command -v cove 2>/dev/null)"
+feed=/var/lib/cove/feed/current/bin/cove
+pick="$stack"
+if [ -x "$feed" ]; then
+  fv="$(ver "$feed")"
+  sv="$( [ -n "$stack" ] && ver "$stack")"
+  if [ -z "$sv" ] || { [ "$fv" != "$sv" ] && [ "$(printf '%s\n%s\n' "$sv" "$fv" | sort -V | tail -1)" = "$fv" ]; }; then
+    pick="$feed"
+  fi
+fi
+[ -n "$pick" ] || { echo "cove-newest: no Cove here - neither the stack's (ml cove) nor the feed's ($feed)" >&2; exit 1; }
+echo "cove-newest: $pick ($(ver "$pick"))" >&2
+exec "$pick" "$@"

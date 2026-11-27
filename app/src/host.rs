@@ -185,6 +185,16 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::ClaudeStatus => serde_json::to_value(claude_as(&session_owner(), "status", "")?),
         Query::ClaudeConnect { token } => serde_json::to_value(claude_as(&session_owner(), "connect", token)?),
         Query::ClaudeForget => serde_json::to_value(claude_as(&session_owner(), "forget", "")?),
+        Query::OpenAiStatus => serde_json::to_value(localagent::codex::view()),
+        Query::OpenAiConnect { key } => {
+            localagent::codex::connect(key)?;
+            serde_json::to_value(localagent::codex::view())
+        }
+        Query::OpenAiForget => {
+            localagent::codex::forget();
+            serde_json::to_value(localagent::codex::view())
+        }
+        Query::CodexInstall => serde_json::to_value(localagent::codex::install()?),
         Query::Account => serde_json::to_value(account_as(&session_owner(), "")?),
         Query::RevokeKey { key_id } => serde_json::to_value(account_as(&session_owner(), key_id)?),
         Query::SendRequest { domain, what, trying, blocked, files } => serde_json::to_value(send_request(domain, what, trying, *blocked, files)?),
@@ -3436,7 +3446,9 @@ domain <- args[[1]]; model <- args[[2]]; prompt_file <- args[[3]]; owner <- args
 cwd <- if (length(args) >= 5 && nzchar(args[[4]])) args[[4]] else "~/ndexr"
 # How the turn may act: build (Auto), plan or ask - exec.ndexr.io's modes; the
 # wrapper enforces plan and ask read-only (--permission-mode plan).
-mode <- if (length(args) >= 6 && args[[5]] %in% c("build", "plan", "ask")) args[[5]] else "build"
+# Supervised (setup, 2026-11-27) is not a mode the wrapper enforces yet: it
+# runs as plan, never broader.
+mode <- if (length(args) >= 6 && args[[5]] %in% c("build", "plan", "ask")) args[[5]] else if (length(args) >= 6 && identical(args[[5]], "supervised")) "plan" else "build"
 out <- function(x) { cat(jsonlite::toJSON(x, auto_unbox = TRUE, null = "null")); quit(status = 0) }
 options(box.path = Sys.getenv("NDEXR_SRC"))
 box::use(host = r/host, ud = r/users/user_domains, pg = r/connections/postgres)
@@ -3914,7 +3926,10 @@ pub(crate) fn platform_r_with_file(owner: &str, name: &str, script: &str, a: &st
 pub(crate) fn platform_r_as(owner: &str, name: &str, script: &str, args: &[&str], secs: u64) -> Result<Value, String> {
     let root = Path::new(PLATFORM_DOMAINS).ancestors().nth(2).ok_or("no platform checkout")?.to_path_buf();
     if !root.join("src/r/host.r").is_file() {
-        return Err("this needs the platform checked out on this machine (src/r/host.r)".into());
+        // Said in the words a person on a server of their own can act on: the
+        // old "needs the platform checked out (src/r/host.r)" read as a broken
+        // install on a new server's first page (operator, 2026-11-27).
+        return Err(localagent::ON_ITS_OWN.replace("messages, requests and spoken replies go", "this goes"));
     }
     // Its own file each call: two people asking at once must not share one
     // being rewritten under the other's Rscript.
@@ -4470,6 +4485,10 @@ pub(crate) fn agent_events(line: &str, chunk: &mut crate::api::AgentChunk) {
     let (out, cost) = (&mut chunk.events, &mut chunk.cost);
     let ev = |kind: &str, text: String| crate::api::AgentEvent { kind: kind.into(), text };
     let Ok(v) = serde_json::from_str::<Value>(line) else { return };
+    // A turn on OpenAI's Codex (localagent/codex.rs): its own event names.
+    if localagent::codex::events(&v, out) {
+        return;
+    }
     match v["type"].as_str() {
         // claude names its credential on the init line: "none" is the
         // person's own signed-in plan (OAuth), a key name is the API. Measured

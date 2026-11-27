@@ -104,14 +104,36 @@ if [ "$flag_server" = yes ]; then
     as_root "$tmp/ndexr" install cvmfs --yes || fail "the stack was not mounted (above)"
   fi
   [ -r /opt/ndexr/stack/use.sh ] || fail "/opt/ndexr/stack has no use.sh after the mount"
-  cove_path="$(bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove >/dev/null 2>&1 && command -v cove')" ||
-    fail "the stack mounted here has no Cove module yet"
-  step "Cove from the stack: $cove_path"
+  # The newest Cove sets the server up: the stack's, or the feed's while the
+  # stack's module trails it (operator, 2026-11-27: a new server on the
+  # stack's cove/0.1.30, with the feed at 0.1.33, showed every new person
+  # bugs already fixed). The server keeps choosing the newest after this
+  # (cove-newest, cove-feed-update: `cove setup-server`).
+  vnum() { grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1; }
+  stack_v="$(bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove >/dev/null 2>&1 && cove --version' 2>/dev/null | vnum || true)"
+  feed_v="$( (curl -fsSL "$base/$platform/latest/release.json" || wget -qO- "$base/$platform/latest/release.json") 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')" || true
+  cove_bin=cove
+  if [ -n "$feed_v" ] && { [ -z "$stack_v" ] || { [ "$feed_v" != "$stack_v" ] && [ "$(printf '%s\n%s\n' "$stack_v" "$feed_v" | sort -V | tail -1)" = "$feed_v" ]; }; }; then
+    step "Cove $feed_v from the feed (the stack has ${stack_v:-none})"
+    checked "$base/$platform/latest/cove.tar.gz" "$tmp/cove.tar.gz"
+    mkdir -p "$tmp/x" && tar -xzf "$tmp/cove.tar.gz" -C "$tmp/x"
+    set -- "$tmp"/x/cove-*/bin/cove
+    [ -x "$1" ] || fail "the download has no bin/cove"
+    as_root mkdir -p /var/lib/cove/feed
+    as_root rm -rf "/var/lib/cove/feed/$feed_v"
+    as_root cp -a "$(dirname "$(dirname "$1")")" "/var/lib/cove/feed/$feed_v"
+    as_root ln -sfn "$feed_v" /var/lib/cove/feed/current
+    cove_bin="/var/lib/cove/feed/$feed_v/bin/cove"
+  elif [ -n "$stack_v" ]; then
+    step "Cove $stack_v from the stack"
+  else
+    fail "neither the stack nor the feed ($base) has a Cove for $platform"
+  fi
   # The server itself is `cove setup-server` (stack.rs), the one place its
   # units, PAM file and settings are written: the organisation's by default
   # (cove-multiuser - people sign in with their accounts, each gets their own
   # sessions), one person's with --single.
-  stack_cove() { as_root bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove >/dev/null 2>&1 && exec cove "$@"' cove "$@"; }
+  stack_cove() { as_root env COVE_BIN="$cove_bin" bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1; ml cove >/dev/null 2>&1; exec "$COVE_BIN" "$@"' cove "$@"; }
   if [ "$flag_single" = yes ]; then set -- --user "$user"; else set --; fi
   [ -n "$flag_name" ] && set -- "$@" --name "$flag_name"
   stack_cove setup-server --yes "$@" || fail "the server was not set up (above)"
@@ -119,7 +141,7 @@ if [ "$flag_server" = yes ]; then
     stack_cove setup-front --yes ||
       printf '    %sHTTPS was not set up%s - run: sudo bash -c ". /opt/ndexr/stack/use.sh && ml cove && cove setup-front --yes"\n' "$r" "$n"
   fi
-  printf '\n  %s✓ Cove runs from the stack%s  %snothing installed; a stack update is a Cove update%s\n\n' "$g$b" "$n" "$d" "$n"
+  printf '\n  %s✓ Cove runs on this server%s  %sthe newest of the stack'"'"'s and the feed'"'"'s, checked every hour%s\n\n' "$g$b" "$n" "$d" "$n"
   printf '    %sFrom a desktop%s the Cove app: account menu, Connect to a server\n\n' "$b" "$n"
   exit 0
 fi

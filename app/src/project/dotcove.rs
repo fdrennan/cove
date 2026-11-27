@@ -237,7 +237,10 @@ fn refresh_verbs(dir: &Path, files: &dyn Fn(&str) -> Vec<(&'static str, &'static
     // (chunks.tsv, 2026-11-20).
     let je = cove.join("julia").join("env.sh");
     if let Ok(t) = std::fs::read_to_string(&je) {
-        if t.starts_with("# Sourced by run.sh and build.sh: app.env, and Julia from the ndexr stack") && !t.contains("chunks.tsv") {
+        // And one that fetched only what APP_NEEDS named, not what the code
+        // loads (2026-11-27: every Julia starter loaded JSON3 and declared
+        // JSON; on a server of its own the app died at its first `using`).
+        if t.starts_with("# Sourced by run.sh and build.sh: app.env, and Julia from the ndexr stack") && (!t.contains("chunks.tsv") || !t.contains("every package its code loads")) {
             if let Some((_, now)) = files("_julia").into_iter().find(|(p, _)| *p == "env.sh") {
                 let _ = std::fs::write(cove.join("julia").join("env.sh.prev"), &t);
                 changed |= std::fs::write(&je, rewrite(now, "julia")).is_ok();

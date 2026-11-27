@@ -1,0 +1,42 @@
+#!/bin/bash
+# cove-feed-update: keep the install feed's newest Cove under /var/lib/cove/feed
+# when it is newer than what this server runs, then restart the server on it
+# (people's sessions carry on across a restart). Run hourly by
+# cove-feed-update.timer and once by `cove setup-server`; root. Does nothing in
+# airgap mode (/etc/cove/airgap) or when the feed cannot be reached.
+set -eu
+[ -e /etc/cove/airgap ] && { echo "airgap: the feed is not asked"; exit 0; }
+base="${COVE_FEED:-https://repo.ndexr.io/ndexr/cove}"
+case "$(uname -m)" in
+  x86_64|amd64) p=linux-x86_64 ;;
+  aarch64|arm64) p=linux-aarch64 ;;
+  *) echo "no Cove build for $(uname -m)"; exit 0 ;;
+esac
+rel="$(curl -fsS -m 60 "$base/$p/latest/release.json")" || { echo "the feed did not answer; trying again next hour"; exit 0; }
+field() { printf '%s' "$rel" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
+v="$(field version)"; sha="$(field sha256)"; file="$(field file)"
+[ -n "$v" ] && [ -n "$sha" ] && [ -n "$file" ] || { echo "the feed's release.json names no version, file and sha256"; exit 0; }
+root=/var/lib/cove/feed
+running="$(/var/lib/cove/bin/cove-newest --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+if [ -n "$running" ] && [ "$(printf '%s\n%s\n' "$running" "$v" | sort -V | tail -1)" = "$running" ]; then
+  echo "running $running; the feed has $v - nothing to do"
+  exit 0
+fi
+if [ ! -x "$root/$v/bin/cove" ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  curl -fsS -m 600 -o "$tmp/$file" "$base/$p/latest/$file"
+  [ "$(sha256sum "$tmp/$file" | cut -d' ' -f1)" = "$sha" ] || { echo "checksum mismatch for $file $v - nothing changed"; exit 1; }
+  mkdir -p "$tmp/x"
+  tar -xzf "$tmp/$file" -C "$tmp/x"
+  set -- "$tmp"/x/cove-*/bin/cove
+  [ -x "$1" ] || { echo "$file has no cove-*/bin/cove"; exit 1; }
+  mkdir -p "$root"
+  rm -rf "$root/$v.new"
+  mv "$(dirname "$(dirname "$1")")" "$root/$v.new"
+  mv -T "$root/$v.new" "$root/$v"
+fi
+ln -sfn "$v" "$root/current.new" && mv -T "$root/current.new" "$root/current"
+# The two newest kept; older ones go.
+ls -1 "$root" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | head -n -2 | while read -r old; do rm -rf "${root:?}/$old"; done
+echo "Cove $v from the feed (was ${running:-none}); restarting the server on it"
+systemctl try-restart cove-multiuser.service 'cove-stack@*.service' 2>/dev/null || true

@@ -77,11 +77,13 @@ fn host_ok(h: &str) -> bool {
     h.contains('.') && !h.starts_with(['.', '-']) && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
 }
 
+// No After=local-fs.target: a local mount is already Before=local-fs.target by default, so
+// that line made an ordering cycle and systemd dropped the mount at every boot (2026-11-27).
 fn unit_body(g: &Grant, home: &Path) -> String {
     let src = Path::new(PLATFORM_DOMAINS).join(&g.owner).join(&g.host);
     let at = mount_point(home, &g.host);
     format!(
-        "{MARK}\n# share: user={} owner={} host={} role={}\n[Unit]\nDescription={}'s {} shared with {} at {}\nAfter=local-fs.target\n\
+        "{MARK}\n# share: user={} owner={} host={} role={}\n[Unit]\nDescription={}'s {} shared with {} at {}\n\
          ConditionPathIsDirectory={}\n\n[Mount]\nWhat={}\nWhere={}\nType=none\nOptions={}\n\n[Install]\nWantedBy=multi-user.target\n",
         g.user,
         g.owner,

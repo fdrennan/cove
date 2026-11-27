@@ -190,6 +190,9 @@ struct Saved {
     /// First-start setup has been through (or skipped) on this machine / browser.
     #[serde(default)]
     setup_seen: bool,
+    /// First start's choices and where it stopped (setup.rs Prefs).
+    #[serde(default)]
+    setup_prefs: crate::ui::setup::Prefs,
     /// The Agents tab's Site/Exec layout and its divider (ide.rs agents_tab).
     #[serde(default)]
     agents_layout: crate::ui::ide::AgentsLayout,
@@ -280,6 +283,8 @@ pub struct App {
     asked_options: bool,
     /// Use Cove from Claude: the MCP connector's address and grants (connect.rs).
     connect: crate::ui::connect::Connect,
+    /// Connect OpenAI: the GPT models on the person's own account (openai.rs).
+    openai: crate::ui::openai::ConnectOpenAi,
     /// On a phone (compact): the one window showing, picked from the bottom bar.
     compact_cell: usize,
     /// A tab being dragged between windows.
@@ -475,13 +480,19 @@ impl App {
         // follows the server, not the browser that saw an earlier one (operator,
         // 2026-11-22: a fresh server under the same name never asked).
         let first_start = !saved.setup_seen || cfg!(target_arch = "wasm32");
+        // Setup opens at the first start everywhere, a browser's first visit
+        // too: the look, the stack, then Claude and OpenAI (operator,
+        // 2026-11-27: "set up cove, connect claude and connect open ai should
+        // start when cove opens for the first time"). It replaces the welcome
+        // tour there; Help keeps the tour.
+        // The defaults it chose, in effect from the first frame.
+        saved.setup_prefs.apply();
         if !saved.setup_seen {
             if first_visit {
-                saved.setup_seen = true;
                 saved.tour.welcomed = true;
-            } else {
-                setup.start();
             }
+            // Where an interrupted first start stopped.
+            setup.resume(saved.setup_prefs.step);
         }
         let saved_tour = saved.tour.clone();
         let probe = Slot::default();
@@ -559,6 +570,7 @@ impl App {
             pinned: Default::default(),
             asked_options: false,
             connect: Default::default(),
+            openai: Default::default(),
             compact_cell: 0,
             drag: Drag::default(),
             splitting: false,
@@ -1428,6 +1440,10 @@ impl App {
                     self.connect.open = true;
                     ui.close();
                 }
+                if item(ui, "Connect OpenAI…", "") {
+                    self.openai.open = true;
+                    ui.close();
+                }
                 if item(ui, "Help…", "F1") {
                     self.help_open = true;
                     ui.close();
@@ -1485,6 +1501,9 @@ impl App {
                 }
                 if item(ui, "Connect Claude…") {
                     self.setup.start_claude(ctx);
+                }
+                if item(ui, "Connect OpenAI…") {
+                    self.openai.open = true;
                 }
                 // The install instructions for every environment set the
                 // Builds view shows the status of (repo.ndexr.io, 2026-10-28).
@@ -2525,6 +2544,18 @@ impl App {
                                     ui.spinner();
                                 }
                             },
+                            2 => {
+                                let env = crate::ui::setup::Env {
+                                    backend: &self.backend,
+                                    ide: &mut self.ide,
+                                    theme: &mut self.saved.theme,
+                                    settings: &self.settings,
+                                    prefs: &mut self.saved.setup_prefs,
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    account: &self.account,
+                                };
+                                self.setup.settings_page(ui, ctx, env);
+                            }
                             _ => pimped(ui),
                         }
                     });
@@ -3081,9 +3112,11 @@ impl RequestDraft {
 pub const SOURCE_URL: &str = "https://github.com/fdrennan/cove";
 
 /// Global Options' categories, as RStudio's sidebar: (name, what is on it).
-const OPTION_PAGES: [(&str, &str); 3] = [
+const OPTION_PAGES: [(&str, &str); 4] = [
     ("General", "which R, Python and shell modules · the project folder"),
     ("Environment", "the ndexr stack on CernVM-FS · your proxy and cache"),
+    // The same parts as setup's AI providers and Agents steps (setup.rs).
+    ("AI providers", "Claude, OpenAI, the default provider and how far agents act alone"),
     ("About", "what Cove does differently, on purpose"),
 ];
 
@@ -4752,6 +4785,12 @@ impl eframe::App for App {
 
         self.options_dialog(ctx);
         self.connect.show(ctx, &self.backend);
+        let platform = self.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform);
+        let mut line = None;
+        self.openai.show(ctx, &self.backend, platform, &mut line);
+        if let Some(l) = line {
+            self.ide.run_in_terminal(&l);
+        }
         self.about_dialog(ctx);
         self.request_dialog(ctx);
         // Chat saves files into the domain open here, and shares my sites.
@@ -4787,6 +4826,7 @@ impl eframe::App for App {
                 ide: &mut self.ide,
                 theme: &mut self.saved.theme,
                 settings: &self.settings,
+                prefs: &mut self.saved.setup_prefs,
                 #[cfg(not(target_arch = "wasm32"))]
                 account: &self.account,
             };

@@ -94,11 +94,23 @@ pub fn capture(cmd: &str) -> Option<String> {
 
 /// `capture` with an explicit deadline; the whole process group is killed at it.
 pub fn capture_within(cmd: &str, limit: Duration) -> Option<String> {
+    run_within(cmd, &[], limit, false).filter(|(ok, s)| *ok && !s.is_empty()).map(|(_, s)| s)
+}
+
+/// What `cmd` printed, its errors included, whether or not it succeeded,
+/// with `envs` set for it alone (a secret stays off the command line). None:
+/// it could not start, or ran past `limit`.
+pub fn output_within(cmd: &str, envs: &[(&str, &str)], limit: Duration) -> Option<String> {
+    run_within(cmd, envs, limit, true).map(|(_, s)| s)
+}
+
+fn run_within(cmd: &str, envs: &[(&str, &str)], limit: Duration, errors: bool) -> Option<(bool, String)> {
     let mut command = Command::new(login_shell());
     forget_loaded_modules(&mut command);
     command
-        .args(["-lc", &with_path(cmd)])
+        .args(["-lc", &with_path(&if errors { format!("{{ {cmd}; }} 2>&1") } else { cmd.to_owned() })])
         .env("NO_COLOR", "1")
+        .envs(envs.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -127,7 +139,7 @@ pub fn capture_within(cmd: &str, limit: Duration) -> Option<String> {
         }
     };
     let s = String::from_utf8_lossy(&reader.join().ok()?).trim().to_owned();
-    (status.success() && !s.is_empty()).then_some(s)
+    Some((status.success(), s))
 }
 
 #[cfg(test)]

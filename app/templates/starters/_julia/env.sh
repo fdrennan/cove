@@ -75,11 +75,21 @@ julia_set() {
   echo "$cache"
 }
 
-# What this project declares: julia:<Name> in APP_NEEDS, and the [deps] of its
-# own Project.toml when it has one. One name per line.
+# What this project needs: julia:<Name> in APP_NEEDS, the [deps] of its own
+# Project.toml when it has one, and every package its code loads - a `using`
+# or `import` in its .jl files. Declared and loaded drifted apart in every
+# Julia starter (JSON declared, JSON3 loaded), and on a server of its own,
+# which fetches only what is named, the app died at its first `using`
+# (operator, 2026-11-27, Optimizer Race on ndexrtesting.com: "Package JSON3
+# ... is required but does not seem to be installed"). A `using` an agent
+# adds is fetched the same way. One name per line; Base, Core and Main are
+# Julia itself.
 julia_needs() {
   for w in ${APP_NEEDS:-}; do case "$w" in julia:*) echo "${w#julia:}" ;; esac; done
   [ -f Project.toml ] && sed -n '/^\[deps\]/,/^\[/{s/^\([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*=.*/\1/p}' Project.toml
+  find . -maxdepth 3 -name '*.jl' -not -path './.cove/*' -not -path './depot/*' -print0 2>/dev/null |
+    xargs -0 -r sed -nE 's/^[[:space:]]*(using|import)[[:space:]]+([A-Z][A-Za-z0-9_]*([[:space:]]*,[[:space:]]*[A-Z][A-Za-z0-9_]*)*).*/\2/p' |
+    tr ',' '\n' | tr -d ' \t' | grep -vxE 'Base|Core|Main' | grep .
   return 0
 }
 

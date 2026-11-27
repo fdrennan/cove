@@ -691,7 +691,7 @@ RequiresMountsFor=/opt/ndexr/stack
 Type=simple
 User=root
 EnvironmentFile=-/etc/cove/multiuser.env
-ExecStart=/bin/bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove && { ml Linux-PAM >/dev/null 2>&1 || true; } && exec cove multiuser'
+ExecStart=/var/lib/cove/bin/cove-newest multiuser
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=no
@@ -712,13 +712,59 @@ Type=simple
 User=%i
 WorkingDirectory=~
 EnvironmentFile=-/etc/cove/%i.env
-ExecStart=/bin/bash -c 'set +u; . /opt/ndexr/stack/use.sh >/dev/null 2>&1 && ml cove && exec cove serve'
+ExecStart=/var/lib/cove/bin/cove-newest serve
 Restart=on-failure
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 ";
+
+/// The newest Cove on the server, the stack's or the feed's (the units start
+/// it), and the hourly job that keeps the feed's (packaging/linux/).
+const COVE_NEWEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/linux/cove-newest"));
+const COVE_FEED_UPDATE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/linux/cove-feed-update"));
+const FEED_SERVICE: &str = "[Unit]
+Description=Cove from the install feed when it is newer than the stack's (cove setup-server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/var/lib/cove/bin/cove-feed-update
+";
+const FEED_TIMER: &str = "[Unit]
+Description=Look for a newer Cove on the install feed every hour
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
+";
+
+/// The lines every server setup runs first: the launcher, the feed job and
+/// its timer, and one look at the feed, so a new server never starts on a
+/// Cove older than the feed's (operator, 2026-11-27).
+fn newest_lines() -> String {
+    format!(
+        "mkdir -p /var/lib/cove/bin\n\
+         printf '%s' {newest} > /var/lib/cove/bin/cove-newest\n\
+         printf '%s' {update} > /var/lib/cove/bin/cove-feed-update\n\
+         chmod 755 /var/lib/cove/bin/cove-newest /var/lib/cove/bin/cove-feed-update\n\
+         printf '%s' {svc} > /etc/systemd/system/cove-feed-update.service\n\
+         printf '%s' {timer} > /etc/systemd/system/cove-feed-update.timer\n\
+         systemctl daemon-reload\n\
+         systemctl enable --now cove-feed-update.timer >/dev/null 2>&1 || true\n\
+         /var/lib/cove/bin/cove-feed-update || true\n",
+        newest = shell_quote(COVE_NEWEST),
+        update = shell_quote(COVE_FEED_UPDATE),
+        svc = shell_quote(FEED_SERVICE),
+        timer = shell_quote(FEED_TIMER),
+    )
+}
 
 const MULTIUSER_CONF: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/linux/multiuser.conf"));
 const PAM_COVE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/linux/pam.d-cove"));
@@ -735,7 +781,9 @@ const PAM_COVE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/packag
 ///   --user NAME    one person's: cove-stack@NAME (cove serve, a token).
 ///   --name N       the server's address (COVE_NAME), so its front can ask
 ///                  for a certificate before anyone has reached it.
-/// The unit runs `ml cove` at every start, so a stack update is a Cove update.
+/// The unit starts the newest Cove here at every start (cove-newest): the
+/// stack's, or the install feed's while the stack's module trails it, kept by
+/// the hourly cove-feed-update. A stack update or a feed release is a Cove update.
 pub fn setup_server_cli(args: &[String]) -> i32 {
     let v = view();
     if !v.ok {
@@ -782,6 +830,7 @@ pub fn setup_server_cli(args: &[String]) -> i32 {
         Some(u) => format!(
             "set -e\n\
              mkdir -p /etc/cove\n\
+             {newest}\
              printf '%s' {unit} > /etc/systemd/system/cove-stack@.service\n\
              {env}\
              systemctl daemon-reload\n\
@@ -789,6 +838,7 @@ pub fn setup_server_cli(args: &[String]) -> i32 {
              systemctl restart cove-stack@{u}\n\
              sleep 2; systemctl is-active cove-stack@{u} >/dev/null || {{ journalctl -u cove-stack@{u} -n 20 --no-pager; exit 1; }}\n\
              echo 'cove-stack@{u} is running'",
+            newest = newest_lines(),
             unit = shell_quote(SINGLE_UNIT),
             env = if name.is_empty() { String::new() } else { format!("grep -q '^COVE_NAME=' /etc/cove/{u}.env 2>/dev/null || printf '%s' {} >> /etc/cove/{u}.env\n", shell_quote(&name_line)) },
         ),
@@ -797,6 +847,7 @@ pub fn setup_server_cli(args: &[String]) -> i32 {
              mkdir -p /etc/cove\n\
              [ -f /etc/cove/multiuser.conf ] || printf '%s' {conf} > /etc/cove/multiuser.conf\n\
              [ -f /etc/pam.d/cove ] || printf '%s' {pam} > /etc/pam.d/cove\n\
+             {newest}\
              {env}\
              printf '%s' {unit} > /etc/systemd/system/cove-multiuser.service\n\
              systemctl daemon-reload\n\
@@ -806,6 +857,7 @@ pub fn setup_server_cli(args: &[String]) -> i32 {
              echo 'cove-multiuser is running on 127.0.0.1:8787'",
             conf = shell_quote(MULTIUSER_CONF),
             pam = shell_quote(PAM_COVE),
+            newest = newest_lines(),
             unit = shell_quote(MULTIUSER_UNIT),
             env = if name.is_empty() { String::new() } else { format!("grep -q '^COVE_NAME=' /etc/cove/multiuser.env 2>/dev/null || printf '%s' {} >> /etc/cove/multiuser.env\n", shell_quote(&name_line)) },
         ),

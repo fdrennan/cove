@@ -536,7 +536,7 @@ fn handle(ctx: &Ctx, mut req: Request) {
             // own Claude, as the desktop's does signed out (localagent.rs) -
             // it had answered "401 this needs ndexr's platform" (operator,
             // 2026-11-22, Cove on ndexrtesting.com).
-            Ok(q) if q.platform_only() && !has_platform() => match ndx_token(&req).is_none().then(|| crate::host::localagent::answer_here(&q)).flatten() {
+            Ok(q) if q.platform_only() && !has_platform() => match ndx_token(&req).is_none().then(|| crate::host::localagent::answer_own(&q)).flatten() {
                 Some(Ok(v)) => json(200, &v),
                 Some(Err(e)) => text(500, &e),
                 None => from_platform(&req, |base| {

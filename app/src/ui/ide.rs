@@ -2112,6 +2112,11 @@ impl Ide {
         self.consoles[ix(lang)].view.lock().unwrap().banner.clone()
     }
 
+    /// The Agents tab in front, on this site's agent (setup's Build with AI).
+    pub fn show_agents(&mut self) {
+        self.bring(Tab::Agents);
+    }
+
     /// Send `text` to Exec as a turn of its own, with Agents · Exec forward
     /// (Messages' Hand to Exec). Returns the turn's key.
     pub fn exec_ask(&mut self, ctx: &egui::Context, text: &str) -> String {

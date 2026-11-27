@@ -153,6 +153,15 @@ pub enum Query {
     ClaudeStatus,
     ClaudeConnect { token: String },
     ClaudeForget,
+    /// The person's own OpenAI account, for the GPT models on a computer or
+    /// server with no ndexr platform (host/localagent/codex.rs, operator
+    /// 2026-11-27: "open AI is used and users need to be able to do that as
+    /// well"): OpenAI's Codex CLI installed for them, their API key kept for
+    /// them, or Codex's own ChatGPT sign-in. Answered by the person's session.
+    OpenAiStatus,
+    OpenAiConnect { key: String },
+    OpenAiForget,
+    CodexInstall,
     /// The Account tab (2026-10-15, operator: port credentials.ndexr.io,
     /// api.ndexr.io's keys and box/my/recent into Cove for all users): the
     /// person's account, cell, domains, API keys, key events and Claude, from
@@ -2987,3 +2996,20 @@ pub const STACKS: [StackProfile; 3] = [
         site: "https://docs.alliancecan.ca/wiki/Accessing_CVMFS",
     },
 ];
+
+/// Where the person's OpenAI stands for the agent (Query::OpenAiStatus).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct OpenAiView {
+    /// The Codex CLI is installed for this account.
+    #[serde(default)]
+    pub installed: bool,
+    /// It can answer: a key kept here or in the environment, or Codex's own sign-in.
+    #[serde(default)]
+    pub ready: bool,
+    /// How it is signed in: "API key …abcd", "Codex sign-in", "" when not.
+    #[serde(default)]
+    pub how: String,
+    /// What to do next, when not ready.
+    #[serde(default)]
+    pub detail: String,
+}

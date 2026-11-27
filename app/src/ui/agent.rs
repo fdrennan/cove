@@ -22,13 +22,17 @@ use crate::ui::kit::{bar, theme};
 
 /// How a turn may act - exec.ndexr.io's modes (operator, 2026-10-16: "exec and
 /// agents need auto, plan, etc modes"): (mode, label, what it means).
-const MODES: [(&str, &str, &str); 4] = [
+const MODES: [(&str, &str, &str); 5] = [
     ("build", "Auto", "does the work: edits files and runs commands"),
     // Auto for a live talk (operator, 2026-11-09: "presentation mode ... should
     // go under the auto ... we want Sonnet to be able to quickly modify files"):
     // runs as Auto on Sonnet, keeps changes small and replies in one line; and
     // Listen, acting for this box, tells it each piece is from a live talk.
     ("present", "Presenting", "Auto for a live talk: Sonnet, small fast changes, one-line replies - Listen keeps the page in step with the talk"),
+    // Setup's Supervised (operator, 2026-11-27): edits files in the project,
+    // runs no commands - enforced by the agent's own permissions (Claude Code
+    // acceptEdits, Codex workspace-write), never only asked for in words.
+    ("supervised", "Supervised", "edits files in the project - runs no commands"),
     ("plan", "Plan", "thinks it through and writes a plan - changes nothing"),
     ("ask", "Ask", "answers questions - reads, never changes"),
 ];
@@ -417,13 +421,37 @@ fn with_attachments(prompt: &str, paths: &[String]) -> String {
     format!("{prompt}\n\nAttached to this message (uploaded into the domain's supporting_docs/) - read them before you answer; an image is a screenshot of what I mean, so look at it (Read shows images):{list}")
 }
 
+/// The model and mode a new agent session starts on, as setup chose them
+/// (setup.rs Prefs::apply); "" leaves the built-in default.
+static DEFAULTS: std::sync::Mutex<(String, String)> = std::sync::Mutex::new((String::new(), String::new()));
+
+pub fn set_defaults(model: &str, mode: &str) {
+    let mut d = DEFAULTS.lock().unwrap();
+    if model.is_empty() || MODELS.iter().any(|(m, _)| *m == model) {
+        d.0 = model.to_owned();
+    }
+    if mode.is_empty() || MODES.iter().any(|(m, _, _)| *m == mode) {
+        d.1 = mode.to_owned();
+    }
+}
+
+fn default_model() -> String {
+    let d = DEFAULTS.lock().unwrap();
+    if d.0.is_empty() { MODELS[0].0.into() } else { d.0.clone() }
+}
+
+fn default_mode() -> &'static str {
+    let d = DEFAULTS.lock().unwrap();
+    MODES.iter().find(|(m, _, _)| *m == d.1).map_or(MODES[0].0, |(m, _, _)| *m)
+}
+
 impl Default for AgentPane {
     fn default() -> Self {
         AgentPane {
             st: Default::default(),
             input: String::new(),
-            model: MODELS[0].0.into(),
-            mode: MODES[0].0,
+            model: default_model(),
+            mode: default_mode(),
             asked: f64::NEG_INFINITY,
             sent: 0,
             share_console: true,
@@ -1479,10 +1507,15 @@ impl AgentPane {
         // off screen"). On a phone the row keeps who, model and mode; what it
         // is about, Listen's interval, fold and the thread switch go in its ⋯
         // (ui/kit/bar.rs: one row per bar, the rest in ⋯).
+        // Clipped at the sides only: a touch screen's controls are taller than
+        // a fixed row, and a height clip cut the bottom of the Exec | site
+        // toggle off (IMG_8992, 2026-11-27).
         let w = ui.available_width();
-        let h = if narrow { 32.0 } else { 26.0 };
-        ui.allocate_ui_with_layout(egui::vec2(w, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
+        ui.horizontal(|ui| {
+            ui.set_max_width(w);
+            let mut clip = ui.clip_rect();
+            clip.max.x = clip.max.x.min(ui.max_rect().left() + w);
+            ui.set_clip_rect(clip);
             ui.add_space(8.0);
             ui.spacing_mut().item_spacing.x = 6.0;
             if self.exec_folded {
@@ -2217,6 +2250,23 @@ fn ask_prompt(domain: &str, file: Option<&str>, folder: &str, reach: u8, what: &
 
 #[cfg(test)]
 mod tests {
+    /// What setup chose is what a new session starts on; anything not in the
+    /// menus is ignored, never passed on as a model or a mode.
+    #[test]
+    fn setup_defaults_reach_a_new_session() {
+        use super::*;
+        set_defaults("gpt-5.5", "supervised");
+        let p = AgentPane::default();
+        assert_eq!((p.model.as_str(), p.mode), ("gpt-5.5", "supervised"));
+        set_defaults("rm -rf /", "root");
+        let p = AgentPane::default();
+        assert_eq!((p.model.as_str(), p.mode), ("gpt-5.5", "supervised"), "unknown values leave the defaults as they were");
+        let prefs = crate::ui::setup::Prefs { autonomy: "manual".into(), provider: "claude".into(), ..Default::default() };
+        prefs.apply();
+        let p = AgentPane::default();
+        assert_eq!((p.model.as_str(), p.mode), (MODELS[0].0, "plan"), "Manual proposes and changes nothing");
+        set_defaults("", "");
+    }
     use super::*;
 
     #[cfg(not(target_arch = "wasm32"))]

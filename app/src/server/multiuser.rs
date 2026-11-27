@@ -1217,6 +1217,13 @@ fn on_behalf(ctx: &Ctx, owner: &str, id: &str, body: &[u8]) -> Option<Resp> {
 /// (mcp.rs, through `McpHost`) both come through here.
 fn answer_on_behalf(ctx: &Ctx, owner: &str, id: &str, q: &crate::api::Query) -> Option<Result<serde_json::Value, String>> {
     use crate::api::Query;
+    // A server of someone's own, with no ndexr platform here: the agent and
+    // Claude are the person's session's, on this server's own Claude
+    // (localagent.rs answer_own). Asked of the platform's R, every one was
+    // "no platform checkout on this machine" (ndexrtesting.com, 2026-11-26).
+    if q.platform_only() && !crate::server::has_platform() {
+        return None;
+    }
     let q = q.clone();
     let account = ctx.sessions.lock().unwrap().get(id).map(|s| s.account.clone())?;
     // A page that loads asks something first: by the time the Account tab is

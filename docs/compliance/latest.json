@@ -1,6 +1,6 @@
 {
-  "at": "2026-11-26T06:03:04Z",
-  "cove_commit": "b704a3f1",
+  "at": "2026-11-27T06:11:51Z",
+  "cove_commit": "05c57105",
   "counts": {
     "pass": 13,
     "fail": 0,
@@ -25,10 +25,10 @@
       "duty": "Every crate linked into Cove is usable under a permissive licence (nothing copyleft reaches Cove's code)",
       "gate": true,
       "status": "pass",
-      "evidence": "469 of 469 crates resolve to an allowed licence",
+      "evidence": "476 of 476 crates resolve to an allowed licence",
       "check": "cove.dependency-licences",
       "product": "cove",
-      "summary": "469 of 469 crates resolve to an allowed licence",
+      "summary": "476 of 476 crates resolve to an allowed licence",
       "details": {}
     },
     {
@@ -37,10 +37,10 @@
       "duty": "THIRD-PARTY-NOTICES.txt matches the Cargo.lock being built",
       "gate": true,
       "status": "pass",
-      "evidence": "dependencies sha256 9e2f1007cc847a95; file current; 410 crates from their own notice files, 59 from canonical texts",
+      "evidence": "dependencies sha256 9e2f1007cc847a95; file current; 417 crates from their own notice files, 59 from canonical texts",
       "check": "cove.notices-current",
       "product": "cove",
-      "summary": "dependencies sha256 9e2f1007cc847a95; file current; 410 crates from their own notice files, 59 from canonical texts",
+      "summary": "dependencies sha256 9e2f1007cc847a95; file current; 417 crates from their own notice files, 59 from canonical texts",
       "details": {}
     },
     {
@@ -61,12 +61,12 @@
       "duty": "No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only)",
       "gate": true,
       "status": "pass",
-      "evidence": "73727 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "evidence": "75885 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "check": "cove.not-derivative",
       "product": "cove",
-      "summary": "73727 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "summary": "75885 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "details": {
-        "cove_lines": 73727,
+        "cove_lines": 75885,
         "reference_lines": 408860,
         "allow_listed": 26,
         "matches": []
@@ -78,10 +78,10 @@
       "duty": "No Posit mark (RStudio, Posit, Positron, Shiny) in any served ndexr hostname",
       "gate": true,
       "status": "pass",
-      "evidence": "406 vhosts, none names a Posit mark",
+      "evidence": "396 vhosts, none names a Posit mark",
       "check": "platform.no-marks-in-hostnames",
       "product": "platform",
-      "summary": "406 vhosts, none names a Posit mark",
+      "summary": "396 vhosts, none names a Posit mark",
       "details": {}
     },
     {

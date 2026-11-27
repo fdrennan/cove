@@ -1,0 +1,40 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0d10;
+  --panel: #12151a;
+  --line: #232831;
+  --text: #e6e9ee;
+  --dim: #9aa3b2;
+  --accent: #5ec4c0;
+  --warn: #e8a75d;
+  font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 20px 48px; }
+.top h1 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
+.lead { margin: 6px 0 24px; color: var(--dim); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.card header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.card h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.pill { font-size: 12px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); color: var(--dim); }
+.pill.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.big { font-size: 44px; font-weight: 600; margin: 4px 0 8px; font-variant-numeric: tabular-nums; }
+.trace { width: 100%; height: 140px; display: block; margin-bottom: 14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.trace path { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.grow { flex: 1; min-width: 120px; }
+button, input { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; }
+input { background: var(--bg); width: 110px; }
+input.grow { width: auto; }
+button { cursor: pointer; }
+button:hover { border-color: var(--dim); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+button:disabled { opacity: 0.45; cursor: default; }
+table { width: 100%; border-collapse: collapse; margin-top: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; font-size: 13px; }
+.num { text-align: right; }
+.quiet { color: var(--dim); margin: 14px 0 0; }
+footer { margin-top: 20px; color: var(--dim); font-size: 13px; }

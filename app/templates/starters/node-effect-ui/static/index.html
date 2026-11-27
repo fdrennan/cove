@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>__HOST__</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="static/style.css">
+<!-- The packages' own names, so src/ imports them as Effect UI's docs do
+     (import { Html } from "@effect/ui/html"). Each maps to its file in
+     static/vendor/effect/ (README.md there: version, licence, sha256). -->
+<script type="importmap">
+{
+  "imports": {
+    "effect": "./static/vendor/effect/effect.js",
+    "effect/http": "./static/vendor/effect/effect-http.js",
+    "effect/reactivity": "./static/vendor/effect/effect-reactivity.js",
+    "@effect/ui": "./static/vendor/effect/effect-ui.js",
+    "@effect/ui/html": "./static/vendor/effect/effect-ui-html.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="static/js/main.js"></script>
+<script src="static/live.js"></script>
+</body>
+</html>

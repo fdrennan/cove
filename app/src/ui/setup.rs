@@ -130,33 +130,64 @@ pub fn follow_theme(pref: ThemePref, ctx: &egui::Context) {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Step {
-    Look,
-    Fit,
+    // The five of first start (operator, 2026-11-27: "a clean, guided setup
+    // ... like setting up a new operating system rather than filling out an
+    // administrative form").
+    Welcome,
+    Providers,
+    Personalize,
+    Autonomy,
+    Start,
+    // Detours: the stack when it is missing (from Start, or on its own), and
+    // Connect Claude on its own (the chip, Help, an agent's refusal).
     Stack,
-    Account,
     Claude,
-    Ready,
 }
 
 impl Step {
     fn all() -> &'static [Step] {
-        // No Claude step at first start: the free commands come first, and
-        // the step opens on its own when they run out.
-        if cfg!(target_arch = "wasm32") {
-            &[Step::Look, Step::Fit, Step::Stack, Step::Ready]
-        } else {
-            &[Step::Look, Step::Fit, Step::Stack, Step::Account, Step::Ready]
-        }
+        &[Step::Welcome, Step::Providers, Step::Personalize, Step::Autonomy, Step::Start]
     }
     fn name(self) -> &'static str {
         match self {
-            Step::Look => "Look",
-            Step::Fit => "How it fits",
+            Step::Welcome => "Welcome",
+            Step::Providers => "AI providers",
+            Step::Personalize => "Personalize",
+            Step::Autonomy => "Agents",
+            Step::Start => "Start",
             Step::Stack => "Stack",
-            Step::Account => "Account",
             Step::Claude => "Claude",
-            Step::Ready => "Ready",
         }
+    }
+}
+
+/// What first start chose, kept in the app's saved state (app.rs), so setup
+/// resumes where it stopped and Settings shows the same choices.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Prefs {
+    /// The step to resume at (an index into Step::all()).
+    pub step: usize,
+    /// "personal" or "team".
+    pub workspace: String,
+    /// The agent's default provider: "claude" or "openai".
+    pub provider: String,
+    /// How much the agent may do on its own: "manual", "supervised" or "autonomous".
+    pub autonomy: String,
+}
+
+impl Prefs {
+    /// Put the chosen defaults in effect for every agent pane made from now
+    /// on (agent.rs set_defaults).
+    pub fn apply(&self) {
+        let model = if self.provider == "openai" { "gpt-5.5" } else { "" };
+        let mode = match self.autonomy.as_str() {
+            "manual" => "plan",
+            "supervised" => "supervised",
+            "autonomous" => "build",
+            _ => "",
+        };
+        crate::ui::agent::set_defaults(model, mode);
     }
 }
 
@@ -234,6 +265,15 @@ struct Helper {
 }
 
 pub struct Setup {
+    /// Opened at one step on its own (Connect Claude from the chip, Help or
+    /// an agent's refusal): that step is the whole of it, and Continue closes.
+    alone: bool,
+    /// The provider panel open on the AI providers step (1 Claude, 2 OpenAI).
+    provider_open: u8,
+    /// Build with AI chosen: setup closes onto the Agents tab.
+    close_to_agent: bool,
+    /// The OpenAI step: the Connect OpenAI window's content (openai.rs).
+    openai: crate::ui::openai::ConnectOpenAi,
     pub open: bool,
     step: Step,
     /// Where the person stands (None: still asking). Err: could not be asked.
@@ -248,6 +288,8 @@ pub struct Setup {
     note: Slot<Result<String, String>>,
     asked_at: f64,
     paste: String,
+    /// Link your Claude organization (claude_link.rs), on ndexr's pages.
+    link: crate::ui::claude_link::ClaudeLink,
     /// They ticked "send it to my ndexr account" for a key found here.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     consent: bool,
@@ -275,8 +317,13 @@ impl Default for Setup {
     fn default() -> Self {
         session_start();
         Setup {
+            alone: false,
+            provider_open: 0,
+            close_to_agent: false,
+            openai: Default::default(),
             open: false,
-            step: Step::Look,
+            step: Step::Welcome,
+            link: Default::default(),
             status: Default::default(),
             busy: Default::default(),
             changing: Default::default(),
@@ -307,6 +354,8 @@ pub struct Env<'a> {
     /// The app's own copy of the machine's settings and stack: what the Stack
     /// step reads, and where its saves land, so Global Options sees them.
     pub settings: &'a Slot<SettingsView>,
+    /// First start's choices, saved with the app (resume, defaults).
+    pub prefs: &'a mut Prefs,
     #[cfg(not(target_arch = "wasm32"))]
     pub account: &'a crate::host::account::Shared,
 }
@@ -315,7 +364,8 @@ impl Setup {
     /// From the start (first launch, Help › Set up Cove).
     pub fn start(&mut self) {
         self.open = true;
-        self.step = Step::Look;
+        self.alone = false;
+        self.step = Step::Welcome;
         self.helper = Helper::default();
         self.stack_asked = f64::NEG_INFINITY;
         self.job_asked = f64::NEG_INFINITY;
@@ -325,7 +375,14 @@ impl Setup {
     /// no stack (app.rs), where the rest of first start is skipped.
     pub fn start_stack(&mut self) {
         self.start();
+        self.alone = true;
         self.step = Step::Stack;
+    }
+
+    /// Where an interrupted first start stopped (Prefs.step), or its first step.
+    pub fn resume(&mut self, at: usize) {
+        self.start();
+        self.step = Step::all().get(at).copied().unwrap_or(Step::Welcome);
     }
 
     /// Straight to the Stack step with a stack job that ran elsewhere (the
@@ -341,6 +398,7 @@ impl Setup {
     /// Straight to the Claude step (the toolbar chip, an agent's refusal).
     pub fn start_claude(&mut self, ctx: &egui::Context) {
         self.open = true;
+        self.alone = true;
         self.step = Step::Claude;
         self.helper = Helper::default();
         self.asked_at = f64::NEG_INFINITY;
@@ -382,6 +440,7 @@ impl Setup {
             let r = r.map_err(|e| e.trim_start_matches(|c: char| c.is_ascii_digit()).trim_start().to_owned());
             match (&r, op) {
                 (Ok(v), "connect") => *note.lock().unwrap() = Some(Ok(format!("Connected - {}", v.label))),
+                (Ok(v), "forget") if v.cred_kind.as_deref() == Some("local") => *note.lock().unwrap() = Some(Ok("Removed from this server.".into())),
                 (Ok(_), "forget") => *note.lock().unwrap() = Some(Ok("Removed. Your agent runs on ndexr's Claude until you connect another.".into())),
                 (Err(e), "connect" | "forget") => *note.lock().unwrap() = Some(Err(e.clone())),
                 _ => {}
@@ -457,6 +516,11 @@ impl Setup {
             self.consent_for = None;
         }
         let mut env = env;
+        if !self.alone {
+            if let Some(i) = Step::all().iter().position(|s| *s == self.step) {
+                env.prefs.step = i;
+            }
+        }
         egui::Modal::new("cove-setup".into()).frame(frame).backdrop_color(Color32::from_black_alpha(if theme::is_light() { 70 } else { 150 })).show(ctx, |ui| {
             ui.set_width(w - 56.0);
             ui.spacing_mut().item_spacing.y = 8.0;
@@ -467,31 +531,37 @@ impl Setup {
             // and Continue was below it (operator, 2026-10-18).
             let room = (ctx.content_rect().height() - 190.0).max(120.0);
             egui::ScrollArea::vertical().id_salt("setup-step").max_height(room).auto_shrink([false, true]).show(ui, |ui| match self.step {
-                Step::Look => self.look(ui, ctx, env.theme),
-                Step::Fit => fit(ui),
+                Step::Welcome => self.welcome(ui, ctx, &mut env),
+                Step::Providers => self.providers(ui, ctx, &mut env),
+                Step::Personalize => self.personalize(ui, ctx, &mut env),
+                Step::Autonomy => self.autonomy(ui, &mut env),
+                Step::Start => {
+                    if self.start_step(ui, &mut env) {
+                        build_now = true;
+                    }
+                }
                 // The mount ask, when it is open, is this step's content (one dialog).
                 Step::Stack if asking && self.consent_for.is_some() => {
                     let s = self.consent_for.clone().unwrap_or_default();
                     mount = cvmfs_consent_inline(ui, ctx, "setup", &s);
                 }
                 Step::Stack => self.stack(ui, ctx, &mut env),
-                Step::Account => self.account(ui, ctx, &mut env),
                 Step::Claude => self.claude(ui, ctx, &mut env),
-                Step::Ready => {
-                    if self.ready(ui, &mut env) {
-                        build_now = true;
-                    }
-                }
             });
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(4.0);
-            close = self.nav(ui);
+            let platform = env.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform);
+            close = self.nav(ui, platform);
         });
         if build_now {
             // The New project dialog, then the starters: what the welcome
             // tour opens too.
             env.ide.start_new_project();
+            close = Some(None);
+        }
+        if std::mem::take(&mut self.close_to_agent) {
+            env.ide.show_agents();
             close = Some(None);
         }
         if mount {
@@ -508,24 +578,26 @@ impl Setup {
         }
     }
 
-    /// The steps as a row of dots and names, the current one lit.
+    /// "Setup · 2 of 5" and the five as dots and names, the current one lit.
+    /// A detour (the stack, Claude or OpenAI on their own) shows only its name.
     fn progress(&self, ui: &mut egui::Ui) {
-        // The Claude step stands alone: it opens when the free commands run
-        // out (or from the chip), not as a step of first start.
-        let steps: &[Step] = if self.step == Step::Claude { &[Step::Claude] } else { Step::all() };
-        let at = steps.iter().position(|s| *s == self.step).unwrap_or(0);
-        // Narrow (a phone, or zoomed in): every name ran off the right; the
-        // current one only, the others a numbered dot.
-        let names = ui.available_width() >= 440.0;
+        let steps = Step::all();
+        let Some(at) = steps.iter().position(|s| *s == self.step).filter(|_| !self.alone) else {
+            ui.label(RichText::new(self.step.name()).size(12.0).color(theme::text()));
+            return;
+        };
+        ui.label(RichText::new(format!("Setup · {} of {}", at + 1, steps.len())).size(12.0).color(theme::text()));
+        // Narrow (a phone, or zoomed in): the current name only.
+        let names = ui.available_width() >= 520.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             for (i, s) in steps.iter().enumerate() {
                 let (c, txt) = if i < at {
-                    (theme::ok(), theme::muted())
+                    (theme::ok(), theme::text())
                 } else if i == at {
                     (theme::primary(), theme::text_strong())
                 } else {
-                    (theme::hush(), theme::hush())
+                    (theme::hush(), theme::muted())
                 };
                 let (r, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
                 if i < at {
@@ -539,43 +611,62 @@ impl Setup {
                     ui.label(RichText::new(s.name()).size(12.0).color(txt));
                 }
                 if i + 1 < steps.len() {
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(if names { 22.0 } else { 10.0 }, 18.0), Sense::hover());
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(if names { 18.0 } else { 10.0 }, 18.0), Sense::hover());
                     ui.painter().hline(r.x_range(), r.center().y, Stroke::new(1.0, theme::pane_brd()));
                 }
             }
         });
     }
 
-    /// Back / Skip / Continue. Some(toast) closes.
-    fn nav(&mut self, ui: &mut egui::Ui) -> Option<Option<String>> {
-        // The Claude step stands alone: it opens when the free commands run
-        // out (or from the chip), not as a step of first start.
-        let steps: &[Step] = if self.step == Step::Claude { &[Step::Claude] } else { Step::all() };
-        let at = steps.iter().position(|s| *s == self.step).unwrap_or(0);
+    /// Back / Skip setup / the step's own Continue. Some(toast) closes.
+    fn nav(&mut self, ui: &mut egui::Ui, platform: bool) -> Option<Option<String>> {
+        let steps = Step::all();
+        let at = steps.iter().position(|s| *s == self.step);
         let mut out = None;
         ui.horizontal(|ui| {
-            if at > 0 && ui.button("Back").clicked() {
-                self.step = steps[at - 1];
+            match at {
+                Some(i) if i > 0 && !self.alone => {
+                    if ui.button("Back").clicked() {
+                        self.step = steps[i - 1];
+                    }
+                }
+                // A detour from a step goes back to it.
+                None if !self.alone => {
+                    if ui.button("Back").clicked() {
+                        self.step = if self.step == Step::Stack { Step::Start } else { Step::Providers };
+                    }
+                }
+                _ => {}
             }
-            if !matches!(self.step, Step::Ready | Step::Claude) && ui.add(egui::Button::new(RichText::new("Skip setup").color(theme::muted())).frame(false)).on_hover_text("Help › Set up Cove brings this back").clicked() {
+            if !self.alone && self.step != Step::Start && ui.add(egui::Button::new(RichText::new("Skip setup").color(theme::text())).frame(false)).on_hover_text("Help › Set up Cove brings it back").clicked() {
                 out = Some(Some("Setup skipped - Help › Set up Cove brings it back".to_owned()));
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let none_connected = !self.claude_ready() && !self.openai.ready(platform);
                 let label = match self.step {
-                    Step::Ready => "Start using Cove",
-                    Step::Claude if !self.status().is_some_and(|s| s.is_ok_and(|v| v.own())) => "Continue without",
+                    Step::Welcome => "Get started",
+                    Step::Providers if none_connected => "Continue without AI",
+                    Step::Start => "Start using Cove",
+                    Step::Claude if !self.claude_ready() => "Continue without",
+                    _ if self.alone => "Done",
                     _ => "Continue",
                 };
-                if ui.add(theme::primary_button(label).min_size(egui::vec2(120.0, 30.0))).clicked() {
-                    if matches!(self.step, Step::Ready | Step::Claude) {
-                        out = Some(None);
-                    } else {
-                        self.step = steps[at + 1];
+                if ui.add(theme::primary_button(label).min_size(egui::vec2(140.0, 32.0))).clicked() {
+                    match at {
+                        _ if self.alone => out = Some(None),
+                        Some(i) if i + 1 < steps.len() => self.step = steps[i + 1],
+                        Some(_) => out = Some(None),
+                        None => self.step = if self.step == Step::Stack { Step::Start } else { Step::Providers },
                     }
                 }
             });
         });
         out
+    }
+
+    /// Their Claude can answer: their own, ndexr's plan, or the operator's.
+    fn claude_ready(&self) -> bool {
+        self.status().is_some_and(|s| s.is_ok_and(|v| v.own() || matches!(v.kind.as_str(), "plan" | "operator")))
     }
 
     fn title(ui: &mut egui::Ui, title: &str, lead: &str) {
@@ -584,25 +675,232 @@ impl Setup {
         ui.add_space(6.0);
     }
 
-    // ── Look ────────────────────────────────────────────────────────────────
-    fn look(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, pref: &mut ThemePref) {
-        Self::title(ui, "Welcome to Cove", "Build and manage scientific applications - kernel to user - with an agent beside you. A minute here and it is ready for you.");
-        ui.label(RichText::new("CHOOSE A LOOK").size(10.5).color(theme::hush()));
-        // Three across where the names fit beside "dark", else two.
-        let n = if ui.available_width() >= 520.0 { 3.0 } else { 2.0 };
+    // ── 1 · Welcome ─────────────────────────────────────────────────────────
+    fn welcome(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
+        ui.label(RichText::new("cove").font(theme::display(15.0)).color(theme::primary()));
+        Self::title(ui, "Your workspace starts here.", "Connect your AI providers, set up your environment and start building.");
+        let w = ui.available_width();
         let gap = 12.0;
-        let card_w = ((ui.available_width() - gap * (n - 1.0)) / n).floor();
+        let card_w = if w >= 520.0 { ((w - gap) / 2.0).floor() } else { w };
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
-            for p in ThemePref::ALL {
-                if theme_card(ui, card_w, p, *pref == p, ctx) {
-                    *pref = p;
+            for (key, head, what) in [
+                ("personal", "Personal workspace", "Build, experiment and develop your own applications."),
+                ("team", "Team workspace", "Collaborate across projects: share projects and talk in Messages."),
+            ] {
+                let picked = env.prefs.workspace == key || (env.prefs.workspace.is_empty() && key == "personal");
+                if pick_card(ui, card_w, picked, head, what) {
+                    env.prefs.workspace = key.to_owned();
+                }
+            }
+        });
+        ui.add_space(2.0);
+        ui.label(RichText::new("About 2 to 5 minutes. Every step can be skipped and changed later in Settings.").size(12.5).color(theme::text()));
+        // The desktop app signs in to ndexr here, if the person wants it: it
+        // reaches their cell and keeps their Claude with their account.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            ui.add_space(6.0);
+            egui::CollapsingHeader::new(RichText::new("Sign in to ndexr (optional)").size(13.0).color(theme::text_strong())).id_salt("setup-signin").show(ui, |ui| self.account(ui, ctx, env));
+        }
+        let _ = ctx;
+    }
+
+    // ── 2 · AI providers ────────────────────────────────────────────────────
+    /// One row per provider, the same shape for each: what it is, where it
+    /// stands and who bills it, and Connect / Manage opening its own panel.
+    fn providers(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
+        Self::title(ui, "AI providers", "Connect one or more, or continue without AI. Each says who bills you for it.");
+        let platform = env.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform);
+        self.refresh(env.backend, ctx, 30.0);
+        let claude = match self.status() {
+            None => ("Checking…".to_owned(), theme::hush()),
+            Some(Ok(v)) if v.own() => (format!("Connected · {}", v.label), theme::ok()),
+            Some(Ok(v)) if matches!(v.kind.as_str(), "plan" | "operator") => (format!("Ready · {}", v.title), theme::ok()),
+            Some(Ok(v)) if v.cred_kind.as_deref() == Some("local") => (v.title.clone(), theme::warn()),
+            Some(Ok(v)) => (trial_words(&v).1, theme::primary()),
+            Some(Err(_)) => ("Not connected".to_owned(), theme::warn()),
+        };
+        let openai = if self.openai.ready(platform) {
+            (if platform { "Ready · ndexr's OpenAI account".to_owned() } else { "Connected · billed by OpenAI to your account".to_owned() }, theme::ok())
+        } else {
+            ("Not connected".to_owned(), theme::hush())
+        };
+        let rows: [(u8, &str, &str, (String, Color32), bool); 4] = [
+            (1, "Claude", "Development, reasoning and agents - Cove's agent is Claude Code", claude, true),
+            (2, "OpenAI", "Development, reasoning and multimodal models, through OpenAI's Codex", openai, true),
+            (3, "Gemini", "Google's models", ("Not in Cove yet".to_owned(), theme::hush()), false),
+            (4, "Custom provider", "Compatible endpoints and self-hosted models", ("Not in Cove yet".to_owned(), theme::hush()), false),
+        ];
+        for (id, name, what, (state, c), can) in rows {
+            let open = self.provider_open == id;
+            let toggle = provider_row(ui, name, what, &state, c, can, open);
+            if toggle {
+                self.provider_open = if open { 0 } else { id };
+            }
+            if open {
+                egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 4, top: 2, bottom: 8 }).show(ui, |ui| match id {
+                    1 => self.claude_body(ui, ctx, env),
+                    _ => self.openai_body(ui, ctx, env),
+                });
+            }
+        }
+    }
+
+    /// The OpenAI panel, as Help › Connect OpenAI shows it (openai.rs).
+    fn openai_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
+        let platform = env.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform);
+        let mut line = None;
+        self.openai.body(ui, ctx, env.backend, platform, &mut line);
+        if let Some(l) = line {
+            env.ide.run_in_terminal(&l);
+        }
+    }
+
+    /// Settings › AI providers: the providers, the default provider and the
+    /// agents' autonomy, drawn by the same code as setup's steps, so the two
+    /// never disagree (operator, 2026-11-27: "keep onboarding and permanent
+    /// settings synchronized").
+    pub fn settings_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: Env<'_>) {
+        let mut env = env;
+        self.providers(ui, ctx, &mut env);
+        ui.add_space(10.0);
+        section(ui, "Default AI provider");
+        self.default_provider(ui, &mut env);
+        ui.add_space(10.0);
+        self.autonomy(ui, &mut env);
+    }
+
+    fn default_provider(&mut self, ui: &mut egui::Ui, env: &mut Env<'_>) {
+        ui.label(RichText::new("What a new agent session starts on. The model picker beside the message box changes it any time.").size(12.5).color(theme::text()));
+        ui.horizontal(|ui| {
+            for (key, word) in [("claude", "Claude"), ("openai", "OpenAI")] {
+                let on = env.prefs.provider == key || (env.prefs.provider.is_empty() && key == "claude");
+                if ui.selectable_label(on, RichText::new(word).size(13.5)).clicked() {
+                    env.prefs.provider = key.to_owned();
+                    env.prefs.apply();
+                }
+            }
+        });
+    }
+
+    // ── 3 · Personalize ─────────────────────────────────────────────────────
+    fn personalize(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
+        Self::title(ui, "Workspace preferences", "Sensible defaults are already set; change what you like.");
+        section(ui, "Appearance");
+        // Light, Dark or the system's, as a new machine asks; every other look
+        // a fold away.
+        let gap = 12.0;
+        let card_w = ((ui.available_width() - gap * 2.0) / 3.0).floor();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
+            for p in [ThemePref::Light, ThemePref::Dark, ThemePref::System] {
+                if theme_card(ui, card_w, p, *env.theme == p, ctx) {
+                    *env.theme = p;
                     follow_theme(p, ctx);
                 }
             }
         });
+        egui::CollapsingHeader::new(RichText::new("More looks").size(13.0).color(theme::text_strong())).id_salt("setup-looks").show(ui, |ui| {
+            let n = if ui.available_width() >= 520.0 { 3.0 } else { 2.0 };
+            let card_w = ((ui.available_width() - gap * (n - 1.0)) / n).floor();
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
+                for p in ThemePref::ALL.into_iter().filter(|p| !matches!(p, ThemePref::Light | ThemePref::Dark | ThemePref::System)) {
+                    if theme_card(ui, card_w, p, *env.theme == p, ctx) {
+                        *env.theme = p;
+                        follow_theme(p, ctx);
+                    }
+                }
+            });
+        });
+        ui.add_space(8.0);
+        section(ui, "Default AI provider");
+        self.default_provider(ui, env);
+    }
+
+    // ── 4 · Agents ──────────────────────────────────────────────────────────
+    /// How much the agent may do unasked: the default mode of every new
+    /// session. Each is enforced by the agent's own permissions, never only
+    /// asked for in words.
+    fn autonomy(&mut self, ui: &mut egui::Ui, env: &mut Env<'_>) {
+        Self::title(ui, "How should your agents work?", "The default for every new session; the mode menu beside the message box changes it for one.");
+        let platform = env.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform);
+        let w = ui.available_width();
+        for (key, head, what) in [
+            ("manual", "Manual", "The agent reads your project and proposes changes as a plan. It changes nothing; you say go."),
+            ("supervised", "Supervised", "The agent edits files in the project. It runs no commands and touches nothing outside the project."),
+            ("autonomous", "Autonomous", "The agent edits, runs commands, tests and installs packages, as you, in your account."),
+        ] {
+            let picked = env.prefs.autonomy == key || (env.prefs.autonomy.is_empty() && key == "autonomous");
+            if pick_card(ui, w, picked, head, what) {
+                env.prefs.autonomy = key.to_owned();
+                env.prefs.apply();
+            }
+            ui.add_space(4.0);
+        }
+        if platform && env.prefs.autonomy == "supervised" {
+            ui.label(RichText::new("On ndexr's servers Supervised runs as Manual for now: those servers' agent knows Manual and Autonomous only.").size(12.5).color(theme::warn()));
+        }
+    }
+
+    // ── 5 · Start ───────────────────────────────────────────────────────────
+    /// What Cove is using, then where to begin. True: New project chosen.
+    fn start_step(&mut self, ui: &mut egui::Ui, env: &mut Env<'_>) -> bool {
+        Self::title(ui, "Your workspace is ready", "Here is what Cove is using; all of it can be changed in Settings.");
+        let platform = env.settings.lock().unwrap().as_ref().is_some_and(|v| v.platform);
+        let stack_ok = env.settings.lock().unwrap().as_ref().is_some_and(|v| v.stack.ok);
+        let claude = match self.status() {
+            Some(Ok(v)) if v.own() => (theme::ok(), v.label.clone()),
+            Some(Ok(v)) if matches!(v.kind.as_str(), "plan" | "operator") => (theme::ok(), v.title.clone()),
+            Some(Ok(v)) if v.cred_kind.as_deref() == Some("local") => (theme::warn(), v.title.clone()),
+            Some(Ok(v)) => {
+                let (c, head, _) = trial_words(&v);
+                (c, head)
+            }
+            _ => (theme::warn(), "not connected".to_owned()),
+        };
+        summary_row(ui, claude.0, "Claude", &claude.1);
+        let oa = self.openai.ready(platform);
+        summary_row(ui, if oa { theme::ok() } else { theme::hush() }, "OpenAI", if oa { "connected" } else { "not connected" });
+        let mode = match env.prefs.autonomy.as_str() {
+            "manual" => "Manual",
+            "supervised" => "Supervised",
+            _ => "Autonomous",
+        };
+        summary_row(ui, theme::ok(), "Agents", mode);
+        summary_row(ui, theme::ok(), "Look", env.theme.label());
+        let stack = match env.settings.lock().unwrap().as_ref() {
+            Some(v) if v.stack.ok => (theme::ok(), v.stack.root.clone()),
+            Some(v) if !v.stack.unsupported.is_empty() => (theme::alt(), "Linux only - this computer's own R, Python and shell".to_owned()),
+            Some(v) if v.stack.building || self.job.lock().unwrap().running => (theme::primary(), "on its way".to_owned()),
+            _ => (theme::warn(), "not set up yet".to_owned()),
+        };
+        summary_row(ui, stack.0, "Software", &stack.1);
+        ui.add_space(6.0);
+        // The languages a project can start in, from the stack this machine has.
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Environments").size(12.5).color(theme::text()));
+            for lang in ["R", "Python", "Julia", "Rust", "React"] {
+                let c = if stack_ok { theme::ok() } else { theme::hush() };
+                theme::state_mark(ui, if stack_ok { theme::State::Good } else { theme::State::Idle }, lang);
+                let _ = c;
+            }
+        });
+        ui.add_space(8.0);
+        let w = ui.available_width();
+        let mut build = false;
+        if !stack_ok && next_card(ui, w, true, "Set up the software", "R, Python, Julia and Rust with their packages come from the ndexr stack. Set it up here, once.") {
+            self.step = Step::Stack;
+        }
+        if next_card(ui, w, stack_ok, "Build with AI", "Describe what you want in the Agents tab; the agent builds it beside you.") {
+            self.close_to_agent = true;
+        }
         ui.add_space(4.0);
-        ui.label(RichText::new("Change it any time under View › Theme. The terminal stays dark in every look, so programs like claude and vim draw their colours right.").size(12.0).color(theme::hush()));
+        if next_card(ui, w, false, "New project or template", "A blank project in any language, or a working application to start from - it opens running.") {
+            build = true;
+        }
+        build
     }
 
     // ── Stack ───────────────────────────────────────────────────────────────
@@ -972,14 +1270,14 @@ impl Setup {
         self.note_line(ui);
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn account(&mut self, _: &mut egui::Ui, _: &egui::Context, _: &mut Env<'_>) {
-        self.step = Step::Claude;
-    }
-
     // ── Claude ──────────────────────────────────────────────────────────────
     fn claude(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
         Self::title(ui, "Connect Claude", "Cove's agent runs on Claude. Use your own - a Claude Pro or Max subscription, or an Anthropic API key - and it is billed to you, with no limit from ndexr.");
+        self.claude_body(ui, ctx, env);
+    }
+
+    /// The Claude panel: where they stand, and the ways to connect.
+    fn claude_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>) {
         let busy = self.changing.load(Ordering::Relaxed);
         let status = self.status();
         match &status {
@@ -1000,15 +1298,24 @@ impl Setup {
                     status_card(ui, theme::warn(), "!", "No Claude on this computer yet", "Install Claude Code and sign in to it - run `claude` in the Terminal - and Cove's agent uses it here, with no ndexr account. Or Go Back a step and sign in to ndexr to keep your Claude with your account.");
                 } else {
                     status_card(ui, theme::warn(), "!", "Couldn't check your Claude here", e);
-                    if ui.link("Connect it at console.ndexr.io instead").clicked() {
-                        crate::ui::kit::links::new_tab(ctx, "https://console.ndexr.io/#claude");
-                    }
                 }
             }
             Some(Ok(v)) => self.verdict(ui, v, busy, env.backend, ctx),
         }
+        // A server of the person's own (no ndexr platform): it installs
+        // Claude Code for them on the first check (localagent.rs own_status),
+        // asked again every 3 s until that is done; then the ways to sign in,
+        // each of which needs `claude` here.
+        let local = status.as_ref().and_then(|s| s.as_ref().ok()).filter(|v| v.cred_kind.as_deref() == Some("local")).cloned();
+        if let Some(v) = &local {
+            if v.title.starts_with("Installing") {
+                self.refresh(env.backend, ctx, 3.0);
+                ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            }
+        }
+        let can_sign_in = local.as_ref().is_none_or(|v| v.title.starts_with("Claude Code is installed"));
         let own = status.as_ref().is_some_and(|s| s.as_ref().is_ok_and(ClaudeView::own));
-        if status.as_ref().is_some_and(|s| s.is_ok()) && !own {
+        if status.as_ref().is_some_and(|s| s.is_ok()) && !own && can_sign_in {
             ui.add_space(4.0);
             self.ways(ui, ctx, env, busy);
         }
@@ -1027,10 +1334,14 @@ impl Setup {
                             s.kind = "none".into();
                         }
                     }
-                    if ui.add_enabled(!busy, egui::Button::new(RichText::new("Remove").color(theme::alt()))).on_hover_text("forget it on ndexr - every ndexr surface stops using it").clicked() {
+                    if ui.add_enabled(!busy, egui::Button::new(RichText::new("Remove").color(theme::alt()))).on_hover_text("forget it - your agent stops using it").clicked() {
                         self.ask("forget", String::new(), backend, ctx);
                     }
                 });
+            }
+            "none" if v.cred_kind.as_deref() == Some("local") => {
+                let (c, mark) = if v.title.starts_with("Installing") { (theme::primary(), "…") } else if v.title.contains("could not") || v.title.contains("not installed") { (theme::warn(), "!") } else { (theme::primary(), "→") };
+                status_card(ui, c, mark, &v.title, &v.detail);
             }
             "operator" => status_card(ui, theme::ok(), "✓", &v.title, &v.detail),
             "plan" => status_card(ui, theme::ok(), "✓", &v.title, &v.detail),
@@ -1081,6 +1392,12 @@ impl Setup {
                 crate::ui::kit::links::new_tab(ctx, "https://console.anthropic.com/settings/keys");
             }
         });
+        // 4. Their organization pays (Anthropic Linked billing): an admin of
+        // their Claude organization approves once, at auth.ndexr.io.
+        if crate::ui::claude_link::available() {
+            let link = &mut self.link;
+            choice(ui, "Your Claude organization pays", "An admin of your company's or lab's Claude organization approves ndexr once. Its Claude account is billed for your use; nothing is pasted here.", |ui| link.show(ui, ctx));
+        }
         if busy {
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(13.0).color(theme::primary()));
@@ -1097,54 +1414,6 @@ impl Setup {
             };
             ui.label(RichText::new(t).size(12.5).color(c));
         }
-    }
-
-    // ── Ready ───────────────────────────────────────────────────────────────
-    /// True when the person picks Build something: setup closes onto a new
-    /// project and its starters (ide start_new_project), the first decision a
-    /// new box asks.
-    fn ready(&mut self, ui: &mut egui::Ui, env: &mut Env<'_>) -> bool {
-        Self::title(ui, "You're set", "Here is what Cove is using. All of it can be changed later.");
-        let claude = match self.status() {
-            Some(Ok(v)) if v.own() => (theme::ok(), v.label.clone()),
-            Some(Ok(v)) if matches!(v.kind.as_str(), "plan" | "operator") => (theme::ok(), v.title.clone()),
-            Some(Ok(v)) => {
-                let (c, head, _) = trial_words(&v);
-                (c, head)
-            }
-            _ => (theme::primary(), "Free agent commands on ndexr's Claude - connect your own when they run out".to_owned()),
-        };
-        summary_row(ui, theme::ok(), "Look", env.theme.label());
-        let stack = match env.settings.lock().unwrap().as_ref() {
-            Some(v) if v.settings.airgap && v.stack.ok => (theme::ok(), format!("airgapped - {}", v.stack.root)),
-            Some(v) if v.settings.airgap => (theme::warn(), format!("airgapped - no stack at {}", v.stack.root)),
-            Some(v) if v.stack.ok => (theme::ok(), v.stack.root.clone()),
-            Some(v) if !v.stack.unsupported.is_empty() => (theme::alt(), "Linux only - this computer's own R, Python and shell".to_owned()),
-            Some(v) if v.stack.building || self.job.lock().unwrap().running => (theme::primary(), "on its way - Cove uses it once it is there".to_owned()),
-            _ => (theme::warn(), "not set up - the consoles wait for it".to_owned()),
-        };
-        summary_row(ui, stack.0, "Stack", &stack.1);
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let a = env.account.lock().unwrap().clone();
-            match a.email {
-                Some(e) => summary_row(ui, theme::ok(), "Account", &e),
-                None => summary_row(ui, theme::warn(), "Account", "not signed in - the toolbar's Sign in"),
-            }
-        }
-        summary_row(ui, claude.0, "Claude", &claude.1);
-        ui.add_space(10.0);
-        // One next step, not a list of places (the same day: "there
-        // shouldnt be ambiguity once its started"): build something, or
-        // look around first.
-        let mut build = false;
-        let w = ui.available_width();
-        if next_card(ui, w, true, "Build something", "Pick a starter - a dashboard, a model, an API, a site - in R, Python, Julia, Rust or JavaScript. It opens running, with its agent beside it.") {
-            build = true;
-        }
-        ui.add_space(6.0);
-        ui.label(RichText::new("Or Start using Cove to look around first: the Agents tab, the consoles and the Terminal are ready.").size(12.5).color(theme::text()));
-        build
     }
 
     // ── the Terminal helper ─────────────────────────────────────────────────
@@ -1233,7 +1502,7 @@ impl Setup {
         if back {
             self.helper.on = false;
             self.open = true;
-            self.step = if connected { Step::Ready } else { Step::Claude };
+            self.step = if connected && !self.alone { Step::Providers } else { Step::Claude };
         } else if close {
             self.helper.on = false;
             self.open = false;
@@ -1516,6 +1785,66 @@ fn choice(ui: &mut egui::Ui, head: &str, body: &str, add: impl FnOnce(&mut egui:
     });
 }
 
+/// A choice drawn as a card: its name, what it means, and a ring that
+/// fills when it is the one picked. True when clicked.
+fn pick_card(ui: &mut egui::Ui, w: f32, picked: bool, head: &str, what: &str) -> bool {
+    // As tall as its words: a fixed height cut a second line off.
+    let job = egui::text::LayoutJob::simple(what.to_owned(), egui::FontId::proportional(12.5), theme::text(), w - 52.0);
+    let g = ui.fonts_mut(|f| f.layout_job(job));
+    let tall = (34.0 + g.size().y + 14.0).max(if crate::ui::kit::device::coarse() { 78.0 } else { 62.0 });
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, tall), Sense::click());
+    let p = ui.painter();
+    let line = if picked { theme::primary() } else if resp.hovered() { theme::hush() } else { theme::pane_brd() };
+    p.rect(rect, 10.0, if picked { theme::primary().gamma_multiply(0.10) } else { theme::surface() }, Stroke::new(if picked { 1.5 } else { 1.0 }, line), egui::StrokeKind::Inside);
+    let c = egui::pos2(rect.left() + 22.0, rect.top() + 22.0);
+    p.circle_stroke(c, 7.0, Stroke::new(1.5, if picked { theme::primary() } else { theme::hush() }));
+    if picked {
+        p.circle_filled(c, 4.0, theme::primary());
+    }
+    let x = rect.left() + 40.0;
+    p.text(egui::pos2(x, rect.top() + 13.0), egui::Align2::LEFT_TOP, head, theme::display(14.5), theme::text_strong());
+    p.galley(egui::pos2(x, rect.top() + 34.0), g, theme::text());
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
+}
+
+/// A provider's row: its name and what it does, where it stands, and
+/// Connect / Manage (or nothing, for one Cove cannot use yet). True: toggled.
+fn provider_row(ui: &mut egui::Ui, name: &str, what: &str, state: &str, c: Color32, can: bool, open: bool) -> bool {
+    let mut toggled = false;
+    egui::Frame::new().fill(theme::surface()).stroke(Stroke::new(1.0, if open { theme::primary().gamma_multiply(0.6) } else { theme::pane_brd() })).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label(RichText::new(name).font(theme::display(14.5)).color(theme::text_strong()));
+                ui.label(RichText::new(what).size(12.5).color(theme::text()));
+                ui.horizontal(|ui| {
+                    let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), Sense::hover());
+                    ui.painter().circle_filled(r.center(), 3.5, c);
+                    ui.add(egui::Label::new(RichText::new(state).size(12.5).color(theme::text())).truncate());
+                });
+            });
+            if can {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let word = if open { "Close" } else if c == theme::ok() { "Manage" } else { "Connect" };
+                    if ui.add(egui::Button::new(RichText::new(word).size(13.0)).min_size(egui::vec2(88.0, 28.0))).clicked() {
+                        toggled = true;
+                    }
+                });
+            }
+        });
+    });
+    ui.add_space(6.0);
+    toggled
+}
+
+fn section(ui: &mut egui::Ui, name: &str) {
+    ui.label(RichText::new(name).font(theme::display(14.0)).color(theme::text_strong()));
+}
+
 fn summary_row(ui: &mut egui::Ui, c: Color32, k: &str, v: &str) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(egui::vec2(12.0, 16.0), Sense::hover());
@@ -1614,136 +1943,4 @@ mod tests {
 
 // ── How it fits ─────────────────────────────────────────────────────────────
 
-/// The four on the chain, in the order work moves along it: a name, what it
-/// is in a few words, and the verb that carries it to the next.
-const CHAIN: [(&str, &str, &str); 4] = [
-    ("You", "say what you want, typed or spoken", "ask"),
-    ("Agent", "Claude, working in the site's folder", "writes"),
-    ("App", "the program: Shiny, FastAPI, React, Rust…", "answers at"),
-    ("Address", "name.ndexr.io - where people open it", ""),
-];
 
-/// One site, drawn (operator, 2026-11-26: "explain the link between all of
-/// those to the user"): you ask its agent, the agent writes its app, the app
-/// answers at its address, a pulse running along the chain; the last three
-/// sit in one frame, because they are one site and one folder. Under it,
-/// which tab holds which.
-fn fit(ui: &mut egui::Ui) {
-    Setup::title(ui, "How Cove fits together", "Everything you make here is a site. A site is three things that belong together, and you talk to it.");
-    let w = ui.available_width();
-    let wide = w >= 520.0;
-    let t = ui.input(|i| i.time) as f32;
-    ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
-    // Nodes: across when there is room, else down.
-    let (node, gap) = if wide { (egui::vec2(((w - 3.0 * 34.0) / 4.0).floor(), 112.0), 34.0) } else { (egui::vec2(w - 24.0, 56.0), 26.0) };
-    let size = if wide { egui::vec2(w, node.y + 40.0) } else { egui::vec2(w, 4.0 * node.y + 3.0 * gap + 34.0) };
-    let (area, _) = ui.allocate_exact_size(size, Sense::hover());
-    let p = ui.painter_at(area);
-    let top = area.top() + 26.0;
-    let rect_of = |i: usize| {
-        if wide {
-            egui::Rect::from_min_size(egui::pos2(area.left() + i as f32 * (node.x + gap), top), node)
-        } else {
-            egui::Rect::from_min_size(egui::pos2(area.left() + 24.0, top + i as f32 * (node.y + gap)), node)
-        }
-    };
-    // The site's frame round Agent, App and Address.
-    let site = rect_of(1).union(rect_of(3)).expand(8.0);
-    p.rect(site, 14.0, theme::primary().gamma_multiply(0.06), Stroke::new(1.0, theme::primary().gamma_multiply(0.45)), egui::StrokeKind::Inside);
-    p.text(egui::pos2(site.left() + 12.0, site.top() - 4.0), egui::Align2::LEFT_BOTTOM, "ONE SITE · ONE FOLDER", egui::FontId::proportional(10.5), theme::primary());
-    // The links, each with its verb, and the pulse: one dot moving down the
-    // chain every 3 seconds, lighting each node as it passes.
-    let phase = (t / 3.0).fract() * 3.0;
-    for i in 0..3 {
-        let (a, b) = (rect_of(i), rect_of(i + 1));
-        let (from, to) = if wide { (a.right_center(), b.left_center()) } else { (a.center_bottom(), b.center_top()) };
-        p.line_segment([from, to], Stroke::new(1.5, theme::moss()));
-        let tip = to;
-        let back = if wide { egui::vec2(-6.0, 0.0) } else { egui::vec2(0.0, -6.0) };
-        let side = egui::vec2(back.y, -back.x) * 0.6;
-        p.add(egui::Shape::convex_polygon(vec![tip, tip + back + side, tip + back - side], theme::moss(), Stroke::NONE));
-        let mid = from + (to - from) / 2.0;
-        let verb = CHAIN[i].2;
-        if wide {
-            p.text(mid - egui::vec2(0.0, 9.0), egui::Align2::CENTER_BOTTOM, verb, egui::FontId::proportional(11.0), theme::text());
-        } else {
-            p.text(mid + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, verb, egui::FontId::proportional(11.5), theme::text());
-        }
-        let k = phase - i as f32;
-        if (0.0..1.0).contains(&k) {
-            p.circle_filled(from + (to - from) * k, 3.5, theme::amber());
-        }
-    }
-    for (i, (name, what, _)) in CHAIN.iter().enumerate() {
-        let r = rect_of(i);
-        // Lit while the pulse is at it.
-        let lit = (phase - i as f32).abs() < 0.25 || (i == 3 && phase > 2.75);
-        p.rect(r, 10.0, theme::surface_hi(), Stroke::new(if lit { 1.5 } else { 1.0 }, if lit { theme::amber() } else { theme::pane_brd() }), egui::StrokeKind::Inside);
-        let c = if lit { theme::amber() } else { theme::primary() };
-        if wide {
-            let ic = egui::pos2(r.center().x, r.top() + 24.0);
-            mark(&p, i, ic, 11.0, c);
-            p.text(egui::pos2(r.center().x, r.top() + 44.0), egui::Align2::CENTER_TOP, *name, theme::display(15.0), theme::text_strong());
-            let job = egui::text::LayoutJob { halign: Align::Center, ..egui::text::LayoutJob::simple((*what).to_owned(), egui::FontId::proportional(11.5), theme::text(), r.width() - 14.0) };
-            let g = ui.fonts_mut(|f| f.layout_job(job));
-            p.galley(egui::pos2(r.center().x, r.top() + 66.0), g, theme::text());
-        } else {
-            let ic = egui::pos2(r.left() + 26.0, r.center().y);
-            mark(&p, i, ic, 10.0, c);
-            p.text(egui::pos2(r.left() + 50.0, r.top() + 10.0), egui::Align2::LEFT_TOP, *name, theme::display(14.5), theme::text_strong());
-            let job = egui::text::LayoutJob::simple((*what).to_owned(), egui::FontId::proportional(11.5), theme::text(), r.width() - 60.0);
-            let g = ui.fonts_mut(|f| f.layout_job(job));
-            p.galley(egui::pos2(r.left() + 50.0, r.top() + 30.0), g, theme::text());
-        }
-    }
-    ui.add_space(10.0);
-    ui.label(RichText::new("WHERE EACH LIVES IN COVE").size(10.5).color(theme::hush()));
-    for (tab, what) in [
-        ("Workspace", "one site open: talk to its agent, read its files, run its consoles, and see its app live in App"),
-        ("Sites", "every site you may open - yours, shared with you, and public - to open in Workspace or in the browser"),
-        ("Account", "your addresses, your Claude and your keys"),
-    ] {
-        ui.horizontal_top(|ui| {
-            let g = ui.painter().layout_no_wrap(tab.to_owned(), egui::FontId::proportional(12.5), theme::primary());
-            let (r, _) = ui.allocate_exact_size(egui::vec2(92.0, g.size().y + 8.0), Sense::hover());
-            let pill = egui::Rect::from_min_size(r.min, g.size() + egui::vec2(16.0, 8.0));
-            ui.painter().rect_filled(pill, 9.0, theme::primary().gamma_multiply(0.14));
-            ui.painter().galley(pill.center() - g.size() / 2.0, g, theme::primary());
-            ui.add(egui::Label::new(RichText::new(what).size(12.5).color(theme::text())).wrap());
-        });
-    }
-}
-
-/// The chain's marks, drawn at `c` with radius `r`: a person, the agent's
-/// spark, the app's play triangle, the address's globe.
-fn mark(p: &egui::Painter, i: usize, c: egui::Pos2, r: f32, col: Color32) {
-    let st = Stroke::new(1.8, col);
-    match i {
-        0 => {
-            p.circle_stroke(c - egui::vec2(0.0, r * 0.45), r * 0.42, st);
-            let pts: Vec<egui::Pos2> = (0..=12).map(|k| {
-                let a = std::f32::consts::PI * (1.0 + k as f32 / 12.0);
-                c + egui::vec2(a.cos() * r * 0.85, r * 0.95 + a.sin() * r * 0.75)
-            }).collect();
-            p.add(egui::Shape::line(pts, st));
-        }
-        1 => {
-            for k in 0..8 {
-                let a = std::f32::consts::TAU * k as f32 / 8.0;
-                let (r0, r1) = if k % 2 == 0 { (r * 0.35, r) } else { (r * 0.35, r * 0.62) };
-                p.line_segment([c + egui::vec2(a.cos(), a.sin()) * r0, c + egui::vec2(a.cos(), a.sin()) * r1], st);
-            }
-        }
-        2 => crate::ui::kit::icons::paint(p, egui::Rect::from_center_size(c, egui::vec2(r * 2.2, r * 2.2)), crate::ui::kit::icons::Glyph::Play, col),
-        _ => {
-            p.circle_stroke(c, r, st);
-            p.line_segment([c - egui::vec2(r, 0.0), c + egui::vec2(r, 0.0)], st);
-            let pts: Vec<egui::Pos2> = (0..=16).map(|k| {
-                let a = std::f32::consts::PI * (k as f32 / 16.0 - 0.5);
-                c + egui::vec2(a.cos() * r * 0.45, a.sin() * r)
-            }).collect();
-            p.add(egui::Shape::line(pts.clone(), st));
-            p.add(egui::Shape::line(pts.iter().map(|q| egui::pos2(2.0 * c.x - q.x, q.y)).collect(), st));
-        }
-    }
-}
