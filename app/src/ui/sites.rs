@@ -80,6 +80,12 @@ pub struct SitesWall {
     /// Every site, as a list (app.rs connect_view), instead of the open tabs.
     pub all: bool,
     grid: bool,
+    /// Tiles across: 0 lets the width decide (operator, 2026-11-27: "need to
+    /// be able to change the grid size of the sites").
+    cols: usize,
+    /// Tile height: 0 small, 1 medium, 2 large, 3 fit the screen (Grid's
+    /// own size until it is picked).
+    size: Option<u8>,
     lens: HashMap<String, Lens>,
     tiles: HashMap<String, Tile>,
     pub find: String,
@@ -105,7 +111,7 @@ impl SitesWall {
         let now = ctx.input(|i| i.time);
         // The bar: search every site, then Focus or Grid.
         ui.horizontal(|ui| {
-            let w = (ui.available_width() - 190.0).max(160.0);
+            let w = (ui.available_width() - 420.0).max(160.0);
             ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(10.0, 7.0)));
             let items = [
                 ("Focus".to_owned(), "the selected tab large, the others under it".to_owned(), !self.grid, true),
@@ -114,6 +120,22 @@ impl SitesWall {
             if let Some(i) = crate::ui::agent::segmented(ui, false, &items) {
                 self.grid = i == 1;
             }
+            // The grid's size: how many across, and how tall.
+            let col_word = |c: usize| if c == 0 { "Columns: auto".to_owned() } else { format!("Columns: {c}") };
+            egui::ComboBox::from_id_salt("sites-cols").selected_text(col_word(self.cols)).width(120.0).show_ui(ui, |ui| {
+                for c in [0, 1, 2, 3, 4, 5, 6] {
+                    ui.selectable_value(&mut self.cols, c, col_word(c));
+                }
+            });
+            let sizes = ["Small", "Medium", "Large", "Fit the screen"];
+            let shown = self.size.map_or(if self.grid { "Height: fit" } else { "Height: medium" }.to_owned(), |s| format!("Height: {}", sizes[s as usize].to_lowercase()));
+            egui::ComboBox::from_id_salt("sites-size").selected_text(shown).width(140.0).show_ui(ui, |ui| {
+                for (i, w) in sizes.iter().enumerate() {
+                    if ui.selectable_label(self.size == Some(i as u8), *w).clicked() {
+                        self.size = Some(i as u8);
+                    }
+                }
+            });
         });
         let find = self.find.trim().to_lowercase();
         if !find.is_empty() {
@@ -154,7 +176,7 @@ impl SitesWall {
         let area = ui.available_rect_before_wrap();
         let gap = 10.0;
         let phone = area.width() < 700.0;
-        let cols = if phone { 1 } else if self.grid { ((area.width() / 460.0).floor() as usize).clamp(1, 3) } else { ((area.width() / 380.0).floor() as usize).clamp(1, 4) };
+        let cols = if self.cols > 0 { self.cols } else if phone { 1 } else if self.grid { ((area.width() / 460.0).floor() as usize).clamp(1, 3) } else { ((area.width() / 380.0).floor() as usize).clamp(1, 4) };
         egui::ScrollArea::vertical().id_salt("sites-wall").auto_shrink([false, false]).show(ui, |ui| {
             let clip = ui.clip_rect();
             let w = ui.available_width();
@@ -172,8 +194,18 @@ impl SitesWall {
             }
             let rest = &order[i..];
             let rows = rest.len().div_ceil(cols);
-            let fit = if self.grid { (area.height() - gap * (rows.max(1) as f32 - 1.0)) / rows.max(1) as f32 } else { 0.0 };
-            let h = if phone { 420.0 } else if self.grid { fit.max(260.0) } else { 280.0 };
+            // Fit: every row of what is left in the height there is.
+            let room = if i == 1 { area.height() * 0.38 - gap } else { area.height() };
+            let fit = (room - gap * (rows.max(1) as f32 - 1.0)) / rows.max(1) as f32;
+            let h = match self.size {
+                Some(0) => 220.0,
+                Some(1) => 340.0,
+                Some(2) => 520.0,
+                Some(_) => fit.max(200.0),
+                None if phone => 420.0,
+                None if self.grid => fit.max(260.0),
+                None => 280.0,
+            };
             for chunk in rest.chunks(cols) {
                 let (row, _) = ui.allocate_exact_size(egui::vec2(w, h), Sense::hover());
                 let tw = (w - gap * (cols as f32 - 1.0)) / cols as f32;
@@ -272,11 +304,13 @@ fn site(ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, t: &Tile, bod
             ui.label(RichText::new(format!("{host} is this Cove: its page is the one you are in.")).size(13.0).color(theme::text()));
             return;
         }
-        // Only whole on screen: a frame cannot be clipped by the scroll.
-        if clip.contains_rect(body) {
-            frames::place(ctx, host, body, &url);
-        } else {
-            ui.label(RichText::new("Scroll to show the page.").size(13.0).color(theme::text()));
+        // Shown whenever any of it is on screen, at its full size, with what
+        // lies outside the scroll cut away (frames.rs clip-path) - not only
+        // once the whole tile was (operator, 2026-11-27: "scrolling shouldnt be
+        // required in order to display a page when 95% of it is visible").
+        let seen = body.intersect(clip);
+        if seen.height() > 24.0 && seen.width() > 24.0 {
+            frames::place(ctx, host, body, seen, &url);
         }
     }
     #[cfg(not(target_arch = "wasm32"))]

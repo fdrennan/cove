@@ -305,6 +305,9 @@ pub struct Setup {
     changing: Arc<AtomicBool>,
     /// A connect or forget pressed while a status check was out: sent when it lands.
     pending: Option<(&'static str, String)>,
+    /// When the connect now being checked began (ctx time), for the seconds
+    /// shown under it.
+    checking_since: Option<f64>,
     /// What the last connect / forget said, good or bad.
     note: Slot<Result<String, String>>,
     asked_at: f64,
@@ -350,6 +353,7 @@ impl Default for Setup {
             busy: Default::default(),
             changing: Default::default(),
             pending: None,
+            checking_since: None,
             note: Default::default(),
             asked_at: f64::NEG_INFINITY,
             paste: String::new(),
@@ -1391,6 +1395,7 @@ impl Setup {
 
     /// The ways to connect one.
     fn ways(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, env: &mut Env<'_>, busy: bool) {
+        self.give_up_stuck(env.backend, ctx);
         // 1. A key this computer already has (desktop): offered, never sent unasked.
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -1431,6 +1436,7 @@ impl Setup {
                     self.ask("connect", t, env.backend, ctx);
                 }
             });
+            checking_line(ui, ctx, busy, &mut self.checking_since);
             if ui.link("Get an API key at console.anthropic.com").clicked() {
                 crate::ui::kit::links::new_tab(ctx, "https://console.anthropic.com/settings/keys");
             }
@@ -1463,7 +1469,25 @@ impl Setup {
     /// A small window over the Terminal while `claude setup-token` runs: what
     /// to do, and the token once it is on the screen - connected only on the
     /// person's click.
+    /// A connect with no answer after 60 s - the reply lost to a server
+    /// restart, as at 18:19:43 on 2026-11-27, when the connect itself had
+    /// gone through at 18:19:04 - stops waiting and asks where things stand,
+    /// so the step shows the truth instead of "Checking…" for ever.
+    fn give_up_stuck(&mut self, backend: &Backend, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        if !self.checking_since.is_some_and(|t0| now - t0 > 60.0) || !self.busy.load(Ordering::Relaxed) {
+            return;
+        }
+        self.busy.store(false, Ordering::Relaxed);
+        self.changing.store(false, Ordering::Relaxed);
+        self.checking_since = None;
+        self.pending = None;
+        *self.note.lock().unwrap() = Some(Err("No answer after 60 s - looking again at where your Claude stands.".into()));
+        self.ask("status", String::new(), backend, ctx);
+    }
+
     fn helper_window(&mut self, ctx: &egui::Context, env: Env<'_>) -> Done {
+        self.give_up_stuck(env.backend, ctx);
         if self.helper.found.is_none() {
             self.helper.found = env.ide.terminal_oauth_token();
             // The link on screen now - a new run prints a new one.
@@ -1518,6 +1542,7 @@ impl Setup {
                                 self.helper.found = None;
                             }
                         });
+                        checking_line(ui, ctx, busy, &mut self.checking_since);
                     }
                     (None, false) => {
                         ui.horizontal(|ui| {
@@ -1861,6 +1886,28 @@ fn pick_card(ui: &mut egui::Ui, w: f32, picked: bool, head: &str, what: &str) ->
 
 /// A provider's row: its name and what it does, where it stands, and
 /// Connect / Manage (or nothing, for one Cove cannot use yet). True: toggled.
+/// While a connect is being checked, a line that moves (operator,
+/// 2026-11-27: "things seem to just pause here"): the check is the platform's
+/// R and a call to Anthropic, allowed 45 s, and a greyed "Checking…" button
+/// was all there was to see. The seconds so far, and from 20 s why it takes so.
+fn checking_line(ui: &mut egui::Ui, ctx: &egui::Context, busy: bool, since: &mut Option<f64>) {
+    if !busy {
+        *since = None;
+        return;
+    }
+    let now = ctx.input(|i| i.time);
+    let t0 = *since.get_or_insert(now);
+    let s = (now - t0).floor() as u64;
+    ui.horizontal(|ui| {
+        ui.add(egui::Spinner::new().size(13.0).color(theme::primary()));
+        ui.label(RichText::new(format!("Checking it with Anthropic · {s} s")).size(12.5).color(theme::text()));
+    });
+    if s >= 20 {
+        ui.add(egui::Label::new(RichText::new("Still checking: the server starts R and asks Anthropic, which can take up to 45 s on a busy machine. It finishes on its own.").size(12.5).color(theme::text())).wrap());
+    }
+    ctx.request_repaint_after(std::time::Duration::from_millis(500));
+}
+
 fn provider_row(ui: &mut egui::Ui, name: &str, what: &str, state: &str, c: Color32, can: bool, open: bool) -> bool {
     let mut toggled = false;
     egui::Frame::new().fill(theme::surface()).stroke(Stroke::new(1.0, if open { theme::primary().gamma_multiply(0.6) } else { theme::pane_brd() })).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {

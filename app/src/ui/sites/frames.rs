@@ -33,12 +33,17 @@ fn element(id: &str) -> Option<web_sys::Element> {
     Some(e)
 }
 
-pub fn place(ctx: &egui::Context, host: &str, rect: egui::Rect, src: &str) {
+/// `rect` the page at its full size, `seen` the part of it on screen: what
+/// lies outside is cut away (clip-path), so a tile half scrolled out shows its
+/// page as it is, not squeezed into what is left.
+pub fn place(ctx: &egui::Context, host: &str, rect: egui::Rect, seen: egui::Rect, src: &str) {
     let id = id_of(host);
     let Some(e) = element(&id) else { return };
     let z = ctx.zoom_factor();
+    let (top, bottom) = ((seen.top() - rect.top()).max(0.0) * z, (rect.bottom() - seen.bottom()).max(0.0) * z);
+    let (left, right) = ((seen.left() - rect.left()).max(0.0) * z, (rect.right() - seen.right()).max(0.0) * z);
     let style = format!(
-        "position:absolute;left:{:.1}px;top:{:.1}px;width:{:.1}px;height:{:.1}px;border:0;border-radius:0 0 9px 9px;background:#fff;z-index:2;display:block",
+        "position:absolute;left:{:.1}px;top:{:.1}px;width:{:.1}px;height:{:.1}px;border:0;background:#fff;z-index:2;display:block;clip-path:inset({top:.1}px {right:.1}px {bottom:.1}px {left:.1}px round 0 0 9px 9px)",
         rect.left() * z,
         rect.top() * z,
         rect.width() * z,
