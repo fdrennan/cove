@@ -36,6 +36,9 @@ pub enum GitAct {
     None,
     Restore(String),
     Refresh,
+    /// Bring back the agent's thread kept with this version (sha, a label for
+    /// it): agent_keep.rs, into the agent's next turn.
+    CarryThread(String, String),
 }
 
 /// A file's diff, read once: the patch and its model.
@@ -364,6 +367,15 @@ impl GitView {
                     });
                     if self.confirm.as_deref() == Some(sha.as_str()) {
                         ui.label(RichText::new("Restore puts this version back. What is there now is saved as a version first.").size(12.0).color(theme::warn()));
+                    }
+                    // The agent as it was at this version: the thread a save
+                    // kept with it, for the agent's next turn.
+                    if ui.add(egui::Label::new(RichText::new("Bring back the agent's thread").size(12.5).color(theme::primary())).sense(Sense::click()))
+                        .on_hover_text("the agent's thread saved with this version (.cove/agent/thread.md): its next turn carries it, as the agent was then or on top of now")
+                        .clicked()
+                    {
+                        let label = format!("version {} ({} UTC)", &v.sha[..v.sha.len().min(7)], crate::ui::software::fmt_date(v.when));
+                        *act = GitAct::CarryThread(v.sha.clone(), label);
                     }
                 });
                 ui.painter().hline(ui.max_rect().x_range(), ui.cursor().top(), egui::Stroke::new(1.0, theme::pane_brd()));

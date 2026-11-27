@@ -1489,6 +1489,9 @@ pub struct Ide {
     /// state, the version waiting on "restore?", and the last restore's word.
     versions: Arc<Mutex<Option<Result<Vec<crate::api::Version>, String>>>>,
     versions_open: bool,
+    /// A version's kept thread on its way into the agent (the Git window's
+    /// Bring back): its label and the file's text, or why there is none.
+    carry_got: Arc<Mutex<Option<(String, Result<String, String>)>>>,
     version_said: Arc<Mutex<Option<Result<String, String>>>>,
     /// The Git window's panes (gitview.rs): the picked version, its files and
     /// the picked file's diff.
@@ -1604,6 +1607,10 @@ pub struct Ide {
     /// Push all: the job, when it was last asked, and its log dialog.
     push: Slot<JobView>,
     push_asked: f64,
+    /// Save keeping the agent's thread: writing .cove/agent/ first, then the
+    /// push (agent_keep.rs). Some(Ok) when written, Some(Err) when it was not.
+    keep_thread: Arc<Mutex<Option<Result<(), String>>>>,
+    keep_pending: bool,
     push_log: bool,
     /// A domain CreateDomain just made, to step into on the next frame.
     created: Slot<DomainInfo>,
@@ -1951,6 +1958,7 @@ impl Ide {
             app_log: false,
             versions: Default::default(),
             versions_open: false,
+            carry_got: Default::default(),
             version_said: Default::default(),
             git: Default::default(),
             edc: Default::default(),
@@ -2003,6 +2011,8 @@ impl Ide {
             ndexr_open: false,
             push: Default::default(),
             push_asked: f64::NEG_INFINITY,
+            keep_thread: Default::default(),
+            keep_pending: false,
             push_log: false,
             created: Default::default(),
             converted: Default::default(),
@@ -6742,6 +6752,18 @@ impl Ide {
     /// now as a version before it puts the old one back. Saved every 30
     /// minutes by the autosave service, mirrored to the private S3 archive.
     fn versions_window(&mut self, ctx: &egui::Context) {
+        // A kept thread arrived: into the agent's next turn, the agent in front.
+        let got = self.carry_got.lock().unwrap().take();
+        if let Some((label, r)) = got {
+            match r {
+                Ok(text) if !text.trim().is_empty() => {
+                    self.agent.carry = Some(crate::ui::agent::Carry { text, from: label, as_it_was: true });
+                    self.versions_open = false;
+                    self.bring(Tab::Agents);
+                }
+                _ => *self.version_said.lock().unwrap() = Some(Err(format!("No agent thread was kept with {label}: it was saved without one."))),
+            }
+        }
         if !self.versions_open {
             return;
         }
@@ -6787,6 +6809,12 @@ impl Ide {
             crate::ui::ide::gitview::GitAct::Refresh => {
                 *self.version_said.lock().unwrap() = None;
                 self.ask_versions(ctx);
+            }
+            crate::ui::ide::gitview::GitAct::CarryThread(sha, label) => {
+                let slot = self.carry_got.clone();
+                self.backend.query(Query::GitFileAt { host: d.host.clone(), sha, path: crate::project::agent_keep::MD.to_owned() }, ctx, move |r: Result<String, String>| {
+                    *slot.lock().unwrap() = Some((label, r));
+                });
             }
             crate::ui::ide::gitview::GitAct::None => {}
         }
@@ -8241,6 +8269,43 @@ impl Ide {
 
     /// git.ndexr.io's sweep for this person: commit and push every repo under
     /// their domains folder.
+    /// The open project's thread, compacted into its .cove/agent/, before
+    /// the save: push_button pushes once it is written.
+    fn keep_thread_then_save(&mut self, d: &DomainInfo, ctx: &egui::Context) {
+        use crate::project::agent_keep;
+        self.keep_pending = true;
+        *self.keep_thread.lock().unwrap() = None;
+        let (slot, backend, c2) = (self.keep_thread.clone(), self.backend.clone(), ctx.clone());
+        let (host, dir) = (d.host.clone(), d.path.trim_end_matches('/').to_owned());
+        self.backend.query(Query::AgentHistory { domain: host.clone() }, ctx, move |r: Result<Vec<crate::api::AgentTurn>, String>| {
+            let turns = match r {
+                Ok(t) if t.is_empty() => {
+                    *slot.lock().unwrap() = Some(Err("there is no thread yet".into()));
+                    return;
+                }
+                Ok(t) => t,
+                Err(e) => {
+                    *slot.lock().unwrap() = Some(Err(e));
+                    return;
+                }
+            };
+            let kept = agent_keep::compact(&host, &turns, crate::ui::software::now_secs());
+            let json = serde_json::to_string_pretty(&kept).unwrap_or_default();
+            let md = agent_keep::markdown(&kept);
+            let (slot2, b2, c3, dir2) = (slot.clone(), backend.clone(), c2.clone(), dir.clone());
+            backend.query(Query::WriteFile { path: format!("{dir}/{}", agent_keep::JSON), text: json }, &c2, move |r: Result<serde_json::Value, String>| {
+                if let Err(e) = r {
+                    *slot2.lock().unwrap() = Some(Err(e));
+                    return;
+                }
+                let s3 = slot2.clone();
+                b2.query(Query::WriteFile { path: format!("{dir2}/{}", agent_keep::MD), text: md }, &c3, move |r: Result<serde_json::Value, String>| {
+                    *s3.lock().unwrap() = Some(r.map(|_| ()));
+                });
+            });
+        });
+    }
+
     pub fn push_all(&mut self, ctx: &egui::Context) {
         let root = self.domains_root();
         let (slot, errors) = (self.push.clone(), self.errors.clone());
@@ -8279,10 +8344,44 @@ impl Ide {
                     self.push_log = true;
                 }
             }
-            _ => {
-                if theme::tool(ui, label, "keep your work: commit and push every repo in your domains folder (git.ndexr.io's sweep, ndexr bulk-commit)").clicked() {
+            _ if self.keep_pending => {
+                // The thread written (or not - the save goes on either way,
+                // and says why), then the push.
+                let written = self.keep_thread.lock().unwrap().take();
+                if let Some(r) = written {
+                    self.keep_pending = false;
+                    if let Err(e) = r {
+                        Ide::fail(&self.errors, format!("the agent's thread was not kept with this save: {e}"));
+                    }
                     self.push_all(ctx);
                     self.push_log = true;
+                } else {
+                    ui.add(egui::Spinner::new().size(12.0));
+                    ui.label(RichText::new("keeping the thread…").size(12.0).color(theme::text()));
+                    ctx.request_repaint_after(std::time::Duration::from_millis(300));
+                }
+            }
+            _ => {
+                // Save can keep the open project's agent thread with it,
+                // compacted into .cove/agent/ - so it goes into git and S3 as
+                // the project does (operator, 2026-11-27: "when we push save,
+                // to choose to compact and store thread history").
+                let key = egui::Id::new("save-keeps-thread");
+                let mut keep = ctx.data_mut(|d| *d.get_persisted_mut_or(key, true));
+                if self.domain.is_some() {
+                    if theme::tool(ui, if keep { "+ thread" } else { "no thread" }, "keep the open project's agent thread with each save, compacted into .cove/agent/thread.md - in git and S3 with the project; click to change").clicked() {
+                        keep = !keep;
+                        ctx.data_mut(|d| d.insert_persisted(key, keep));
+                    }
+                }
+                if theme::tool(ui, label, "keep your work: commit and push every repo in your domains folder (git.ndexr.io's sweep, ndexr bulk-commit)").clicked() {
+                    match self.domain.clone().filter(|d| keep && !d.path.is_empty()) {
+                        Some(d) => self.keep_thread_then_save(&d, ctx),
+                        None => {
+                            self.push_all(ctx);
+                            self.push_log = true;
+                        }
+                    }
                 }
                 if let Some(j) = &job {
                     let (t, c) = if j.ok == Some(true) { ("✓", theme::ok()) } else { ("✗", ace::error()) };

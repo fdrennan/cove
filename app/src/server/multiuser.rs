@@ -1345,7 +1345,7 @@ fn answer_on_behalf(ctx: &Ctx, owner: &str, id: &str, q: &crate::api::Query) -> 
         // refuses ("apps are routed from cove.ndexr.io"): the operator's Rust
         // and Julia projects never went live (2026-10-26, ggsdfgg.ndexr.io).
         _ if platform_session && !matches!(q, Query::DeployApp { .. } | Query::DeployJob { .. } | Query::AppRoute { .. } | Query::ProjectRelease { .. } | Query::AppAccess { .. } | Query::SitePassword { .. }) => return None,
-        Query::AgentRun { domain, prompt, model, cwd, mode } => crate::host::agent_run_as(owner, domain, prompt, model, cwd.as_deref(), mode.as_deref()).map(|run| {
+        Query::AgentRun { domain, prompt, model, cwd, mode, .. } => crate::host::agent_run_as(owner, domain, prompt, model, cwd.as_deref(), mode.as_deref()).map(|run| {
             started_runs().lock().unwrap().insert(run.clone(), owner.to_owned());
             serde_json::Value::String(run)
         }),
@@ -1389,7 +1389,7 @@ fn answer_on_behalf(ctx: &Ctx, owner: &str, id: &str, q: &crate::api::Query) -> 
         }
         // Versions: read and restored as the platform account, which owns the
         // repositories the autosave service keeps; only the person's own.
-        Query::Versions { host } | Query::VersionRestore { host, .. } | Query::GitChanges { host, .. } | Query::GitDiff { host, .. } | Query::GitStatus { host } | Query::GitPatch { host, .. } => {
+        Query::Versions { host } | Query::VersionRestore { host, .. } | Query::GitChanges { host, .. } | Query::GitDiff { host, .. } | Query::GitStatus { host } | Query::GitPatch { host, .. } | Query::GitFileAt { host, .. } => {
             let h = host.trim().to_ascii_lowercase();
             match person_domains(owner, &account).into_iter().find(|(x, _)| *x == h) {
                 None => Err(format!("{h} is not one of your domains")),
@@ -1404,6 +1404,7 @@ fn answer_on_behalf(ctx: &Ctx, owner: &str, id: &str, q: &crate::api::Query) -> 
                     (Query::GitChanges { sha, .. }, path) => crate::host::git::changes_at(Path::new(&path), sha).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                     (Query::GitDiff { sha, path: file, old, area, full, .. }, path) => crate::host::git::diff_at(Path::new(&path), sha, file, old, area, *full).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                     (Query::GitStatus { .. }, path) => crate::host::git::status_at(Path::new(&path)).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
+                    (Query::GitFileAt { sha, path: file, .. }, path) => crate::host::git::file_at(Path::new(&path), sha, file).and_then(|v| serde_json::to_value(v).map_err(|e| e.to_string())),
                     // Changes the person's files or index: on the record.
                     (Query::GitPatch { action, patch, .. }, path) => {
                         let r = crate::host::git::patch_at(Path::new(&path), action, patch);

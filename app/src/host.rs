@@ -115,6 +115,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::GitChanges { host, sha } => serde_json::to_value(git::changes_at(Path::new(&app_dir(host)?), sha)?),
         Query::GitDiff { host, sha, path, old, area, full } => serde_json::to_value(git::diff_at(Path::new(&app_dir(host)?), sha, path, old, area, *full)?),
         Query::GitStatus { host } => serde_json::to_value(git::status_at(Path::new(&app_dir(host)?))?),
+        Query::GitFileAt { host, sha, path } => serde_json::to_value(git::file_at(Path::new(&app_dir(host)?), sha, path)?),
         Query::GitPatch { host, action, patch } => serde_json::to_value(git::patch_at(Path::new(&app_dir(host)?), action, patch)?),
         Query::RunCommand { dir, command, timeout_secs } => Ok(crate::host::runner::run_command(&resolve(dir)?.display().to_string(), command, *timeout_secs)?),
         // Connectors live on the multi-person server, which answers these itself.
@@ -173,7 +174,7 @@ pub fn answer(q: &Query) -> Result<Value, String> {
         Query::Archive { host } => serde_json::to_value(archive(host)?),
         Query::ArchiveJob => serde_json::to_value(stack::jobs::view("archive")),
         Query::SiteGate { host } => serde_json::to_value(site_gate(host)?),
-        Query::AgentRun { domain, prompt, model, cwd, mode } => serde_json::to_value(agent_run(domain, prompt, model, cwd.as_deref(), mode.as_deref())?),
+        Query::AgentRun { domain, prompt, model, cwd, mode, .. } => serde_json::to_value(agent_run(domain, prompt, model, cwd.as_deref(), mode.as_deref())?),
         Query::AgentPoll { id, offset } => serde_json::to_value(agent_poll(id, *offset)?),
         Query::AgentStop { id } => serde_json::to_value(agent_stop(id)?),
         Query::AgentHistory { domain } => serde_json::to_value(agent_history(domain)?),
@@ -5086,6 +5087,12 @@ fn read_file(path: &str) -> Result<FileText, String> {
 /// Written beside itself and renamed over, so a crash never leaves half a file.
 fn write_file(path: &str, text: &str) -> Result<FileText, String> {
     let p = resolve(path)?;
+    // A folder not made yet is made: a save keeping the agent's thread
+    // writes .cove/agent/ the first time (agent_keep.rs). The session runs
+    // as the person, so it makes only folders they may make.
+    if let Some(d) = p.parent().filter(|d| !d.exists()) {
+        std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+    }
     let parent = p.parent().filter(|d| d.is_dir()).ok_or_else(|| format!("{}: no such folder", p.display()))?;
     let name = p.file_name().ok_or("no file name")?.to_string_lossy().into_owned();
     let tmp = parent.join(format!(".{name}.cove.tmp"));

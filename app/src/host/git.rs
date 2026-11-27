@@ -40,6 +40,17 @@ const GIT: &str = "g='git -c safe.directory=* -c core.quotepath=off'; ";
 /// The files version `sha` changed (Query::GitChanges), as the Git window
 /// lists them; "" the changes not saved yet, files git does not track
 /// included. A project without a repository has none.
+/// `path` as it was at version `sha`.
+pub fn file_at(dir: &Path, sha: &str, path: &str) -> Result<String, String> {
+    if sha.is_empty() || !git_rev_ok(sha) {
+        return Err("not a version".into());
+    }
+    if !git_path_ok(path) {
+        return Err("not a path in the project".into());
+    }
+    platform_git(dir, &format!("{GIT}$g show {}:{}", crate::api::shell_quote(sha), crate::api::shell_quote(path)), &[]).map_err(|_| format!("{path} is not in that version"))
+}
+
 pub fn changes_at(dir: &Path, sha: &str) -> Result<Vec<crate::api::GitFile>, String> {
     if !git_rev_ok(sha) {
         return Err("not a version".into());
@@ -323,6 +334,30 @@ mod tests {
         assert!(super::patch_at(&d, "check", &crate::project::diff::patch::write(&file, &model.hunks[1..])).is_err(), "the second is in the files already");
         assert!(super::patch_at(&d, "explode", &first).is_err());
         assert!(super::patch_at(&d, "apply", "").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod file_at_tests {
+    use super::*;
+
+    /// A kept thread read back from the version it was saved with; a path
+    /// leaving the project, or a file not in it, is refused.
+    #[test]
+    fn a_file_reads_back_as_it_was_at_a_version() {
+        let d = std::env::temp_dir().join(format!("cove-file-at-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join(".cove/agent")).unwrap();
+        std::fs::write(d.join(".cove/agent/thread.md"), "# kept\n").unwrap();
+        let q = crate::api::shell_quote(&d.display().to_string());
+        let ok = std::process::Command::new("bash").arg("-c").arg(format!("cd {q} && git init -q && git -c user.email=t@t -c user.name=t add -A && git -c user.email=t@t -c user.name=t commit -qm one && git rev-parse HEAD")).output().unwrap();
+        let sha = String::from_utf8_lossy(&ok.stdout).trim().to_owned();
+        std::fs::write(d.join(".cove/agent/thread.md"), "# changed since\n").unwrap();
+        assert_eq!(file_at(&d, &sha, ".cove/agent/thread.md").unwrap().trim(), "# kept");
+        assert!(file_at(&d, &sha, "../etc/passwd").is_err());
+        assert!(file_at(&d, &sha, "missing.md").is_err());
+        assert!(file_at(&d, "", ".cove/agent/thread.md").is_err(), "the working tree is not a version");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

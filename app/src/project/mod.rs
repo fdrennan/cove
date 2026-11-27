@@ -5,6 +5,7 @@
 // Server-side but for TYPES, which the Settings tab's Type menu reads.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod dotcove;
+pub(crate) mod agent_keep;
 pub(crate) mod diff;
 pub(crate) mod find;
 pub(crate) mod starters;

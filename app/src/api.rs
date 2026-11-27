@@ -187,6 +187,10 @@ pub enum Query {
         /// exec.ndexr.io's modes. Absent is "build".
         #[serde(default)]
         mode: Option<String>,
+        /// Start a new session rather than carry on the thread's last one: a
+        /// saved thread brought back "as it was" (project/agent_keep.rs).
+        #[serde(default)]
+        fresh: bool,
     },
     /// A run's stream from byte `offset`: what it said and did since.
     AgentPoll { id: String, offset: u64 },
@@ -350,6 +354,9 @@ pub enum Query {
     /// The changes not saved yet in their parts (host/git.rs status_at):
     /// each file with `area` "staged", "unstaged" or "untracked".
     GitStatus { host: String },
+    /// One file as it was at a saved version (`git show <sha>:<path>`): a
+    /// thread kept with a save, .cove/agent/thread.md (agent_keep.rs).
+    GitFileAt { host: String, sha: String, path: String },
     /// A patch put to work (host/git.rs patch_at): `action` "stage",
     /// "unstage", "revert", "apply" or "check".
     GitPatch { host: String, action: String, patch: String },

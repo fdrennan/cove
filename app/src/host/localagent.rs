@@ -135,7 +135,7 @@ pub fn answer_here(q: &Query) -> Option<Result<Value, String>> {
     match q {
         Query::AgentRun { model, .. } if codex::is_codex(model) && !codex::usable() => v(Err(codex::why_not())),
         Query::AgentRun { model, .. } if !codex::is_codex(model) && !usable() => v(Err(why_not())),
-        Query::AgentRun { domain, prompt, model, cwd, mode } => v(run(domain, prompt, model, cwd.as_deref(), mode.as_deref()).map(Value::from)),
+        Query::AgentRun { domain, prompt, model, cwd, mode, fresh } => v(run(domain, prompt, model, cwd.as_deref(), mode.as_deref(), *fresh).map(Value::from)),
         Query::AgentPoll { id, offset } => v(poll(id, *offset).and_then(|c| serde_json::to_value(c).map_err(|e| e.to_string()))),
         Query::AgentStop { id } => v(stop(id).map(Value::from)),
         Query::AgentHistory { domain } => v(history(domain).and_then(|h| serde_json::to_value(h).map_err(|e| e.to_string()))),
@@ -330,7 +330,7 @@ fn permission(mode: Option<&str>) -> &'static str {
     }
 }
 
-fn run(domain: &str, prompt: &str, model: &str, cwd: Option<&str>, mode: Option<&str>) -> Result<String, String> {
+fn run(domain: &str, prompt: &str, model: &str, cwd: Option<&str>, mode: Option<&str>, fresh: bool) -> Result<String, String> {
     let domain = domain.trim().to_ascii_lowercase();
     if !crate::host::is_host_name(&domain) {
         return Err(format!("{domain}: not a domain name"));
@@ -342,7 +342,8 @@ fn run(domain: &str, prompt: &str, model: &str, cwd: Option<&str>, mode: Option<
     let (runs, td) = (runs(), thread(&domain));
     std::fs::create_dir_all(&runs).and_then(|_| std::fs::create_dir_all(&td)).map_err(|e| e.to_string())?;
     let on_codex = codex::is_codex(model);
-    let resume = last_session(&td, &runs, on_codex);
+    // `fresh`: a saved thread brought back "as it was" starts a new session.
+    let resume = if fresh { None } else { last_session(&td, &runs, on_codex) };
     let id = new_id();
     let f = |ext: &str| runs.join(format!("{id}.{ext}"));
     std::fs::write(f("prompt"), prompt).map_err(|e| e.to_string())?;

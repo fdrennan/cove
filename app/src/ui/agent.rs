@@ -288,6 +288,17 @@ pub fn scope_toggle(ui: &mut egui::Ui, sc: &Scope, big: bool) -> Option<bool> {
     segmented(ui, big, &items).map(|i| i == 0)
 }
 
+/// A saved thread to carry into the next turn (agent_keep.rs `carried`).
+#[derive(Clone)]
+pub struct Carry {
+    /// .cove/agent/thread.md as it was saved.
+    pub text: String,
+    /// Where it was saved: "version abc1234 (Nov 27 18:40)".
+    pub from: String,
+    /// A fresh session from that thread alone; else on top of the current one.
+    pub as_it_was: bool,
+}
+
 pub struct AgentPane {
     st: Arc<Mutex<State>>,
     input: String,
@@ -299,6 +310,9 @@ pub struct AgentPane {
     sent: u64,
     /// Hand the console's tail to the agent with each turn.
     pub share_console: bool,
+    /// A thread kept with a save, brought back for the next turn (the Git
+    /// window's "Bring back the agent's thread"; project/agent_keep.rs).
+    pub carry: Option<Carry>,
     /// Run the code the agent replies with as it arrives, without a click.
     auto_run: Arc<AtomicBool>,
     /// The R console under the thread (Ide draws it).
@@ -455,6 +469,7 @@ impl Default for AgentPane {
             asked: f64::NEG_INFINITY,
             sent: 0,
             share_console: true,
+            carry: None,
             auto_run: Default::default(),
             split: false,
             composer_h: 120.0,
@@ -745,7 +760,38 @@ impl AgentPane {
             (2, _) if site && !self.focus_folder.is_empty() => (ask_prompt(domain, None, &self.focus_folder, 1, &prompt), Some(self.focus_folder.clone())),
             _ => (prompt, None),
         };
-        dispatch(st, backend, ctx, key, Query::AgentRun { domain: domain.to_owned(), prompt, model, cwd, mode: Some(mode) });
+        // A saved thread brought back goes with this turn, once.
+        let (prompt, fresh) = match self.carry.take() {
+            Some(c) => (crate::project::agent_keep::carried(&c.text, &c.from, c.as_it_was, &prompt), c.as_it_was),
+            None => (prompt, false),
+        };
+        dispatch(st, backend, ctx, key, Query::AgentRun { domain: domain.to_owned(), prompt, model, cwd, mode: Some(mode), fresh });
+    }
+
+    /// The thread being brought back, over the box: where it is from, how it
+    /// is given (as the agent was then, or on top of now), and ✕ to drop it.
+    fn carry_chip(&mut self, ui: &mut egui::Ui) {
+        let Some(c) = self.carry.as_mut() else { return };
+        let mut drop = false;
+        egui::Frame::new().fill(theme::primary().gamma_multiply(0.10)).stroke(egui::Stroke::new(1.0, theme::primary().gamma_multiply(0.5))).corner_radius(8).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("The next turn carries the agent's thread saved with {}", c.from)).size(12.5).color(theme::text_strong()));
+                let items = [
+                    ("As it was".to_owned(), "a fresh session that knows that saved thread and nothing since".to_owned(), c.as_it_was, true),
+                    ("On top of now".to_owned(), "the agent keeps what it knows now and is given the saved thread too".to_owned(), !c.as_it_was, true),
+                ];
+                if let Some(i) = segmented(ui, false, &items) {
+                    c.as_it_was = i == 0;
+                }
+                if ui.add(egui::Button::new(RichText::new("✕").size(12.0)).frame(false)).on_hover_text("don't carry it").clicked() {
+                    drop = true;
+                }
+            });
+        });
+        if drop {
+            self.carry = None;
+        }
     }
 }
 
@@ -1340,6 +1386,7 @@ impl AgentPane {
                 ui.set_width(w);
                 ui.set_max_width(w);
                 self.attachment_chips(ui);
+                self.carry_chip(ui);
                 let hint = match (narrow, going > 0) {
                     (true, _) => "Message the agent…",
                     (false, true) => "Send another - it runs alongside the ones working · Shift+Enter for a new line",

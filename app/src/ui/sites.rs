@@ -114,9 +114,11 @@ impl SitesWall {
     pub fn show(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, open: &[(String, Option<DomainInfo>)], active: Option<&str>, every: &[DomainInfo]) -> Option<WallAct> {
         let mut act = None;
         let now = ctx.input(|i| i.time);
-        // One row for every control - the views, the search, the layout and the
-        // grid's size - so the pages get the height.
-        ui.horizontal(|ui| {
+        // One row for every control - the views, the layout, the grid's size
+        // and, last, the search in whatever width is left - so the pages get
+        // the height. A row too wide for the screen wraps onto a second line;
+        // it never pushes the wall past the window's edge.
+        ui.horizontal_wrapped(|ui| {
             let views = [
                 (format!("Open tabs · {}", open.len()), "the sites open as tabs, each through its own lens".to_owned(), !self.all, true),
                 ("All sites".to_owned(), "every site you may open: search, access, sharing".to_owned(), self.all, true),
@@ -124,8 +126,6 @@ impl SitesWall {
             if let Some(i) = crate::ui::agent::segmented(ui, false, &views) {
                 self.all = i == 1;
             }
-            let w = (ui.available_width() - 720.0).max(140.0);
-            ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(8.0, 4.0)));
             let items = [
                 ("Focus".to_owned(), "the selected tab large, the others under it".to_owned(), !self.grid, true),
                 ("Grid".to_owned(), "every open tab the same size".to_owned(), self.grid, true),
@@ -157,6 +157,10 @@ impl SitesWall {
             if let Some(i) = crate::ui::agent::segmented(ui, false, &sitems) {
                 self.size = Some(i as u8);
             }
+            // Its width less its own margins (8 each side) and the gap before
+            // it: at the whole width left it wrapped onto a line of its own.
+            let w = (ui.available_width() - 28.0).max(200.0);
+            ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(8.0, 4.0)));
         });
         let find = self.find.trim().to_lowercase();
         if !find.is_empty() {
@@ -370,7 +374,7 @@ fn agent(ui: &mut egui::Ui, ctx: &egui::Context, backend: &Backend, t: &mut Tile
         let prompt = std::mem::take(&mut t.prompt);
         let sent = t.sent.clone();
         backend.query(
-            Query::AgentRun { domain: d.host.clone(), prompt, model: crate::ui::agent::default_model(), cwd: Some(d.path.clone()).filter(|p| !p.is_empty()), mode: None },
+            Query::AgentRun { domain: d.host.clone(), prompt, model: crate::ui::agent::default_model(), cwd: Some(d.path.clone()).filter(|p| !p.is_empty()), mode: None, fresh: false },
             ctx,
             move |r: Result<String, String>| {
                 *sent.lock().unwrap() = Some(r);
