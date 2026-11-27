@@ -1320,9 +1320,11 @@ impl Setup {
                 ctx.request_repaint_after(std::time::Duration::from_secs(1));
             }
         }
-        let can_sign_in = local.as_ref().is_none_or(|v| v.title.starts_with("Claude Code is installed"));
+        // The ways to connect show in every state, installing and failed
+        // included: "Start in the Terminal" installs Claude Code itself
+        // (SETUP_TOKEN), and hiding them left a failed install with no way on.
         let own = status.as_ref().is_some_and(|s| s.as_ref().is_ok_and(ClaudeView::own));
-        if status.as_ref().is_some_and(|s| s.is_ok()) && !own && can_sign_in {
+        if status.as_ref().is_some_and(|s| s.is_ok()) && !own {
             ui.add_space(4.0);
             self.ways(ui, ctx, env, busy);
         }
@@ -1576,6 +1578,12 @@ pub fn chip(ui: &mut egui::Ui, status: Option<Result<ClaudeView, String>>) -> bo
                 crate::ui::kit::links::new_tab(ui.ctx(), crate::api::CREDIT_URL);
             }
             return false;
+        }
+        // A server of its own (localagent::own_status marks it "local") sells
+        // no credit: the click opens setup's Claude step. It sent people to
+        // billing.ndexr.io, which cannot help there (2026-11-27, ndexrtesting.com).
+        Some(Ok(v)) if v.kind == "none" && v.cred_kind.as_deref() == Some("local") => {
+            (theme::alt(), "Connect Claude".to_owned(), v.detail.clone())
         }
         Some(Ok(v)) if v.kind == "none" && !v.seat_allowed.unwrap_or(false) => {
             if credit_chip(ui, theme::alt(), "Add Cove credit", "pay ahead and build at once on Sonnet - or connect your own Claude in setup") {
