@@ -1837,21 +1837,37 @@ fn provider_row(ui: &mut egui::Ui, name: &str, what: &str, state: &str, c: Color
     let mut toggled = false;
     egui::Frame::new().fill(theme::surface()).stroke(Stroke::new(1.0, if open { theme::primary().gamma_multiply(0.6) } else { theme::pane_brd() })).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
+        // The words keep clear of the button: given the width it leaves, they
+        // wrap beside it instead of running under it (IMG_8994, 2026-11-27:
+        // on a phone Connect covered "Cove's agent is" and "models").
+        let tall = if crate::ui::kit::device::coarse() { 40.0 } else { 30.0 };
+        let bw = if can { 96.0 } else { 0.0 };
         ui.horizontal(|ui| {
+            let text_w = (ui.available_width() - bw - 12.0).max(120.0);
             ui.vertical(|ui| {
+                ui.set_width(text_w);
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(RichText::new(name).font(theme::display(14.5)).color(theme::text_strong()));
-                ui.label(RichText::new(what).size(12.5).color(theme::text()));
+                ui.add(egui::Label::new(RichText::new(what).size(12.5).color(theme::text())).wrap());
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), Sense::hover());
                     ui.painter().circle_filled(r.center(), 3.5, c);
-                    ui.add(egui::Label::new(RichText::new(state).size(12.5).color(theme::text())).truncate());
+                    ui.add(egui::Label::new(RichText::new(state).size(12.5).color(theme::text())).wrap());
                 });
             });
             if can {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let word = if open { "Close" } else if c == theme::ok() { "Manage" } else { "Connect" };
-                    if ui.add(egui::Button::new(RichText::new(word).size(13.0)).min_size(egui::vec2(88.0, 28.0))).clicked() {
+                    let connected = c == theme::ok();
+                    let word = if open { "Close" } else if connected { "Manage" } else { "Connect" };
+                    // Connect is the step's action: the accent, outlined.
+                    // Manage and Close are quieter.
+                    let ink = if open || connected { theme::text() } else { theme::primary() };
+                    let b = egui::Button::new(RichText::new(word).size(13.5).color(ink))
+                        .fill(if open || connected { theme::surface_hi() } else { theme::primary().gamma_multiply(0.10) })
+                        .stroke(Stroke::new(1.0, if open || connected { theme::pane_brd() } else { theme::primary().gamma_multiply(0.7) }))
+                        .corner_radius(8)
+                        .min_size(egui::vec2(bw, tall));
+                    if ui.add(b).clicked() {
                         toggled = true;
                     }
                 });
