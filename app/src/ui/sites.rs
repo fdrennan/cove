@@ -204,7 +204,8 @@ impl SitesWall {
             let mut i = 0;
             // Focus: the selected one across the width, most of the height.
             if !self.grid && active.is_some() && !phone {
-                let h = (area.height() * 0.62).max(320.0);
+                // Alone, it takes the whole height; with others, most of it.
+                let h = if order.len() == 1 { (area.height() - 4.0).max(320.0) } else { (area.height() * 0.62).max(320.0) };
                 let (r, _) = ui.allocate_exact_size(egui::vec2(w, h), Sense::hover());
                 let (host, d) = order[0];
                 if let Some(a) = self.tile(ui, ctx, backend, r, clip, host, d.as_ref(), true, now) {
