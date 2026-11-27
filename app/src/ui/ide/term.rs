@@ -82,6 +82,12 @@ cd "${COVE_CWD:-$HOME}" 2>/dev/null || cd
 # ~/.local/bin, and asks first.
 if ! command -v claude >/dev/null 2>&1; then
   claude() {
+    # Claude Code may have arrived since this shell started (Cove installs it
+    # in the background): use it rather than asking to install it again.
+    if [ -x "$HOME/.local/bin/claude" ]; then
+      unset -f claude && hash -r && PATH="$HOME/.local/bin:$PATH" command claude "$@"
+      return
+    fi
     printf 'Claude Code is not installed for %s yet. Install it into ~/.local/bin now (claude.ai/install.sh)? [y/N] ' "$USER"
     local a
     read -r a

@@ -256,7 +256,10 @@ pub enum Done {
 
 /// What "Start in the Terminal" types: Claude Code installed if it is missing,
 /// then its sign-in. One line, so it reads as one step in the Terminal.
-const SETUP_TOKEN: &str = "command -v claude >/dev/null 2>&1 || [ -x \"$HOME/.local/bin/claude\" ] || curl -fsSL https://claude.ai/install.sh | bash; PATH=\"$HOME/.local/bin:$PATH\" claude setup-token";
+/// `type -P`, not `command -v`: the Terminal's RC defines a `claude` shell
+/// function while Claude Code is missing (ui/ide/term.rs), and `command -v`
+/// is true for a function, so the install was skipped (2026-11-27).
+const SETUP_TOKEN: &str = "unset -f claude 2>/dev/null; type -P claude >/dev/null || [ -x \"$HOME/.local/bin/claude\" ] || curl -fsSL https://claude.ai/install.sh | bash; PATH=\"$HOME/.local/bin:$PATH\" claude setup-token";
 
 /// Watching the Terminal for `claude setup-token`'s token.
 #[derive(Default)]
