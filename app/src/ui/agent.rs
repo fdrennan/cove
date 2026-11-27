@@ -18,7 +18,7 @@ use eframe::egui::{self, Key, RichText};
 
 use crate::api::{AgentChunk, AgentEvent, AgentTurn, DomainInfo, FileText, Lang, Listing, Query};
 use crate::backend::Backend;
-use crate::ui::kit::theme;
+use crate::ui::kit::{bar, theme};
 
 /// How a turn may act - exec.ndexr.io's modes (operator, 2026-10-16: "exec and
 /// agents need auto, plan, etc modes"): (mode, label, what it means).
@@ -1473,7 +1473,16 @@ impl AgentPane {
         let model = if narrow { model.split(" · ").next().unwrap_or(model) } else { model }.to_owned();
         let model = model.as_str();
         let (_, mode, tip) = MODES.iter().find(|(m, _, _)| *m == self.mode).copied().unwrap_or(MODES[0]);
-        ui.horizontal(|ui| {
+        // Never wider than the pane: one row too wide widened the whole
+        // column, and on a phone the message box and Send went off the edge
+        // with it (operator, 2026-11-27, IMG_8990: "buttons in ui are going
+        // off screen"). On a phone the row keeps who, model and mode; what it
+        // is about, Listen's interval, fold and the thread switch go in its ⋯
+        // (ui/kit/bar.rs: one row per bar, the rest in ⋯).
+        let w = ui.available_width();
+        let h = if narrow { 32.0 } else { 26.0 };
+        ui.allocate_ui_with_layout(egui::vec2(w, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
             ui.add_space(8.0);
             ui.spacing_mut().item_spacing.x = 6.0;
             if self.exec_folded {
@@ -1483,7 +1492,7 @@ impl AgentPane {
                     _ => String::new(),
                 };
                 let line = [who.as_str(), model, mode].iter().filter(|w| !w.is_empty()).copied().collect::<Vec<_>>().join(" · ");
-                if ui.add(egui::Button::new(RichText::new(format!("{line}  ▾")).size(11.5).color(theme::muted())).frame(false))
+                if ui.add(egui::Label::new(RichText::new(format!("{line}  ▾")).size(11.5).color(theme::muted())).truncate().sense(egui::Sense::click()))
                     .on_hover_text("show who this goes to, the model and how it may act")
                     .clicked()
                 {
@@ -1498,34 +1507,37 @@ impl AgentPane {
             }
             // What it is about: the site, the file open in Files, or the
             // folder its tree is in - Files' own composer, folded in here.
-            if self.scope.as_ref().is_none_or(|sc| !sc.exec_on) {
-                let short = |p: &str| p.rsplit('/').next().unwrap_or(p).to_owned();
-                if self.focus == 1 && self.focus_file.is_none() {
-                    self.focus = 0;
+            let about = self.scope.as_ref().is_none_or(|sc| !sc.exec_on);
+            let short = |p: &str| p.rsplit('/').next().unwrap_or(p).to_owned();
+            if self.focus == 1 && self.focus_file.is_none() {
+                self.focus = 0;
+            }
+            let focus_rows = |ui: &mut egui::Ui, focus: &mut u8, file: &Option<String>, folder: &str| {
+                ui.selectable_value(focus, 0, "whole site").on_hover_text("the agent may work anywhere in the project");
+                if let Some(f) = file.clone() {
+                    ui.selectable_value(focus, 1, format!("file · {}", short(&f))).on_hover_text(format!("change only {f} - the file open in Files"));
                 }
+                if !folder.is_empty() {
+                    let d = folder.to_owned();
+                    ui.selectable_value(focus, 2, format!("folder · {}/", short(d.trim_end_matches('/')))).on_hover_text(format!("read and edit only in {d} - the folder Files shows"));
+                }
+            };
+            if about && !narrow {
                 let shown = match self.focus {
                     1 => format!("file · {}", short(self.focus_file.as_deref().unwrap_or(""))),
                     2 => format!("folder · {}/", short(self.focus_folder.trim_end_matches('/'))),
                     _ => "whole site".to_owned(),
                 };
+                let (file, folder) = (self.focus_file.clone(), self.focus_folder.clone());
                 egui::ComboBox::from_id_salt(("agent-focus", self.ns()))
-                    .width(if narrow { 84.0 } else { 150.0 })
+                    .width(150.0)
                     .selected_text(RichText::new(shown).size(11.5))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.focus, 0, "whole site").on_hover_text("the agent may work anywhere in the project");
-                        if let Some(f) = self.focus_file.clone() {
-                            ui.selectable_value(&mut self.focus, 1, format!("file · {}", short(&f))).on_hover_text(format!("change only {f} - the file open in Files"));
-                        }
-                        if !self.focus_folder.is_empty() {
-                            let d = self.focus_folder.clone();
-                            ui.selectable_value(&mut self.focus, 2, format!("folder · {}/", short(d.trim_end_matches('/')))).on_hover_text(format!("read and edit only in {d} - the folder Files shows"));
-                        }
-                    })
+                    .show_ui(ui, |ui| focus_rows(ui, &mut self.focus, &file, &folder))
                     .response
                     .on_hover_text("what this message is about");
             }
             let picked = egui::ComboBox::from_id_salt(("agent-model", self.ns()))
-                .width(if narrow { 84.0 } else { 200.0 })
+                .width(if narrow { 76.0 } else { 200.0 })
                 .height(480.0)
                 .selected_text(RichText::new(model).size(11.5))
                 .show_ui(ui, |ui| model_menu(ui, &mut self.model))
@@ -1542,7 +1554,7 @@ impl AgentPane {
                 "the model the agent runs on"
             });
             egui::ComboBox::from_id_salt(("agent-mode", self.ns()))
-                .width(if narrow { 56.0 } else { 70.0 })
+                .width(if narrow { 52.0 } else { 70.0 })
                 .selected_text(RichText::new(mode).size(11.5))
                 .show_ui(ui, |ui| {
                     for (m, l, t) in MODES {
@@ -1552,11 +1564,8 @@ impl AgentPane {
                 .response
                 .on_hover_text(format!("{mode}: {tip}"));
             // How often Listen hands over a piece, beside the mode it works with.
-            if self.listen.is_some() {
+            if self.listen.is_some() && !narrow {
                 crate::ui::agent::voice::piece_field(ui, &mut self.listen_secs, self.listen_left);
-            }
-            if ui.add(egui::Button::new(RichText::new("▴").size(13.0).color(theme::hush())).frame(false)).on_hover_text("fold to one line").clicked() {
-                self.exec_folded = true;
             }
             // The thread put away or brought back; while away, a run going
             // still shows here.
@@ -1566,12 +1575,53 @@ impl AgentPane {
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
                 }
             }
-            // A short pane has no room for the thread: no switch to offer.
-            if !self.short_pane {
-                let (word, tip) = if self.thread_folded { ("Show thread", "the replies and what it works from, back above") } else { ("Hide thread", "only this panel: who it goes to and your message - the replies put away") };
-                if theme::tool(ui, word, tip).clicked() {
+            let thread_word = if self.thread_folded { "Show thread" } else { "Hide thread" };
+            let thread_tip = if self.thread_folded { "the replies and what it works from, back above" } else { "only this panel: who it goes to and your message - the replies put away" };
+            if narrow {
+                let (file, folder) = (self.focus_file.clone(), self.focus_folder.clone());
+                let listening = self.listen.is_some();
+                let short_pane = self.short_pane;
+                let (focus, secs) = (&mut self.focus, &mut self.listen_secs);
+                let (mut fold, mut thread) = (false, false);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(4.0);
+                    bar::more(ui, "more: what it is about, Listen, fold, the thread", |ui| {
+                        if about {
+                            ui.label(RichText::new("About").size(11.5).color(theme::text()));
+                            focus_rows(ui, focus, &file, &folder);
+                            ui.separator();
+                        }
+                        if listening {
+                            ui.label(RichText::new("Listen hands over every").size(11.5).color(theme::text()));
+                            for p in crate::ui::agent::voice::PIECES {
+                                ui.selectable_value(secs, p, crate::ui::agent::voice::piece_words(p));
+                            }
+                            ui.separator();
+                        }
+                        if ui.button("Fold to one line").clicked() {
+                            fold = true;
+                            ui.close();
+                        }
+                        if !short_pane && ui.button(thread_word).on_hover_text(thread_tip).clicked() {
+                            thread = true;
+                            ui.close();
+                        }
+                    });
+                });
+                if fold {
+                    self.exec_folded = true;
+                }
+                if thread {
                     self.thread_folded = !self.thread_folded;
                 }
+                return;
+            }
+            if ui.add(egui::Button::new(RichText::new("▴").size(13.0).color(theme::hush())).frame(false)).on_hover_text("fold to one line").clicked() {
+                self.exec_folded = true;
+            }
+            // A short pane has no room for the thread: no switch to offer.
+            if !self.short_pane && theme::tool(ui, thread_word, thread_tip).clicked() {
+                self.thread_folded = !self.thread_folded;
             }
         });
     }

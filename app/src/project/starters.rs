@@ -133,6 +133,7 @@ pub const FOLDER_STARTERS: &[&str] = &[
     "r-inlet-ide",
     "ide-vscode",
     "r-inlet-source",
+    "node-effect-ui",
 ];
 
 pub const CATEGORIES: &[Category] = &[
@@ -264,6 +265,10 @@ pub const CATEGORIES: &[Category] = &[
         ways: &[
             ready("React", "React and Node", "A React page, nothing to compile", "node-blank-react"),
             ready("Node", "Node.js", "A page and a table of routes, no npm", "node-blank"),
+            // Effect UI (operator, 2026-11-27, IMG_8989): Effect and the Elm
+            // Architecture. Its preview is not on npm, so a pinned snapshot is
+            // vendored and the page's import map resolves the package names.
+            ready("TypeScript", "Effect UI", "Components as Schemas and pure functions, effects as values: a live meter on a Subscription, a log on a Query, saved by a Command", "node-effect-ui"),
             ready("Python", "FastAPI", "A page and a route, reloads on save, /docs included", "python-blank-fastapi"),
             ready("Python", "Flask", "A page and a route, reloads on save", "python-blank-flask"),
             ready("Python", "Streamlit", "One script, reruns on save", "python-blank-streamlit"),

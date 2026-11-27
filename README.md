@@ -237,6 +237,29 @@ What ndexr adds on top of that model:
 Cove reads its stack from `/opt/ndexr/stack`. Running it over EESSI's
 `/cvmfs/software.eessi.io` instead is not supported yet.
 
+## Why not Open OnDemand?
+
+If your institution runs a cluster, it may already offer Open OnDemand, and
+that is the place to start. It is the web portal to an HPC centre, used by over
+2,100 organisations, built by the Ohio Supercomputer Center with NSF funding,
+MIT-licensed: files, a shell, job submission, and interactive apps such as
+Jupyter, RStudio, MATLAB and remote desktops, started through the centre's
+scheduler (Slurm, PBS Pro, LSF, Grid Engine, HTCondor, Kubernetes and others).
+It is mature, widely trusted and actively maintained.
+
+Open OnDemand is the front door to a cluster; the software behind it is
+whatever the centre installs. Cove works one layer down and one layer up:
+
+- **It carries the software stack itself,** built from source, the same on a
+  laptop with no cluster at all.
+- **A project is an application with a history,** at its own address and saved
+  every 30 minutes, rather than a job that ends.
+
+The two fit together rather than compete. ndexr's own sign-in passes the user
+to apps in the header Open OnDemand uses (`X-Remote-User`), and a Cove session
+could be one of a centre's interactive apps. That integration does not exist
+yet.
+
 ## Cove, RStudio and Positron
 
 ### Why Cove and not Positron?
