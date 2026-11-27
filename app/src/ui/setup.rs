@@ -254,6 +254,10 @@ pub enum Done {
     Closed(Option<String>),
 }
 
+/// What "Start in the Terminal" types: Claude Code installed if it is missing,
+/// then its sign-in. One line, so it reads as one step in the Terminal.
+const SETUP_TOKEN: &str = "command -v claude >/dev/null 2>&1 || [ -x \"$HOME/.local/bin/claude\" ] || curl -fsSL https://claude.ai/install.sh | bash; PATH=\"$HOME/.local/bin:$PATH\" claude setup-token";
+
 /// Watching the Terminal for `claude setup-token`'s token.
 #[derive(Default)]
 struct Helper {
@@ -1373,7 +1377,13 @@ impl Setup {
         // 2. Their subscription, through claude setup-token in Cove's terminal.
         choice(ui, "Claude Pro or Max subscription", "Cove runs claude setup-token in its Terminal. You approve in the browser, and Cove picks up the token it prints - nothing to copy.", |ui| {
             if ui.add_enabled(!busy, theme::primary_button("Start in the Terminal")).clicked() {
-                env.ide.run_in_terminal("claude setup-token");
+                // Claude Code first if this person has none yet: Anthropic's
+                // installer, into ~/.local/bin, the same one Cove runs in the
+                // background. Typed bare, a server whose install had not
+                // finished (or not started) answered "claude: command not
+                // found" (operator, 2026-11-27, ndexrtesting.com: "says
+                // claude is not there").
+                env.ide.run_in_terminal(SETUP_TOKEN);
                 self.helper = Helper { on: true, started: ctx.input(|i| i.time), ..Default::default() };
             }
         });

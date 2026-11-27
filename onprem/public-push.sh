@@ -62,6 +62,14 @@ hits="$(git -C "$dest" diff "$before" HEAD | grep -E '^\+' | grep -cE \
 private="$(git -C "$dest" diff --name-only "$before" HEAD | grep -cE '^(CLAUDE|CONTEXT)\.|(^|/)nginx\.conf$|supporting_docs/|stack-requests/|/ud-|(^|/)\.env(\.[^/]*)?$|\.pem$|\.key$' || true)"
 if [[ "$hits" != 0 || "$private" != 0 ]]; then
   say "HELD $id: $hits credential-shaped line(s), $private private path(s) - nothing pushed; see git -C $dest show HEAD"
+  # Said where people look, not only in this log: a hold sat unread for 13
+  # hours on 2026-11-27 while ndexr.io's installer and GitHub's differed and
+  # stopped every agent following /agents.md. Refiling the same ask is a no-op.
+  paths="$(git -C "$dest" diff --name-only "$before" HEAD | grep -E '^(CLAUDE|CONTEXT)\.|(^|/)nginx\.conf$|supporting_docs/|stack-requests/|/ud-|(^|/)\.env(\.[^/]*)?$|\.pem$|\.key$' | head -5 | tr '\n' ' ' || true)"
+  (cd "$here" && POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}" /usr/local/bin/ndexr refer --to cove.ndexr.io --severity high \
+    --ask "Release the held GitHub push: check what onprem/public-push.sh's gate flagged, remove it from the export or correct the gate, then run onprem/public-push.sh" \
+    --why "GitHub main stops following releases, and ndexr.io's install.sh is GitHub's copy, so new installs keep getting the older Cove until this clears" \
+    --evidence "public-push.log: HELD $id: $hits credential-shaped line(s), $private private path(s); paths: ${paths:-credential lines only}" >/dev/null 2>&1 || true)
   git -C "$dest" reset -q --hard "$before"
   exit 1
 fi
