@@ -3117,6 +3117,9 @@ pub fn main(args: &[String]) -> i32 {
         let ctx = ctx.clone();
         crate::server::on_term(move || save_sessions(&ctx));
     }
+    // A server `cove setup-server` set up keeps that setup as this Cove
+    // ships it: the launcher, the feed job and KillMode=process (stack.rs).
+    crate::host::stack::refresh_server_setup();
     let n = adopt(&ctx);
     if n > 0 {
         println!("multiuser: took back {n} running session(s) from the last server");

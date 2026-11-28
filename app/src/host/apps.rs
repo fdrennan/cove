@@ -310,6 +310,22 @@ pub fn action(host: &str, dir: &Path, verb: &str) -> Result<crate::api::JobView,
     crate::host::stack::jobs::start(slot(host), format!("{verb} {host}"), cmd, Some(done))
 }
 
+/// A new project, started without a click (operator, 2026-11-28: "it doesnt
+/// seem to start as a default" - a new Shiny project sat at Stopped): Up
+/// first, so it answers as soon as it can - an interpreted app fetches its
+/// packages as it starts, a Rust one runs its seed or builds once - then
+/// Build, which compiles the project's own code in the background and the
+/// running app restarts on it. One job, shown as the project's like any other.
+pub fn start_new(host: &str, dir: &Path) -> Result<crate::api::JobView, String> {
+    let cdir = crate::project::dotcove::contract_dir(dir);
+    let rel = |verb: &str| cdir.join(format!("{verb}.sh")).strip_prefix(dir).map(|p| format!("./{}", p.display())).ok();
+    let up = rel("up").filter(|_| is_executable(&cdir.join("up.sh"))).ok_or_else(|| format!("{host} has no up.sh"))?;
+    let build = rel("build").filter(|_| is_executable(&cdir.join("build.sh")));
+    let then = build.map(|b| format!("; {b}")).unwrap_or_default();
+    let cmd = format!("cd {} && {} {up}{then}", crate::api::shell_quote(&dir.display().to_string()), crate::ui::kit::ansi::COLOR_ENV);
+    crate::host::stack::jobs::start(slot(host), format!("up {host}"), cmd, None)
+}
+
 /// That project's job as far as it got.
 pub fn job(host: &str) -> crate::api::JobView {
     crate::host::stack::jobs::view(slot(host))

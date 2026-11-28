@@ -5,6 +5,15 @@
 # cove-feed-update.timer and once by `cove setup-server`; root. Does nothing in
 # airgap mode (/etc/cove/airgap) or when the feed cannot be reached.
 set -eu
+# Units written before KillMode=process killed every session, and every app a
+# session started, on each restart: put it in before restarting on anything.
+reload=""
+for u in /etc/systemd/system/cove-multiuser.service /etc/systemd/system/cove-stack@.service; do
+  if [ -f "$u" ] && ! grep -q '^KillMode=' "$u"; then
+    sed -i 's/^\[Service\]$/[Service]\nKillMode=process/' "$u" && reload=1
+  fi
+done
+[ -n "$reload" ] && systemctl daemon-reload
 [ -e /etc/cove/airgap ] && { echo "airgap: the feed is not asked"; exit 0; }
 base="${COVE_FEED:-https://repo.ndexr.io/ndexr/cove}"
 case "$(uname -m)" in

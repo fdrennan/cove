@@ -690,6 +690,11 @@ RequiresMountsFor=/opt/ndexr/stack
 [Service]
 Type=simple
 User=root
+# Restarting the server (an update) leaves people's sessions, and the apps
+# they started, running; the next server takes them back (multiuser.rs
+# adopt). Without it every restart killed them all: a Julia app's first
+# start, minutes of fetching packages, never finished (2026-11-28).
+KillMode=process
 EnvironmentFile=-/etc/cove/multiuser.env
 ExecStart=/var/lib/cove/bin/cove-newest multiuser
 Restart=on-failure
@@ -711,6 +716,8 @@ RequiresMountsFor=/opt/ndexr/stack
 Type=simple
 User=%i
 WorkingDirectory=~
+# An update's restart leaves the apps this person started running.
+KillMode=process
 EnvironmentFile=-/etc/cove/%i.env
 ExecStart=/var/lib/cove/bin/cove-newest serve
 Restart=on-failure
@@ -764,6 +771,69 @@ fn newest_lines() -> String {
         svc = shell_quote(FEED_SERVICE),
         timer = shell_quote(FEED_TIMER),
     )
+}
+
+/// On a server `cove setup-server` set up (it wrote /var/lib/cove/bin), the
+/// setup as this Cove ships it, at the server's start: its own launcher and
+/// feed job, and KillMode=process in its units. A server installed before
+/// 2026-11-28 had units without it, so each update's restart killed every
+/// session and every app a session had started (a Julia app's first start
+/// never finished), and the old scripts it ran could not mend that - only
+/// the new Cove it fetched reaches it. Root only; nothing when not set up so.
+pub fn refresh_server_setup() {
+    let bin = std::path::Path::new("/var/lib/cove/bin");
+    if !bin.is_dir() || unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    for (name, body) in [("cove-newest", COVE_NEWEST), ("cove-feed-update", COVE_FEED_UPDATE)] {
+        let f = bin.join(name);
+        if std::fs::read_to_string(&f).ok().as_deref() != Some(body) {
+            let tmp = bin.join(format!("{name}.new"));
+            if std::fs::write(&tmp, body).is_ok() {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+                let _ = std::fs::rename(&tmp, &f);
+                println!("multiuser: {} brought up to this Cove's", f.display());
+            }
+        }
+    }
+    let mut reload = false;
+    for u in ["/etc/systemd/system/cove-multiuser.service", "/etc/systemd/system/cove-stack@.service"] {
+        let Some(fixed) = std::fs::read_to_string(u).ok().and_then(|t| with_kill_mode(&t)) else { continue };
+        if std::fs::write(u, fixed).is_ok() {
+            println!("multiuser: {u} now leaves sessions running across a restart (KillMode=process)");
+            reload = true;
+        }
+    }
+    if reload {
+        let _ = std::process::Command::new("systemctl").arg("daemon-reload").status();
+    }
+}
+
+/// A unit's text with KillMode=process under [Service], when it has no
+/// KillMode of its own; None when it has one or no [Service].
+fn with_kill_mode(t: &str) -> Option<String> {
+    if t.lines().any(|l| l.trim_start().starts_with("KillMode=")) {
+        return None;
+    }
+    let fixed = t.replacen("[Service]\n", "[Service]\nKillMode=process\n", 1);
+    (fixed != t).then_some(fixed)
+}
+
+#[cfg(test)]
+mod kill_mode_tests {
+    use super::*;
+
+    #[test]
+    fn an_old_unit_gets_kill_mode_once_and_a_new_one_is_left_alone() {
+        let old = "[Unit]\nDescription=x\n\n[Service]\nType=simple\nUser=root\nExecStart=/bin/true\n";
+        let fixed = with_kill_mode(old).expect("added");
+        assert!(fixed.contains("[Service]\nKillMode=process\nType=simple"), "{fixed}");
+        assert_eq!(with_kill_mode(&fixed), None, "a second look changes nothing");
+        assert!(MULTIUSER_UNIT.contains("KillMode=process") && SINGLE_UNIT.contains("KillMode=process"), "the units written now carry it");
+        assert_eq!(with_kill_mode(MULTIUSER_UNIT), None);
+        assert!(COVE_FEED_UPDATE.contains("KillMode=process"), "the feed job mends old units too");
+    }
 }
 
 const MULTIUSER_CONF: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/packaging/linux/multiuser.conf"));

@@ -2515,8 +2515,8 @@ fn create_domain(host: &str, parent: &str, starter: &str) -> Result<crate::api::
         let _ = capture_within(&format!("cd {} && git init -q && git add -A", shell_quote(&dir.display().to_string())), Duration::from_secs(20));
         let info = domain_at(&dir).ok_or_else(|| "created, but it does not read back as a domain".to_owned())?;
         let app = crate::host::apps::status(&dir);
-        if app.kind == "port" && app.verbs.iter().any(|v| v == "build") {
-            let _ = crate::host::apps::action(&host, &dir, "build");
+        if app.kind == "port" && app.verbs.iter().any(|v| v == "up") {
+            let _ = crate::host::apps::start_new(&host, &dir);
         }
         return Ok(info);
     }
