@@ -1369,6 +1369,14 @@ pub struct Ide {
     assist: Arc<Mutex<Option<Result<api::AssistReply, String>>>>,
     assisting: Option<(Lang, String)>,
     assist_note: Option<String>,
+    /// An ask Agent mode could not send for want of an OpenAI key: shown
+    /// over the input with the ways forward, since the note in the hint
+    /// line is hidden by the ask put back in the input (operator,
+    /// 2026-11-28: "submitting does nothing ... push the user to the right
+    /// solution").
+    assist_stuck: Option<(Lang, String)>,
+    /// Connect OpenAI… asked for from the console (app.rs opens openai.rs).
+    pub want_openai: bool,
     /// Say it instead of typing it (operator, 2026-10-18: "add a audio input
     /// that will automatically use agents ... so that we can communicate our
     /// Python and shell commands and then have them placed into the console").
@@ -1896,6 +1904,8 @@ impl Ide {
             assist: Default::default(),
             assisting: None,
             assist_note: None,
+            assist_stuck: None,
+            want_openai: false,
             console_mic: Default::default(),
             completing: Default::default(),
             recent_open: true,
@@ -2341,6 +2351,7 @@ impl Ide {
         self.lang_hist_at = None;
         self.assisting = Some((lang, typed.to_owned()));
         self.assist_note = None;
+        self.assist_stuck = None;
         self.consoles[ix(Lang::R)].input = typed.to_owned();
         let slot = self.assist.clone();
         *slot.lock().unwrap() = None;
@@ -2374,6 +2385,7 @@ impl Ide {
                 self.assist_note = Some(format!("{} · written by {} - Enter runs it, edit it first if you like", lang.word(), if a.model.is_empty() { "the agent" } else { a.model.as_str() }));
             }
             Ok(_) => self.assist_note = Some("the agent had nothing to write for that - ask another way".into()),
+            Err(e) if e == api::NO_OPENAI => self.assist_stuck = Some((lang, typed)),
             Err(e) => self.assist_note = Some(format!("Agent: {e}")),
         }
         ctx.request_repaint();
@@ -5073,53 +5085,70 @@ impl Ide {
         let ring = self.ring();
         let mut picked = None;
         let mut heard = String::new();
+        if matches!(chan, Channel::Code(_)) {
+            self.assist_stuck_strip(ui, ctx, input_id);
+        }
         let row = egui::Frame::new().fill(ace::bg()).inner_margin(egui::Margin { left: 8, right: 8, top: 0, bottom: 4 }).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
-                // The switcher: the four channels, the one in use lit. Click
-                // one, drag across them, or push the input sideways.
-                ui.spacing_mut().item_spacing.x = 2.0;
-                for c in ring.iter().copied() {
-                    let on = c == chan;
-                    let text = RichText::new(c.pill()).monospace().size(11.0).color(if on { theme::ground() } else { c.color().gamma_multiply(0.7) });
-                    let b = egui::Button::new(text).fill(if on { c.color() } else { Color32::TRANSPARENT }).stroke(egui::Stroke::new(1.0, c.color().gamma_multiply(if on { 1.0 } else { 0.35 }))).corner_radius(3.0).min_size(egui::vec2(0.0, row_h));
-                    let r = ui.add(b).interact(egui::Sense::click_and_drag()).on_hover_text(format!("send to {} · push left or right to go round", c.word()));
-                    if r.clicked() {
-                        picked = Some(c);
+                // The switcher: one segmented control, the channel in use lit
+                // in its own colour. Click one, drag across them, or push the
+                // input sideways (operator, 2026-11-28: "smoother and cleaner
+                // icons, spacing, minimalism but pushable": the outlined pills
+                // and a two-line hint were too much).
+                let seg_h = if crate::ui::kit::device::coarse() { 34.0 } else { (row_h + 10.0).max(24.0) };
+                let keys = "Enter runs · Shift+Enter new line · Tab completes · Esc stops · ← → or a sideways push changes channel";
+                egui::Frame::new().fill(theme::pane_hdr()).stroke(egui::Stroke::new(1.0, theme::pane_brd())).corner_radius(8.0).inner_margin(2.0).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    for c in ring.iter().copied() {
+                        let on = c == chan;
+                        let font = egui::FontId::proportional(12.0);
+                        let galley = ui.painter().layout_no_wrap(c.pill().to_owned(), font, if on { c.color() } else { theme::hush() });
+                        let w = (galley.size().x + 18.0).max(seg_h);
+                        let (rect, r) = ui.allocate_exact_size(egui::vec2(w, seg_h - 4.0), egui::Sense::click_and_drag());
+                        if on {
+                            ui.painter().rect_filled(rect, 6.0, c.color().gamma_multiply(0.18));
+                        } else if r.hovered() {
+                            ui.painter().rect_filled(rect, 6.0, c.color().gamma_multiply(0.08));
+                        }
+                        ui.painter().galley(rect.center() - galley.size() / 2.0, galley, Color32::PLACEHOLDER);
+                        let r = r.on_hover_text(format!("{} · {keys}", c.word())).on_hover_cursor(egui::CursorIcon::PointingHand);
+                        if r.clicked() {
+                            picked = Some(c);
+                        }
+                        if r.dragged() {
+                            self.swipe -= r.drag_delta().x;
+                        }
                     }
-                    if r.dragged() {
-                        self.swipe -= r.drag_delta().x;
-                    }
-                }
+                });
                 // Agent or not, for these inputs (operator, 2026-10-25: "make
-                // checkbox for agent mode or not in Console"): ticked, what is
+                // checkbox for agent mode or not in Console"): on, what is
                 // typed is an ask and the code for this language lands in the
-                // input to read and run; not ticked, the line runs as typed -
-                // a line starting with / included. No command syntax.
+                // input to read and run; off, the line runs as typed - a line
+                // starting with / included. The same segment shape as the
+                // switcher, standing apart from it.
                 if matches!(chan, Channel::Code(_)) {
-                    // A pill like the languages' - outlined off, filled on -
-                    // set off from them by a gap (operator, 2026-10-26: "agent
-                    // and checkbox look bad": egui's checkbox was a tiny tick
-                    // box jammed against the pills).
                     ui.add_space(6.0);
                     let on = self.assist_on;
                     let c = theme::primary();
-                    let text = RichText::new("Agent").size(11.5).strong().color(if on { theme::ground() } else { c });
-                    let b = egui::Button::new(text)
-                        .fill(if on { c } else { Color32::TRANSPARENT })
-                        .stroke(egui::Stroke::new(1.0, c.gamma_multiply(if on { 1.0 } else { 0.6 })))
-                        .corner_radius(10.0)
-                        .min_size(egui::vec2(0.0, row_h));
-                    if ui
-                        .add(b)
-                        .on_hover_text(if on { "Agent is on: say what you want, Enter, and the code for this language lands here to read and run - click to run lines as typed" } else { "click for Agent: say what you want, and the code for this language lands here to read and run" })
+                    let galley = ui.painter().layout_no_wrap("Agent".to_owned(), egui::FontId::proportional(12.0), if on { theme::ground() } else { c });
+                    let (rect, r) = ui.allocate_exact_size(egui::vec2(galley.size().x + 22.0, seg_h), egui::Sense::click());
+                    let p = ui.painter();
+                    if on {
+                        p.rect_filled(rect, 8.0, c);
+                    } else {
+                        p.rect_stroke(rect, 8.0, egui::Stroke::new(1.0, c.gamma_multiply(if r.hovered() { 0.9 } else { 0.45 })), egui::StrokeKind::Inside);
+                    }
+                    p.galley(rect.center() - galley.size() / 2.0, galley, Color32::PLACEHOLDER);
+                    if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(if on { "Agent is on: say what you want, Enter, and the code lands here to read and run · click to run lines as typed" } else { "Agent: say what you want, and the code for this language lands here to read and run" })
                         .clicked()
                     {
                         self.assist_on = !on;
                         self.assist_note = None;
                     }
-                    ui.add_space(4.0);
                 }
+                ui.add_space(4.0);
                 // 🎤: say what you want; the agent writes it for this channel.
                 if crate::ui::agent::voice::Mic::shown() && self.assisting.is_none() {
                     let Ide { console_mic, backend, domain, .. } = &mut *self;
@@ -5127,23 +5156,25 @@ impl Ide {
                     console_mic.ui(ui, ctx, backend, &mut heard);
                 }
                 // Listen / Act as I talk, one icon right of the mic (as in Go).
-                self.listen_button(ui, 32.0);
-                ui.add_space(6.0);
+                self.listen_button(ui, seg_h);
+                ui.add_space(8.0);
                 if busy {
                     // the prompt's height: the default spinner is taller and
                     // nudged the row (and the pane) on every busy/idle switch
                     ui.add(egui::Spinner::new().size(row_h));
                 } else {
-                    ui.label(RichText::new(chan.prompt()).monospace().size(12.5).strong().color(chan.color()));
+                    ui.label(RichText::new(chan.prompt()).monospace().size(12.5).strong().color(chan.color())).on_hover_text(keys);
                 }
+                // One short line; the keys are in the switcher's and the
+                // prompt's hover.
                 let hint = match chan {
-                    Channel::Agent if self.domain.is_none() => "Agent · open a domain first - its agent works in that domain's thread".to_owned(),
-                    Channel::Agent => "Agent · Enter sends to this domain's agent · Shift+Enter new line · ← → or a sideways push goes round".to_owned(),
+                    Channel::Agent if self.domain.is_none() => "open a domain first".to_owned(),
+                    Channel::Agent => "ask this domain's agent".to_owned(),
                     Channel::Code(_) if self.assisting.is_some() => "the agent is writing it…".to_owned(),
                     Channel::Code(l) => match &self.assist_note {
                         Some(n) => n.clone(),
-                        None if self.assist_on => format!("{} · Agent: say what you want, Enter, and the code lands here to read and run · ← → goes round", l.word()),
-                        None => format!("{} · Enter runs · Tab completes · ← → or a sideways push goes round · Esc stops", l.word()),
+                        None if self.assist_on => format!("say what you want in {}", l.word()),
+                        None => l.word().to_owned(),
                     },
                 };
                 let c = &mut self.consoles[ix(Lang::R)];
@@ -5219,6 +5250,46 @@ impl Ide {
         }
         if clear {
             self.clear_console(Lang::R);
+        }
+    }
+
+    /// Agent mode had no OpenAI key: say so where it is seen, over the input,
+    /// with what to do - connect a key (the ask stays in the input, Enter
+    /// sends it again), hand the ask to the domain's agent, or run the line
+    /// as typed.
+    fn assist_stuck_strip(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, input_id: egui::Id) {
+        let Some((lang, ask)) = self.assist_stuck.clone() else { return };
+        let mut done = false;
+        egui::Frame::new()
+            .fill(theme::warn().gamma_multiply(0.12))
+            .stroke(egui::Stroke::new(1.0, theme::warn().gamma_multiply(0.5)))
+            .corner_radius(6.0)
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .outer_margin(egui::Margin { left: 8, right: 8, top: 2, bottom: 4 })
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Agent mode writes code with OpenAI, and no OpenAI key is connected.").size(12.5).color(theme::text_strong()));
+                    if ui.add(theme::primary_button("Connect OpenAI…")).clicked() {
+                        self.want_openai = true;
+                    }
+                    if self.domain.is_some() && ui.button(RichText::new("Ask the domain's agent").size(12.5)).on_hover_text("send it to this domain's agent instead").clicked() {
+                        self.consoles[ix(Lang::R)].input.clear();
+                        self.chan = Channel::Agent;
+                        self.send_agent(ask.clone(), ctx);
+                        done = true;
+                    }
+                    if ui.button(RichText::new(format!("Run as {}", lang.word())).size(12.5)).on_hover_text("turn Agent off and run what is typed").clicked() {
+                        self.assist_on = false;
+                        ctx.memory_mut(|m| m.request_focus(input_id));
+                        done = true;
+                    }
+                    if ui.small_button("✕").on_hover_text("dismiss").clicked() {
+                        done = true;
+                    }
+                });
+            });
+        if done {
+            self.assist_stuck = None;
         }
     }
 

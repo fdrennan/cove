@@ -4463,7 +4463,12 @@ pub fn assist(lang: Lang, ask: &str, context: &str) -> Result<crate::api::Assist
     if ask.is_empty() {
         return Err("say what you want - e.g. ggplot of mtcars mpg against wt".into());
     }
-    let key = openai_key().ok_or("no OpenAI key on this server (OPENAI_API_KEY)")?;
+    // The server's key, else the person's own (Help › Connect OpenAI…, the
+    // key Codex uses): a self-install has only the second.
+    let key = openai_key()
+        .or_else(localagent::codex::saved_key)
+        .or_else(|| std::env::var("CODEX_API_KEY").ok().filter(|k| !k.trim().is_empty()))
+        .ok_or(crate::api::NO_OPENAI)?;
     let model = std::env::var("COVE_ASSIST_MODEL").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| "gpt-4o-mini".into());
     let (name, how) = match lang {
         Lang::R => ("R", "R code for the R console. Use the packages the session has loaded where they fit."),

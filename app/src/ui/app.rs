@@ -4877,6 +4877,9 @@ impl eframe::App for App {
             }
         }
         self.toasts(ctx);
+        if std::mem::take(&mut self.ide.want_openai) {
+            self.openai.open = true;
+        }
         if let Some(id) = self.ide.want_tour.take() {
             self.start_tour(id);
         }

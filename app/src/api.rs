@@ -2815,6 +2815,11 @@ pub struct ClaudeView {
 /// Where Cove credit is bought; `?return_to=` brings the person back.
 pub const CREDIT_URL: &str = "https://billing.ndexr.io/";
 
+/// Agent mode in a console (`Query::Assist`) found no OpenAI key: the console
+/// answers with the ways forward (Connect OpenAI, the domain's agent, run as
+/// typed) instead of the error alone.
+pub const NO_OPENAI: &str = "no OpenAI key is connected";
+
 impl ClaudeView {
     /// Their own Claude is connected.
     pub fn own(&self) -> bool {
