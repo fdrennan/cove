@@ -91,6 +91,8 @@ pub struct SitesWall {
     /// header (operator, 2026-11-27: "we are losing out on so much information
     /// by depriving the embedded sites a way to show their stuff"). None: 67%.
     zoom: Option<f32>,
+    /// On a phone: the layout controls shown, under the bar.
+    view_open: bool,
     lens: HashMap<String, Lens>,
     tiles: HashMap<String, Tile>,
     pub find: String,
@@ -118,50 +120,102 @@ impl SitesWall {
         // and, last, the search in whatever width is left - so the pages get
         // the height. A row too wide for the screen wraps onto a second line;
         // it never pushes the wall past the window's edge.
-        ui.horizontal_wrapped(|ui| {
-            let views = [
-                (format!("Open tabs · {}", open.len()), "the sites open as tabs, each through its own lens".to_owned(), !self.all, true),
-                ("All sites".to_owned(), "every site you may open: search, access, sharing".to_owned(), self.all, true),
-            ];
-            if let Some(i) = crate::ui::agent::segmented(ui, false, &views) {
-                self.all = i == 1;
+        // A phone (operator, 2026-11-28, IMG_8999: "mobile needs significant
+        // cleanup for this page"): the row of every control wrapped into half
+        // the screen. One row - the views, the search, View - and the layout
+        // controls under it only when View is open, inline, so no page can
+        // cover them.
+        let phone = ui.available_width() < 700.0;
+        if phone {
+            ui.horizontal(|ui| {
+                let views = [
+                    (format!("Tabs {}", open.len()), "the sites open as tabs".to_owned(), !self.all, true),
+                    ("All".to_owned(), "every site you may open".to_owned(), self.all, true),
+                ];
+                if let Some(i) = crate::ui::agent::segmented(ui, false, &views) {
+                    self.all = i == 1;
+                }
+                let view = egui::Button::new(RichText::new(if self.view_open { "View ▴" } else { "View ▾" }).size(13.0).color(theme::text())).min_size(egui::vec2(0.0, 32.0));
+                let w = (ui.available_width() - 80.0).max(100.0);
+                ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search sites").desired_width(w).margin(egui::vec2(8.0, 6.0)));
+                if ui.add(view).on_hover_text("layout, columns, zoom and height").clicked() {
+                    self.view_open = !self.view_open;
+                }
+            });
+            if self.view_open {
+                let line = |ui: &mut egui::Ui, word: &str, items: &[(String, String, bool, bool)]| -> Option<usize> {
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(64.0, 28.0), Sense::hover());
+                        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, word, egui::FontId::proportional(13.0), theme::text());
+                        crate::ui::agent::segmented(ui, false, items)
+                    })
+                    .inner
+                };
+                let it = |w: &str, on: bool| (w.to_owned(), String::new(), on, true);
+                if let Some(i) = line(ui, "Layout", &[it("Focus", !self.grid), it("Grid", self.grid)]) {
+                    self.grid = i == 1;
+                }
+                if let Some(i) = line(ui, "Across", &[it("Auto", self.cols == 0), it("1", self.cols == 1), it("2", self.cols == 2)]) {
+                    self.cols = i;
+                }
+                let zoom = self.zoom.unwrap_or(0.67);
+                let zs = [1.0f32, 0.67, 0.5, 0.4];
+                let zitems: Vec<(String, String, bool, bool)> = zs.iter().map(|z| it(&format!("{:.0}%", z * 100.0), (zoom - z).abs() < 0.01)).collect();
+                if let Some(i) = line(ui, "Zoom", &zitems) {
+                    self.zoom = Some(zs[i]);
+                }
+                let now_size = self.size.unwrap_or(if self.grid { 3 } else { 1 });
+                let sitems: Vec<(String, String, bool, bool)> = ["S", "M", "L", "Fit"].iter().enumerate().map(|(i, w)| it(w, now_size == i as u8)).collect();
+                if let Some(i) = line(ui, "Height", &sitems) {
+                    self.size = Some(i as u8);
+                }
             }
-            let items = [
-                ("Focus".to_owned(), "the selected tab large, the others under it".to_owned(), !self.grid, true),
-                ("Grid".to_owned(), "every open tab the same size".to_owned(), self.grid, true),
-            ];
-            if let Some(i) = crate::ui::agent::segmented(ui, false, &items) {
-                self.grid = i == 1;
-            }
-            // The grid's size, each a row of buttons - one click, and nothing
-            // that opens: a dropdown here opened behind the pages (operator,
-            // 2026-11-27: "really hard to get around here, menu is behind screen").
-            let label = |ui: &mut egui::Ui, w: &str| {
-                ui.label(RichText::new(w).size(12.0).color(theme::text()));
-            };
-            label(ui, "Across");
-            let cols: Vec<(String, String, bool, bool)> = [0usize, 1, 2, 3, 4, 5, 6].iter().map(|&c| (if c == 0 { "Auto".to_owned() } else { c.to_string() }, if c == 0 { "as many as the width fits".to_owned() } else { format!("{c} across") }, self.cols == c, true)).collect();
-            if let Some(i) = crate::ui::agent::segmented(ui, false, &cols) {
-                self.cols = i;
-            }
-            let zoom = self.zoom.unwrap_or(0.67);
-            label(ui, "Zoom");
-            let zs = [1.0f32, 0.8, 0.67, 0.5, 0.4];
-            let zitems: Vec<(String, String, bool, bool)> = zs.iter().map(|z| (format!("{:.0}%", z * 100.0), "each page drawn at this size, so more of it fits its tile".to_owned(), (zoom - z).abs() < 0.01, true)).collect();
-            if let Some(i) = crate::ui::agent::segmented(ui, false, &zitems) {
-                self.zoom = Some(zs[i]);
-            }
-            label(ui, "Height");
-            let now_size = self.size.unwrap_or(if self.grid { 3 } else { 1 });
-            let sitems: Vec<(String, String, bool, bool)> = [("S", "small tiles"), ("M", "medium tiles"), ("L", "large tiles"), ("Fit", "every row in the screen's height")].iter().enumerate().map(|(i, (w, t))| ((*w).to_owned(), (*t).to_owned(), now_size == i as u8, true)).collect();
-            if let Some(i) = crate::ui::agent::segmented(ui, false, &sitems) {
-                self.size = Some(i as u8);
-            }
-            // Its width less its own margins (8 each side) and the gap before
-            // it: at the whole width left it wrapped onto a line of its own.
-            let w = (ui.available_width() - 28.0).max(200.0);
-            ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(8.0, 4.0)));
-        });
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                let views = [
+                    (format!("Open tabs · {}", open.len()), "the sites open as tabs, each through its own lens".to_owned(), !self.all, true),
+                    ("All sites".to_owned(), "every site you may open: search, access, sharing".to_owned(), self.all, true),
+                ];
+                if let Some(i) = crate::ui::agent::segmented(ui, false, &views) {
+                    self.all = i == 1;
+                }
+                let items = [
+                    ("Focus".to_owned(), "the selected tab large, the others under it".to_owned(), !self.grid, true),
+                    ("Grid".to_owned(), "every open tab the same size".to_owned(), self.grid, true),
+                ];
+                if let Some(i) = crate::ui::agent::segmented(ui, false, &items) {
+                    self.grid = i == 1;
+                }
+                // The grid's size, each a row of buttons - one click, and nothing
+                // that opens: a dropdown here opened behind the pages (operator,
+                // 2026-11-27: "really hard to get around here, menu is behind screen").
+                let label = |ui: &mut egui::Ui, w: &str| {
+                    ui.label(RichText::new(w).size(12.0).color(theme::text()));
+                };
+                label(ui, "Across");
+                let cols: Vec<(String, String, bool, bool)> = [0usize, 1, 2, 3, 4, 5, 6].iter().map(|&c| (if c == 0 { "Auto".to_owned() } else { c.to_string() }, if c == 0 { "as many as the width fits".to_owned() } else { format!("{c} across") }, self.cols == c, true)).collect();
+                if let Some(i) = crate::ui::agent::segmented(ui, false, &cols) {
+                    self.cols = i;
+                }
+                let zoom = self.zoom.unwrap_or(0.67);
+                label(ui, "Zoom");
+                let zs = [1.0f32, 0.8, 0.67, 0.5, 0.4];
+                let zitems: Vec<(String, String, bool, bool)> = zs.iter().map(|z| (format!("{:.0}%", z * 100.0), "each page drawn at this size, so more of it fits its tile".to_owned(), (zoom - z).abs() < 0.01, true)).collect();
+                if let Some(i) = crate::ui::agent::segmented(ui, false, &zitems) {
+                    self.zoom = Some(zs[i]);
+                }
+                label(ui, "Height");
+                let now_size = self.size.unwrap_or(if self.grid { 3 } else { 1 });
+                let sitems: Vec<(String, String, bool, bool)> = [("S", "small tiles"), ("M", "medium tiles"), ("L", "large tiles"), ("Fit", "every row in the screen's height")].iter().enumerate().map(|(i, (w, t))| ((*w).to_owned(), (*t).to_owned(), now_size == i as u8, true)).collect();
+                if let Some(i) = crate::ui::agent::segmented(ui, false, &sitems) {
+                    self.size = Some(i as u8);
+                }
+                // Its width less its own margins (8 each side) and the gap before
+                // it: at the whole width left it wrapped onto a line of its own.
+                let w = (ui.available_width() - 28.0).max(200.0);
+                ui.add(egui::TextEdit::singleline(&mut self.find).hint_text("Search every site to open it as a tab").desired_width(w).margin(egui::vec2(8.0, 4.0)));
+            });
+        }
         let find = self.find.trim().to_lowercase();
         if !find.is_empty() {
             let hits: Vec<&DomainInfo> = every.iter().filter(|d| [&d.host, &d.title, &d.owner].iter().any(|t| t.to_lowercase().contains(&find))).take(8).collect();
@@ -261,7 +315,10 @@ impl SitesWall {
         }
         let p = ui.painter().with_clip_rect(clip);
         p.rect(r, 10.0, theme::bg(), egui::Stroke::new(if selected { 1.5 } else { 1.0 }, if selected { theme::primary().gamma_multiply(0.8) } else { theme::pane_brd() }), egui::StrokeKind::Inside);
-        let bar = egui::Rect::from_min_size(r.min, egui::vec2(r.width(), 28.0));
+        // Tall enough for the lens switch: on a touch screen its buttons are
+        // taller, and a 28 px bar cut them off at the bottom (IMG_8999).
+        let bar_h = if crate::ui::kit::device::coarse() { 40.0 } else { 28.0 };
+        let bar = egui::Rect::from_min_size(r.min, egui::vec2(r.width(), bar_h));
         let body = egui::Rect::from_min_max(egui::pos2(r.left() + 1.0, bar.bottom()), r.max - egui::vec2(1.0, 1.0));
         let name_r = egui::Rect::from_min_max(bar.min + egui::vec2(10.0, 4.0), egui::pos2(bar.right() - 200.0f32.min(bar.width() * 0.5) - 8.0, bar.bottom() - 4.0));
         let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(name_r).layout(egui::Layout::left_to_right(egui::Align::Center)).id_salt(("tile-bar", host)));
