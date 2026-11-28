@@ -4,6 +4,7 @@ One line per change a person would notice, newest first, each stamped with
 when it shipped (UTC). Cove shows the lines between the build a person was on
 and the one they move to (release.rs, multiuser.rs `release.json`). Add a line
 when you ship something someone will see; leave out what they will not.
+- 2026-11-28T09:10Z · Sites on a phone: one row (Tabs or All, the search, View), with the layout, columns, zoom and height under View only when you open it; each site fills the screen's height; and the Site · Agent · Logs switch fits in its bar.
 - 2026-11-27T22:30Z · Save can keep the agent's thread: with "+ thread" on beside Save, the open project's thread is compacted into .cove/agent/thread.md (each request, the agent's last reply and the tools it used) and saved with the project, in git and S3. Any version in the Git window can then bring that thread back: the agent's next turn carries it, either as the agent was then (a fresh session) or on top of what it knows now.
 - 2026-11-27T21:20Z · Sites: Across, Zoom and Height are rows of buttons in the bar, one click each, instead of menus that opened behind the pages; and a page now steps aside for any menu, dropdown or tooltip over its tile.
 - 2026-11-27T20:30Z · Sites tiles show the page itself, without the platform's navigation and operator bar. A new app's launch window says "Fetching its packages" while they download, where it showed a red "environment did not load". An empty Exec thread asks "What should we build?" in plain type, and no longer names exec.ndexr.io on a server of your own.

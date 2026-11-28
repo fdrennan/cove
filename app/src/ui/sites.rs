@@ -282,7 +282,8 @@ impl SitesWall {
                 Some(1) => 340.0,
                 Some(2) => 520.0,
                 Some(_) => fit.max(200.0),
-                None if phone => 420.0,
+                // A phone: one site per screen's height, scrolled between.
+                None if phone => (area.height() - 4.0).max(320.0),
                 None if self.grid => fit.max(260.0),
                 None => 280.0,
             };
