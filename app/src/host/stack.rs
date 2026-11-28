@@ -780,6 +780,7 @@ fn newest_lines() -> String {
 /// session and every app a session had started (a Julia app's first start
 /// never finished), and the old scripts it ran could not mend that - only
 /// the new Cove it fetched reaches it. Root only; nothing when not set up so.
+#[cfg(unix)]
 pub fn refresh_server_setup() {
     let bin = std::path::Path::new("/var/lib/cove/bin");
     if !bin.is_dir() || unsafe { libc::geteuid() } != 0 {

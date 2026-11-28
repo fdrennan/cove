@@ -1,6 +1,6 @@
 {
-  "at": "2026-11-27T06:11:51Z",
-  "cove_commit": "05c57105",
+  "at": "2026-11-28T06:02:51Z",
+  "cove_commit": "c4e9721c",
   "counts": {
     "pass": 13,
     "fail": 0,
@@ -61,12 +61,12 @@
       "duty": "No line of RStudio's or Inlet's code, text or CSS is in Cove (read for behaviour only)",
       "gate": true,
       "status": "pass",
-      "evidence": "75885 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "evidence": "77149 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "check": "cove.not-derivative",
       "product": "cove",
-      "summary": "75885 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
+      "summary": "77149 Cove lines (>= 20 chars) against 408860 distinct RStudio + Inlet lines; 26 allow-listed generic lines; no other match",
       "details": {
-        "cove_lines": 75885,
+        "cove_lines": 77149,
         "reference_lines": 408860,
         "allow_listed": 26,
         "matches": []
@@ -78,10 +78,10 @@
       "duty": "No Posit mark (RStudio, Posit, Positron, Shiny) in any served ndexr hostname",
       "gate": true,
       "status": "pass",
-      "evidence": "396 vhosts, none names a Posit mark",
+      "evidence": "402 vhosts, none names a Posit mark",
       "check": "platform.no-marks-in-hostnames",
       "product": "platform",
-      "summary": "396 vhosts, none names a Posit mark",
+      "summary": "402 vhosts, none names a Posit mark",
       "details": {}
     },
     {
